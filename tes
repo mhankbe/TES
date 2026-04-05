@@ -11613,31 +11613,43 @@ do
  Padding(_cfgCard,8,8,10,10)
  New("UIListLayout",{Parent=_cfgCard,FillDirection=Enum.FillDirection.Vertical,
   SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
- Label(_cfgCard,"⚙  Save / Reset Config",12,C.TXT,Enum.Font.GothamBold).Size=UDim2.new(1,0,0,16)
- Label(_cfgCard,"Simpan semua setting aktif, atau reset ke fresh",9,C.TXT3,Enum.Font.GothamBold).Size=UDim2.new(1,0,0,13)
+ Label(_cfgCard,"⚙  Save / Load / Reset Config",12,C.TXT,Enum.Font.GothamBold).Size=UDim2.new(1,0,0,16)
+ Label(_cfgCard,"Simpan, muat, atau reset semua setting",9,C.TXT3,Enum.Font.GothamBold).Size=UDim2.new(1,0,0,13)
  local _cfgBtnRow=Frame(_cfgCard,C.BG3,UDim2.new(1,0,0,34))
  _cfgBtnRow.BackgroundTransparency=1
  New("UIListLayout",{Parent=_cfgBtnRow,FillDirection=Enum.FillDirection.Horizontal,
   SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,8)})
- local _saveBtn=Btn(_cfgBtnRow,C.ACC,UDim2.new(0.65,-4,1,0))
+ local _saveBtn=Btn(_cfgBtnRow,C.ACC,UDim2.new(0.5,-4,1,0))
  _saveBtn.LayoutOrder=1; Corner(_saveBtn,8)
- local _saveLbl=Label(_saveBtn,"💾  SAVE CONFIG",11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+ local _saveLbl=Label(_saveBtn,"💾  SAVE",11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
  _saveLbl.Size=UDim2.new(1,0,1,0)
  _saveBtn.MouseButton1Click:Connect(function()
   _saveBtn.Active=false; _saveLbl.Text="Saving..."
   task.wait(0.1); FLaSave(); task.wait(0.5)
-  _saveLbl.Text="💾  SAVE CONFIG"; _saveBtn.Active=true
+  _saveLbl.Text="💾  SAVE"; _saveBtn.Active=true
  end)
- local _resetBtn=Btn(_cfgBtnRow,Color3.fromRGB(160,50,50),UDim2.new(0.35,-4,1,0))
- _resetBtn.LayoutOrder=2; Corner(_resetBtn,8)
- local _resetLbl=Label(_resetBtn,"🗑  RESET",11,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+ local _loadBtn=Btn(_cfgBtnRow,Color3.fromRGB(50,120,80),UDim2.new(0.5,-4,1,0))
+ _loadBtn.LayoutOrder=2; Corner(_loadBtn,8)
+ local _loadLbl=Label(_loadBtn,"📂  LOAD",11,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+ _loadLbl.Size=UDim2.new(1,0,1,0)
+ _loadBtn.MouseButton1Click:Connect(function()
+  _loadBtn.Active=false; _loadLbl.Text="Loading..."
+  task.wait(0.1); FLaAutoLoad(); task.wait(0.5)
+  _loadLbl.Text="📂  LOAD"; _loadBtn.Active=true
+ end)
+ local _resetBtnRow=Frame(_cfgCard,C.BG3,UDim2.new(1,0,0,34))
+ _resetBtnRow.BackgroundTransparency=1
+ _resetBtnRow.LayoutOrder=3
+ local _resetBtn=Btn(_resetBtnRow,Color3.fromRGB(160,50,50),UDim2.new(1,0,1,0))
+ Corner(_resetBtn,8)
+ local _resetLbl=Label(_resetBtn,"🗑  RESET ALL",11,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
  _resetLbl.Size=UDim2.new(1,0,1,0)
  _resetBtn.MouseButton1Click:Connect(function()
   _resetBtn.Active=false; _resetLbl.Text="Deleting..."
   task.wait(0.1); FLaReset(); task.wait(0.5)
-  _resetLbl.Text="🗑  RESET"; _resetBtn.Active=true
+  _resetLbl.Text="🗑  RESET ALL"; _resetBtn.Active=true
  end)
- -- ── End Save / Reset ──────────────────────────────────────
+ -- ── End Save / Load / Reset ─────────────────────────────────
 
  SectionHeader(p,"UI & Performance",1)
  
@@ -12743,12 +12755,12 @@ end
 
 UI_REGISTRY["noClip"] = function(on)
     STATE.noClip = on
-    if on then StartNoclipLoop() else StopNoclip() end
+    if on and StartNoclipLoop then StartNoclipLoop() elseif StopNoclip then StopNoclip() end
 end
 
 UI_REGISTRY["antiAfk"] = function(on)
     STATE.antiAfk = on
-    if on then StartAntiAfk() else StopAntiAfk() end
+    if on and StartAntiAfk then StartAntiAfk() elseif StopAntiAfk then StopAntiAfk() end
 end
 
 UI_REGISTRY["potato"] = function(on)

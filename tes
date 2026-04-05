@@ -300,7 +300,7 @@ end
 -- SCREEN GUI
 -- ============================================================
 ScreenGui = New("ScreenGui", {
- Parent = PG, Name = "ASH_NightFrost",
+ Parent = PG, Name = "FLa Project",
  ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
  DisplayOrder = 9999, IgnoreGuiInset = true,
  Active = false,
@@ -436,9 +436,9 @@ function BuildTopBar()
  local IconLbl = Label(IconBg, "AS", 11, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  IconLbl.Size = UDim2.new(1,0,1,0)
 
- local TitleLbl = Label(TopBar, "Auto Farming ASH", 14, C.TXT, Enum.Font.GothamBold)
+ local TitleLbl = Label(TopBar, "FLa Project", 14, C.TXT, Enum.Font.GothamBold)
  TitleLbl.Size = UDim2.new(0,160,0,22); TitleLbl.Position = UDim2.new(0,44,0,5)
- local SubLbl = Label(TopBar, "by FLa Project", 11, C.TXT3, Enum.Font.Gotham)
+ local SubLbl = Label(TopBar, "V.1", 11, C.TXT3, Enum.Font.Gotham)
  SubLbl.Size = UDim2.new(0,180,0,13); SubLbl.Position = UDim2.new(0,50,0,26)
 
  -- Buat tombol dengan posisi absolut (bukan anchor kanan)
@@ -544,7 +544,7 @@ function BuildTopBar()
  Size = UDim2.new(1,0,0,36),
  Position = UDim2.new(0,0,0,0),
  BackgroundTransparency = 1,
- Text = " Are you Gay?",
+ Text = " ARE YOU GAY ?",
  TextSize = 13,
  TextColor3 = C.WIN_CLOSE,
  Font = Enum.Font.GothamBold,
@@ -592,7 +592,7 @@ function BuildTopBar()
  BackgroundColor3 = C.WIN_CLOSE,
  BackgroundTransparency = 0.2,
  BorderSizePixel = 0,
- Text = "YES",
+ Text = "YES DADDY",
  TextSize = 12,
  TextColor3 = Color3.fromRGB(255,255,255),
  Font = Enum.Font.GothamBold,
@@ -651,7 +651,7 @@ function BuildTopBar()
  _siegeInterrupt = false
  MODE.current = "idle" -- [v252] hard reset MODE dispatcher
  -- Destroy semua GUI ASH
- for _, gname in ipairs({"ASH_NightFrost","ASH_GUI","ASH_DD"}) do
+ for _, gname in ipairs({"FLa Project"}) do
  pcall(function()
  local g = LP.PlayerGui:FindFirstChild(gname)
  if g then g:Destroy() end
@@ -1147,6 +1147,8 @@ RAID.bossDelay = 3 -- detik delay sebelum TP ke boss (1-10, user-controlled)
 
 _maStatusLbl, _noClipConn, _antiAfkThread, _antiAfkStart = nil, nil, nil, nil
 local _deadG, _mOn, _agOn, _tgtThread = {}, false, false, nil
+_deadG_F = {} -- [FIX] global scope agar Death handler bisa akses
+_G.FLaSetters = {} -- [FIX] registry SetState untuk Save/Load restore
 local _activeTbnRow = nil -- [v188-FIX] track row tbn yang sedang aktif
 local ORIGIN_POS, _destroyerConn, _ariseConn = Vector3.new(0,0,0), nil, nil
 local StatusDots, StatusLbls = {}, {}
@@ -1361,10 +1363,10 @@ local function EnsureHeroAtkThread()
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
       end
      end
-     task.wait(0.05)
+     task.wait(0.1) -- [OPT] 0.05→0.1
     end
    end
-   task.wait(0.05)
+   task.wait(0.1) -- [OPT] 0.05→0.1
   end
   _heroAtkThread = nil -- [PERBAIKAN 3] Memperbaiki memori bocor (sebelumnya terisi angka 5)
  end)
@@ -1428,18 +1430,23 @@ end
 
 if RE.Death then
  RE.Death.OnClientEvent:Connect(function(d)
- if not d then return end
- local g = d.enemyGuid or d.guid
- if g then
- _deadG[g] = true
- if MA.running and not (SIEGE and SIEGE.inMap) and not (RAID and RAID.inMap) and not (DUNGEON and DUNGEON.inMap) and not (ST2 and ST2.running) then MA.killed = MA.killed + 1 end
- if AG.running then AG.killed = AG.killed + 1 end
- -- [v50] gabung counter siege di sini, hapus listener kedua di bawah
- if SIEGE and SIEGE.running then
- SIEGE.killed = SIEGE.killed + 1
- if SiegeCounterUpdate then SiegeCounterUpdate() end
- end
- end
+  if not d then return end
+  local g = d.enemyGuid or d.guid
+  if not g then return end
+  -- [FIX] 1 handler untuk semua counter - cegah double fire
+  _deadG[g] = true
+  _deadG_F[g] = false
+  if MA.running and not (SIEGE and SIEGE.inMap) and not (RAID and RAID.inMap)
+     and not (DUNGEON and DUNGEON.inMap) and not (ST2 and ST2.running) then
+   MA.killed = MA.killed + 1
+  end
+  if AG.running then AG.killed = AG.killed + 1 end
+  if RA and RA.running then RA.killed = RA.killed + 1 end
+  if TA and TA.running then TA.killed = TA.killed + 1 end
+  if SIEGE and SIEGE.running then
+   SIEGE.killed = SIEGE.killed + 1
+   if SiegeCounterUpdate then SiegeCounterUpdate() end
+  end
  end)
 end
 
@@ -1468,7 +1475,7 @@ function StartDestroyWorker(checkFn)
  end
  if AG.running then AG.collected = AG.collected + 1 end
  if MA.running then MA.collected = (MA.collected or 0) + 1 end
- task.wait(0.03)
+ task.wait(0.05) -- [OPT] collect 0.03→0.05
  end
  end
  end
@@ -1546,13 +1553,16 @@ function StartGoldMagnet(checkFn)
  local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
  if guid then
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
+ if RE.ExtraReward then
+  pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
+ end
  end
  end)
  end
  end
  end
  end)
- task.wait(0.5)
+ task.wait(0.8) -- [OPT] GoldMagnet 0.5→0.8s
  end
  _goldMagnetRunning = false
  end)
@@ -1666,7 +1676,7 @@ function AttackLoop_Mass(onStatus)
    end
   end
 
-  task.wait(0.08)
+  task.wait(0.15) -- [OPT] 0.08→0.15, 2x ringan
  end
  return false
 end
@@ -1781,7 +1791,7 @@ end
 
  -- Serang musuh saat ini
  if currentTgt and not IsDead(currentTgt) and currentTgt.model.Parent then
- local pos = currentTgt.hrp and currentTgt.hrp.Position or Vector3.new(1,1,1)
+ local pos = currentTgt.hrp and currentTgt.hrp.Position or Vector3.new(2,2,2)
  FireAttack(currentTgt.guid, pos)
 
  -- [v186-FIX] Hanya ReturnHRPToOrigin jika tbtThread tidak aktif
@@ -1828,7 +1838,7 @@ function DoAutoCollect(on)
  if RE.ExtraReward then
   pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
  end
- task.wait(0.03)
+ task.wait(0.05) -- [OPT] collect 0.03→0.05
  end
  end
  end
@@ -2175,28 +2185,24 @@ end
 -- [FIXED] FUNGSI REJOIN SERVER (ANTI-NIL)
 -- ============================================================
 local function RejoinServer()
-    local TS = game:GetService("TeleportService")
-    local Players = game:GetService("Players")
-    local LP = Players.LocalPlayer
-
-    -- Deteksi VIP Server agar tidak ditendang saat rejoin
-    local isVIP = (game.VIPServerId ~= "" and game.VIPServerId ~= nil) or (game.VIPServerOwnerId ~= 0)
-
     task.spawn(function()
-        while task.wait(2) do
-            pcall(function()
-                if isVIP then
-                    -- Jika VIP, lempar ke server publik (biar tidak Unauthorized)
-                    TS:Teleport(game.PlaceId, LP)
-                elseif #Players:GetPlayers() <= 1 then
-                    -- Jika sendirian, cari server baru (biar tidak shutdown)
-                    TS:Teleport(game.PlaceId, LP)
-                else
-                    -- Jika ramai, masuk kembali ke JobId yang sama
-                    TS:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
-                end
+        -- Method 1: Delta native reconnect (paling reliable)
+        if reconnect then pcall(reconnect); return end
+
+        -- Method 2: TeleportService - coba server sama, fallback server baru
+        local ok = pcall(function()
+            local TS = game:GetService("TeleportService")
+            local s = pcall(function()
+                TS:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
             end)
-        end
+            if not s then
+                task.wait(1)
+                TS:Teleport(game.PlaceId, LP)
+            end
+        end)
+
+        -- Method 3: Kick diri sendiri → balik ke menu
+        if not ok then pcall(function() LP:Kick("Rejoining...") end) end
     end)
 end
 
@@ -2777,12 +2783,16 @@ do
                      if STATE.autoHideReward then forceHide(obj) end
                      pcall(function()
                          if obj:IsA("GuiObject") then
-                             obj:GetPropertyChangedSignal("Visible"):Connect(function()
-                                 if STATE.autoHideReward and obj.Visible then forceHide(obj) end
+                             pcall(function() -- [FIX] obj bisa di-destroy
+                              obj:GetPropertyChangedSignal("Visible"):Connect(function()
+                               if STATE.autoHideReward and obj.Visible then forceHide(obj) end
+                              end)
                              end)
                          elseif obj:IsA("ScreenGui") then
-                             obj:GetPropertyChangedSignal("Enabled"):Connect(function()
-                                 if STATE.autoHideReward and obj.Enabled then forceHide(obj) end
+                             pcall(function() -- [FIX]
+                              obj:GetPropertyChangedSignal("Enabled"):Connect(function()
+                               if STATE.autoHideReward and obj.Enabled then forceHide(obj) end
+                              end)
                              end)
                          end
                      end)
@@ -2796,7 +2806,7 @@ do
         -- Ghost Polling untuk Auto Hide
             task.spawn(function()
                 while STATE.autoHideReward do
-                    task.wait(0.5)
+                    task.wait(1) -- [OPT] 0.5→1s
                     pcall(function()
                         for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
                             for _, name in ipairs(HIDE_PANELS) do
@@ -2819,23 +2829,27 @@ STATE.disableAnim = false
 local function DoDisableAllAnimations(on)
         STATE.disableAnim = on
         if on then
-            _animLoopConn = RunService.RenderStepped:Connect(function()
-                pcall(function()
-                    local hFolder = workspace:FindFirstChild("Heros") or workspace:FindFirstChild("Pets")
-                    if hFolder then
-                        for _, hero in ipairs(hFolder:GetChildren()) do
-                            local hum = hero:FindFirstChildOfClass("Humanoid") or hero:FindFirstChildOfClass("AnimationController")
-                            if hum then
-                                local animator = hum:FindFirstChildOfClass("Animator")
-                                if animator then
-                                    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                                        track:Stop(); track:AdjustSpeed(0)
+            -- [OPT] task.wait(0.1) loop gantikan RenderStepped (6x lebih ringan)
+            _animLoopConn = task.spawn(function()
+                while STATE.disableAnim do
+                    pcall(function()
+                        local hFolder = workspace:FindFirstChild("Heros") or workspace:FindFirstChild("Pets")
+                        if hFolder then
+                            for _, hero in ipairs(hFolder:GetChildren()) do
+                                local hum = hero:FindFirstChildOfClass("Humanoid") or hero:FindFirstChildOfClass("AnimationController")
+                                if hum then
+                                    local animator = hum:FindFirstChildOfClass("Animator")
+                                    if animator then
+                                        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                                            track:Stop(); track:AdjustSpeed(0)
+                                        end
                                     end
                                 end
                             end
                         end
-                    end
-                end)
+                    end)
+                    task.wait(0.1)
+                end
             end)
 
         -- 2. RAZIA ALAM 3D (WORKSPACE) -> AMAN DARI CRASH
@@ -2901,7 +2915,7 @@ local function DoDisableAllAnimations(on)
 
     else
         -- [RESTORE NORMAL]
-        if _animLoopConn then _animLoopConn:Disconnect(); _animLoopConn = nil end
+        if _animLoopConn then pcall(function() task.cancel(_animLoopConn) end); _animLoopConn = nil end
         if _dmgTextConnWorkspace then _dmgTextConnWorkspace:Disconnect(); _dmgTextConnWorkspace = nil end
         
         -- Nyalakan lagi efek aura pada hero
@@ -2958,12 +2972,14 @@ end
  local _autoHideRow, _autoHideSet = ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup item", 1, function(on)
      DoAutoHideReward(on)
  end)
+ _G.FLaSetters["autoHide"] = _autoHideSet
  _autoHideRow.Name = "ZZZ_AutoHide" -- Trik aman! Memaksa posisinya di bawah Count RYB (LayoutOrder 1) tanpa merusak/menggeser LayoutOrder tombol lain.
 
  -- Toggle UI untuk Disable All Animations & Damage Text
 local _animRow, _animSet = ToggleRow(p, "DISABLE ALL ANIMATIONS", "Matikan animasi hero & teks damage (Anti-Lag)", 2, function(on)
     DoDisableAllAnimations(on)
 end)
+_G.FLaSetters["anim"] = _animSet
 _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berantakan
 
  --  Toggle Auto Sell (DI BAWAH counter) 
@@ -2971,6 +2987,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  _autoSellOn = on
  if _sellToggleCb then _sellToggleCb(on) end
  end)
+ _G.FLaSetters["autoSell"] = _sellToggleSet
 
  --  Status bar 
  local function SetSellStatus(msg, col)
@@ -3159,10 +3176,9 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
 
  -- Keyword yang mau disembunyikan (lowercase, match partial)
  local HIDE_KEYWORDS = {
- "Congratulations", -- weapon quirk reroll
+ "Congratulations,", -- weapon quirk reroll
  "just reroll a super quirk", -- hero quirk reroll
- "mythic hero", -- fallback semua jenis reroll
- "just pulled", -- tangkap notif quirk langka
+ "just pulled a mythic hero", -- fallback semua jenis reroll
  }
 
  local function _matchHideKeyword(txt)
@@ -4186,25 +4202,14 @@ do
  -- State
  local RA = { running=false, threads={}, killed=0, cur=nil }
  local TA = { running=false, threads={}, killed=0, cur=nil, targetName=nil }
- local _deadG_F = {}
+ _deadG_F = {} -- reset (global)
  local HERO_GUIDS_F = {}
 
  -- [FIX] SetupFarmHook dihapus - hook __namecall cukup satu di SetupUniversalSpy
  -- HERO_GUIDS_F sekarang alias ke HERO_GUIDS global agar tidak ada duplikasi hook
  local HERO_GUIDS_F = HERO_GUIDS -- alias, bukan copy
 
- -- Death listener
- if RE.Death then
- RE.Death.OnClientEvent:Connect(function(d)
- if not d then return end
- local g = d.enemyGuid or d.guid
- if g then
- _deadG_F[g] = false
- if RA.running then RA.killed = RA.killed+1 end
- if TA.running then TA.killed = TA.killed+1 end
- end
- end)
- end
+ -- [FIX] Death listener digabung ke handler utama (line 1430)
 
  -- Helpers
  local function IsPosValidF(hrp)
@@ -4261,9 +4266,9 @@ do
  local tgtPos = tgt.hrp.Position
  if tgtPos.Y < -10 then return end
  local dir = (hrp.Position - tgtPos)
- if dir.Magnitude < 0.5 then dir = Vector3.new(1,0,0) end
+ if dir.Magnitude < 0.5 then dir = Vector3.new(2,2,2) end
  dir = Vector3.new(dir.X, 0, dir.Z).Unit
- local nearPos = tgtPos + dir*8
+ local nearPos = tgtPos + dir*0
  local params = RaycastParams.new()
  params.FilterType = Enum.RaycastFilterType.Exclude
  local ex = {}
@@ -4271,11 +4276,11 @@ do
  local ef = workspace:FindFirstChild("Enemys"); if ef then table.insert(ex, ef) end
  params.FilterDescendantsInstances = ex
  local safePos
- for _,orig in ipairs({nearPos+Vector3.new(0,20,0), nearPos+Vector3.new(0,10,0), tgtPos+Vector3.new(4,20,0)}) do
- local r = workspace:Raycast(orig, Vector3.new(0,-80,0), params)
- if r and r.Position.Y >= (tgtPos.Y-30) then safePos = r.Position+Vector3.new(0,3,0); break end
+ for _,orig in ipairs({nearPos+Vector3.new(2,2,2), nearPos+Vector3.new(2,2,2), tgtPos+Vector3.new(2,2,2)}) do
+ local r = workspace:Raycast(orig, Vector3.new(2,2,2), params)
+ if r and r.Position.Y >= (tgtPos.Y-0) then safePos = r.Position+Vector3.new(2,2,2); break end
  end
- hrp.CFrame = CFrame.new(safePos or nearPos+Vector3.new(0,3,0))
+ hrp.CFrame = CFrame.new(safePos or nearPos+Vector3.new(2,2,2))
  end
 
  local function FCharF(g, pos)
@@ -4831,15 +4836,21 @@ do
  end
  end)
 
- ToggleRow(p,"No Clip","Tembus tembok & objek apapun selama aktif",2,function(on)
+ local _, _noClipSet = ToggleRow(p,"No Clip","Tembus tembok & objek apapun selama aktif",2,function(on)
  STATE.noClip=on
- if _noClipConn then _noClipConn:Disconnect(); _noClipConn=nil end
+ if _noClipConn then pcall(function() task.cancel(_noClipConn) end); _noClipConn=nil end
  if on then
- _noClipConn=RunService.Stepped:Connect(function()
- local char=LP.Character; if not char then return end
- for _,part in ipairs(char:GetDescendants()) do
- if part:IsA("BasePart") and part.CanCollide then part.CanCollide=false end
- end
+ -- [OPT] task.wait(0.1) gantikan Stepped (6x lebih ringan)
+ _noClipConn=task.spawn(function()
+  while STATE.noClip do
+   pcall(function()
+    local char=LP.Character; if not char then return end
+    for _,part in ipairs(char:GetDescendants()) do
+     if part:IsA("BasePart") and part.CanCollide then part.CanCollide=false end
+    end
+   end)
+   task.wait(0.1)
+  end
  end)
  else
  local char=LP.Character
@@ -4853,8 +4864,9 @@ do
  end
  RefreshStatus()
  end)
+ _G.FLaSetters["noClip"] = _noClipSet
 
- ToggleRow(p,"Anti AFK","Mencegah kick sistem idle 15 menit",4,function(on)
+ local _, _antiAfkSet = ToggleRow(p,"Anti AFK","Mencegah kick sistem idle 15 menit",4,function(on)
  STATE.antiAfk=on
  if _antiAfkThread then pcall(function() task.cancel(_antiAfkThread) end); _antiAfkThread=nil end
  if on then
@@ -6406,6 +6418,7 @@ task.spawn(function()
  _whSilent = false
  end)
 end)
+ _G.FLaSetters["antiAfk"] = _antiAfkSet
 
 --  FALLBACK 3: ExperienceChat BodyText watcher 
 -- Ini yang paling reliable karena BodyText selalu berisi teks penuh
@@ -6501,138 +6514,191 @@ local function _doSend(url, text)
  return ok
 end
 
+-- ============================================================
+-- WEBHOOK SENDER - Rebuild dari RAID_LIVE (sama persis Auto Raid)
+-- Grade dari RAID_CONFIG_GRADE[raidId] = akurat 100%, tanpa tunggu chat
+-- ============================================================
+
+-- Grade colors Discord embed
+local _WH_GRADE_COLOR = {
+    ["E"]=9868950,["D"]=6604900,["C"]=5294200,["B"]=6589695,
+    ["A"]=11822335,["S"]=16757810,["SS"]=16768000,["G"]=16742440,
+    ["N"]=16732240,["M"]=16727160,["M+"]=14428340,["M++"]=13115135,
+    ["XM"]=16732360,["ULT"]=16766720,
+}
+local _WH_GRADE_RANK = {
+    ["E"]=1,["D"]=2,["C"]=3,["B"]=4,["A"]=5,["S"]=6,["SS"]=7,
+    ["G"]=8,["N"]=9,["M"]=10,["M+"]=11,["M++"]=12,["XM"]=15,["ULT"]=17
+}
+
+-- Helper: ambil grade terbaik untuk entry — sama persis dengan Auto Raid
+local function _wh_getGrade(entry)
+    if not entry then return "?" end
+    -- 1. RAID_CONFIG_GRADE via raidId (100% akurat, langsung dari formula game)
+    if entry.raidId and entry.raidId > 0 and RAID_CONFIG_GRADE then
+        local g = RAID_CONFIG_GRADE[entry.raidId]
+        if g and g ~= "?" then return g end
+    end
+    -- 2. GetBestGrade (scan RAID_LIVE + _runeGradeCache)
+    local mn = (entry.mapId or 50000) - 50000
+    if GetBestGrade then
+        local g = GetBestGrade(mn)
+        if g and g ~= "?" then return g end
+    end
+    -- 3. entry.grade sebagai last resort
+    return entry.grade or "?"
+end
+
 -- Kirim notif Raid ke webhook
 _WH.SendRaid = function(url)
- -- [v272] Grade colors Discord embed
- local GRADE_COLOR = {
- ["E"]=9868950,["D"]=6604900,["C"]=5294200,["B"]=6589695,
- ["A"]=11822335,["S"]=16757810,["SS"]=16768000,["G"]=16742440,
- ["N"]=16732240,["M"]=16727160,["M+"]=14428340,["M++"]=13115135,
- ["XM"]=16732360,["ULT"]=16766720,
- }
- local GRADE_RANK_W = {["E"]=1,["D"]=2,["C"]=3,["B"]=4,["A"]=5,["S"]=6,["SS"]=7,["G"]=8,["N"]=9,["M"]=10,["M+"]=11,["M++"]=12,["XM"]=15,["ULT"]=17}
+    -- Ambil snapshot RAID_LIVE saat ini (sama persis dengan yang dilihat Auto Raid)
+    local raidList = {}
+    for _, entry in pairs(RAID_LIVE or {}) do
+        -- Skip temp entry (raidId negatif = belum dapat raidId asli dari server)
+        if entry.raidId and entry.raidId > 0 then
+            table.insert(raidList, entry)
+        end
+    end
+    -- Sort by mapId ascending (Map 1 → Map 19)
+    table.sort(raidList, function(a, b) return (a.mapId or 0) < (b.mapId or 0) end)
+    if #raidList == 0 then return end
 
- local raidList = {}
- for _, entry in pairs(RAID_LIVE or {}) do table.insert(raidList, entry) end
- table.sort(raidList, function(a,b) return (a.mapId or 0) < (b.mapId or 0) end)
- if #raidList == 0 then return end
+    local HS       = game:GetService("HttpService")
+    local reqFunc  = _getReqFunc()
+    if not reqFunc then return end
 
- local function getGrade(entry)
- local mn = (entry.mapId or 50000) - 50000
- local g = "?"
- if entry.raidId and entry.raidId > 0 and RAID_CONFIG_GRADE then g = RAID_CONFIG_GRADE[entry.raidId] or "?" end
- if g == "?" then g = (GetBestGrade and GetBestGrade(mn)) or "?" end
- if g == "?" then g = entry.grade or "?" end
- return g
- end
+    local isDiscord  = url:find("discord%.com/api/webhooks")
+    local isTelegram = url:find("api%.telegram%.org")
 
- local normalRaids, atRaids = {}, {}
- for _, entry in ipairs(raidList) do
- local mn = (entry.mapId or 50000) - 50000
- local isAT = entry.isAT or (entry.raidId and entry.raidId >= 935001) or (mn >= 20)
- if isAT then table.insert(atRaids, entry)
- else table.insert(normalRaids, entry) end
- end
+    -- Pisah Normal Raid vs Ascension Tower berdasarkan raidId
+    -- raidId >= 935001 = Ascension Tower
+    -- raidId 930xxx   = Normal Raid
+    local topGrade    = "E"
+    local lines_normal = {}
+    local lines_at     = {}
+    for _, entry in ipairs(raidList) do
+        local mn   = (entry.mapId or 50000) - 50000
+        local g    = _wh_getGrade(entry)
+        local isAT = (entry.raidId and entry.raidId >= 935001)
+        if (_WH_GRADE_RANK[g] or 0) > (_WH_GRADE_RANK[topGrade] or 0) then
+            topGrade = g
+        end
+        if isAT then
+            -- AT: hitung tower number dari raidId
+            -- AT mapNum = ((raidId - 935001) // 100) % 18 + 1
+            local towerNum = math.floor((entry.raidId - 935001) / 100) % 18 + 1
+            table.insert(lines_at, string.format("Tower %d - Ascension Tower %d [%s]", towerNum, towerNum, g))
+        else
+            local name = MAP_NAMES[mn] or ("Map "..mn)
+            table.insert(lines_normal, string.format("Map %d - %s [%s]", mn, name, g))
+        end
+    end
+    local lines = {}
+    for _, l in ipairs(lines_normal) do table.insert(lines, l) end
+    for _, l in ipairs(lines_at)     do table.insert(lines, l) end
 
- local isDiscord = url:find("discord%.com/api/webhooks")
- local isTelegram = url:find("api%.telegram%.org")
- local HS = game:GetService("HttpService")
- local reqFunc = _getReqFunc()
- if not reqFunc then return end
-
- if isDiscord then
- local topGrade = "E"
- local lines_normal, lines_at = {}, {}
- for _, entry in ipairs(normalRaids) do
- local mn = (entry.mapId or 50000) - 50000
- local name = MAP_NAMES[mn] or ("Map "..mn)
- local g = getGrade(entry)
- table.insert(lines_normal, "Map "..mn.." - "..name.." ["..g.."]")
- if (GRADE_RANK_W[g] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = g end
- end
- for _, entry in ipairs(atRaids) do
- local mn = (entry.mapId or 50000) - 50000
- local towerNum = mn - 18
- local g = getGrade(entry)
- table.insert(lines_at, "Tower "..towerNum.." - Ascension Tower "..towerNum.." ["..g.."]")
- if (GRADE_RANK_W[g] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = g end
- end
- local color = GRADE_COLOR[topGrade] or GRADE_COLOR["E"]
- local fields = {}
- if #lines_normal > 0 then
- table.insert(fields, {name="[Normal Raid] ("..#lines_normal..")", value=table.concat(lines_normal,"\n"), inline=false})
- end
- if #lines_at > 0 then
- table.insert(fields, {name="[Ascension Tower] ("..#lines_at..")", value=table.concat(lines_at,"\n"), inline=false})
- end
- local payload = {embeds={{title="[RAID OPEN] Rank "..topGrade, description="Total: **"..#raidList.."** raid aktif", color=color, fields=fields, footer={text="ASH GUI FLa Project"}}}}
- pcall(function()
- reqFunc({Url=url, Method="POST", Headers={["Content-Type"]="application/json"}, Body=HS:JSONEncode(payload)})
- end)
- elseif isTelegram then
- local lines = {"[RAID OPEN]"}
- for _, entry in ipairs(normalRaids) do
- local mn = (entry.mapId or 50000) - 50000
- local g = getGrade(entry)
- table.insert(lines, "- Map "..mn.." - "..(MAP_NAMES[mn] or "Map "..mn).." ["..g.."]")
- end
- for _, entry in ipairs(atRaids) do
- local mn = (entry.mapId or 50000) - 50000
- local g = getGrade(entry)
- table.insert(lines, "Tower "..(mn-18).." ["..g.."]")
- end
- _doSend(url, table.concat(lines, "\n"))
- end
+    if isDiscord then
+        local color  = _WH_GRADE_COLOR[topGrade] or _WH_GRADE_COLOR["E"]
+        local fields = {}
+        if #lines_normal > 0 then
+            table.insert(fields, {
+                name   = "Normal Raid (" .. #lines_normal .. ")",
+                value  = "```\n" .. table.concat(lines_normal, "\n") .. "\n```",
+                inline = false
+            })
+        end
+        if #lines_at > 0 then
+            table.insert(fields, {
+                name   = "Ascension Tower (" .. #lines_at .. ")",
+                value  = "```\n" .. table.concat(lines_at, "\n") .. "\n```",
+                inline = false
+            })
+        end
+        local payload = {
+            embeds = {{
+                title  = "[RAID OPEN] Best Rank: " .. topGrade,
+                color  = color,
+                fields = fields,
+                footer = {text = "ASH GUI FLa Project"},
+            }}
+        }
+        pcall(function()
+            reqFunc({
+                Url = url, Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HS:JSONEncode(payload)
+            })
+        end)
+    elseif isTelegram then
+        local all = {}
+        for _, l in ipairs(lines_normal) do table.insert(all, l) end
+        for _, l in ipairs(lines_at)     do table.insert(all, l) end
+        local msg = "[RAID OPEN] Best: " .. topGrade .. "\n" .. table.concat(all, "\n")
+        _doSend(url, msg)
+    end
 end
-SendWebhookRaid = function(url) _WH.SendRaid(url) end -- alias internal
+SendWebhookRaid = function(url) _WH.SendRaid(url) end
 
--- Kirim notif Siege ke webhook
+-- Kirim notif Siege (tidak berubah — data Siege dari SIEGE.live sudah akurat)
 _WH.SendSiege = function(url)
- local SIEGE_NAMES = {
- [3]="Shadow Castle", [7]="Demon Castle Tier 2",
- [10]="Plagueheart", [13]="Lava Hell"
- }
- local lines = { "**SIEGE OPEN**" }
- local found = false
- if SIEGE and SIEGE.live then
- for cid, mn in pairs(SIEGE.live) do
- local name = SIEGE_NAMES[mn] or ("Map " .. mn)
- table.insert(lines, string.format("- Map %d - %s", mn, name))
- found = true
- end
- end
- if not found then return end
- local msg = table.concat(lines, "\n")
- _doSend(url, msg)
+    local SIEGE_NAMES = {
+        [3]="Shadow Castle", [7]="Demon Castle Tier 2",
+        [10]="Plagueheart",  [13]="Lava Hell"
+    }
+    local lines = {}
+    if SIEGE and SIEGE.live then
+        for cid, mn in pairs(SIEGE.live) do
+            local name = SIEGE_NAMES[mn] or ("Map "..mn)
+            table.insert(lines, string.format("Map %d - %s (cityId:%s)", mn, name, tostring(cid)))
+        end
+    end
+    if #lines == 0 then return end
+
+    local HS      = game:GetService("HttpService")
+    local reqFunc = _getReqFunc()
+    if not reqFunc then return end
+    local isDiscord  = url:find("discord%.com/api/webhooks")
+    local isTelegram = url:find("api%.telegram%.org")
+
+    if isDiscord then
+        local payload = {
+            embeds = {{
+                title       = "[SIEGE OPEN]",
+                description = "Total **" .. #lines .. "** Siege aktif\n```\n" .. table.concat(lines, "\n") .. "\n```",
+                color       = 5592575,
+                footer      = {text = "ASH GUI FLa Project"},
+            }}
+        }
+        pcall(function()
+            reqFunc({
+                Url = url, Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HS:JSONEncode(payload)
+            })
+        end)
+    elseif isTelegram then
+        _doSend(url, "[SIEGE OPEN]\n" .. table.concat(lines, "\n"))
+    end
 end
-SendWebhookSiege = function(url) _WH.SendSiege(url) end -- alias internal
+SendWebhookSiege = function(url) _WH.SendSiege(url) end
 
--- Debounce timer: tunggu 3 detik setelah notif terakhir baru kirim
-local _whDebounce = nil
-local _whLastSent = 0
-
+-- Trigger webhook (dengan anti-spam & tunggu raidId valid)
 TriggerWebhookDebounce = function()
     if not _webhookEnabled or not _webhookUrl or _webhookUrl == "" then return end
-    
-    -- ==========================================
-    -- [SISTEM INGATAN ANTI-SPAM DISCORD]
-    -- ==========================================
-    _G.SentRaidIds = _G.SentRaidIds or {}
+
+    -- Anti-spam: hanya kirim kalau ada raidId/siegeId BARU
+    _G.SentRaidIds  = _G.SentRaidIds  or {}
     _G.SentSiegeIds = _G.SentSiegeIds or {}
-    
     local hasNew = false
-    
-    -- 1. Cek apakah ada ID Raid baru yang belum pernah dikirim
+
     if RAID_LIVE then
         for id, _ in pairs(RAID_LIVE) do
-            if not _G.SentRaidIds[id] then
+            if id > 0 and not _G.SentRaidIds[id] then
                 _G.SentRaidIds[id] = true
                 hasNew = true
             end
         end
     end
-    
-    -- 2. Cek apakah ada ID Siege baru yang belum pernah dikirim
     if SIEGE and SIEGE.live then
         for id, _ in pairs(SIEGE.live) do
             if not _G.SentSiegeIds[id] then
@@ -6641,24 +6707,26 @@ TriggerWebhookDebounce = function()
             end
         end
     end
-    
-    -- 3. HUKUM MUTLAK: Jika tidak ada ID baru, BATALKAN PENGIRIMAN! (Diam)
     if not hasNew then return end
-    -- ==========================================
 
     if _whDebounce then pcall(function() task.cancel(_whDebounce) end) end
 
-    -- [v271] Debounce 1 detik (turun dari 3s) agar lebih responsif
-    _whDebounce = task.delay(1, function()
+    -- Debounce 2 detik: beri waktu RAID_CONFIG_GRADE terisi dulu
+    _whDebounce = task.delay(2, function()
         _whDebounce = nil
-        -- [v271] Cooldown 10 detik (turun dari 30s) agar tidak terlalu lambat
         if (tick() - _whLastSent) < 10 then return end
         _whLastSent = tick()
 
         task.spawn(function()
-            local mode = _webhookMode or "both"
-            local url = _webhookUrl
-            local hasRaid = next(RAID_LIVE or {}) ~= nil
+            local mode    = _webhookMode or "both"
+            local url     = _webhookUrl
+            local hasRaid = false
+            -- Hanya kirim kalau ada entry valid (raidId > 0)
+            if RAID_LIVE then
+                for id, _ in pairs(RAID_LIVE) do
+                    if id > 0 then hasRaid = true; break end
+                end
+            end
             local hasSiege = SIEGE and SIEGE.live and next(SIEGE.live) ~= nil
 
             if (mode == "raid" or mode == "both") and hasRaid then
@@ -6671,8 +6739,8 @@ TriggerWebhookDebounce = function()
         end)
     end)
 end
-
 SendWebhookNotif = TriggerWebhookDebounce -- alias untuk kompatibilitas
+
 
 FlushWebhookPending = function()
  _whLastSent = 0 -- reset cooldown
@@ -8081,7 +8149,7 @@ local function ResolveEntry()
  if hum and hum.Health <= 0 then break end
  local p = (boss.hrp and boss.hrp.Position) or bossPos
  task.spawn(function() pcall(function() RaidFireDamage(bossGuid, p) end) end)
- task.wait(0.08)
+ task.wait(0.15) -- [OPT] ST2 0.08→0.15
  end
 
  pcall(function() task.cancel(_tpTh) end)
@@ -9513,7 +9581,7 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             end
         end
 
-        task.wait(0.08)
+        task.wait(0.15) -- [OPT] Siege 0.08→0.15
     end
 
     cleanup()
@@ -10151,7 +10219,7 @@ local function DungeonAttackLoop(onStatus)
             end
         end
 
-        task.wait(0.08)
+        task.wait(0.15) -- [OPT] Dungeon 0.08→0.15
     end
 
     cleanup()
@@ -11318,10 +11386,222 @@ end
 -- WEBHOOK SENDER
 -- ============================================================
 -- ============================================================
+
+-- ============================================================
+-- SAVE / LOAD / RESET CONFIG
+-- File: FLa_Config.json di Delta/workspace/
+-- ============================================================
+local FLA_CFG = "FLa_Config.json"
+
+function _cfgRead()
+    if not readfile then return nil end
+    local ok, raw = pcall(readfile, FLA_CFG)
+    if not ok or not raw or raw == "" or raw == "{}" then return nil end
+    return raw
+end
+
+function _cfgWrite(data)
+    if not writefile then return false end
+    local ok, json = pcall(function()
+        return game:GetService("HttpService"):JSONEncode(data)
+    end)
+    if not ok then return false end
+    return pcall(writefile, FLA_CFG, json)
+end
+
+function _cfgDelete()
+    if delfile then pcall(delfile, FLA_CFG)
+    elseif writefile then pcall(writefile, FLA_CFG, "{}") end
+end
+
+function FLaCollect()
+    local d = {}
+    -- Toggles (via FLaSetters registry - semua panel sudah isi saat ini)
+    local S = _G.FLaSetters or {}
+    d.autoHideReward = STATE and STATE.autoHideReward or false
+    d.disableAnim    = STATE and STATE.disableAnim    or false
+    d.noClip         = STATE and STATE.noClip         or false
+    d.antiAfk        = STATE and STATE.antiAfk        or false
+    d.hideRerollChat = _hideRerollChat or false
+    d.potatoMode     = _G.PotatoMode  or false
+    d.autoSellOn     = _autoSellOn    or false
+    -- Webhook
+    d.webhookUrl     = _webhookUrl    or ""
+    d.webhookMode    = _webhookMode   or "both"
+    d.webhookEnabled = _webhookEnabled or false
+    -- Mass Attack
+    d.maKillTarget = MA and MA.killTarget    or 7
+    d.mrNextDelay  = MR and MR.nextMapDelay  or 3
+    d.mrTpDelay    = MR and MR.teleportDelay or 3
+    d.mrSelected = {}
+    if MR and MR.selected then
+        for i = 1, 19 do
+            if MR.selected[i] then d.mrSelected[tostring(i)] = true end
+        end
+    end
+    -- Auto Raid
+    d.raidDifficulty    = RAID and RAID.difficulty    or "easy"
+    d.raidRuneEnabled   = RAID and RAID.runeEnabled   or false
+    d.raidRuneMapTarget = RAID and RAID.runeMapTarget or 0
+    d.raidUpdownEnabled = RAID and RAID.updownEnabled or false
+    d.raidUpdownDir     = RAID and RAID.updownDir     or "up"
+    d.raidPreferMaps = {}
+    if RAID and RAID.preferMaps then
+        for mn, v in pairs(RAID.preferMaps) do
+            if v then d.raidPreferMaps[tostring(mn)] = true end
+        end
+    end
+    d.raidRuneGrades = {}
+    if RAID and RAID.runeGrades then
+        for g, v in pairs(RAID.runeGrades) do
+            if v then d.raidRuneGrades[tostring(g)] = true end
+        end
+    end
+    -- Auto Siege
+    d.siegeExcludeMaps = {}
+    if SIEGE and SIEGE.excludeMaps then
+        for mn, v in pairs(SIEGE.excludeMaps) do
+            d.siegeExcludeMaps[tostring(mn)] = v and true or false
+        end
+    end
+    return d
+end
+
+function FLaApply(d)
+    if type(d) ~= "table" then return end
+    -- Webhook
+    if type(d.webhookUrl)     == "string"  then _webhookUrl     = d.webhookUrl  end
+    if type(d.webhookMode)    == "string"  then _webhookMode    = d.webhookMode end
+    if type(d.webhookEnabled) == "boolean" then _webhookEnabled = d.webhookEnabled end
+    pcall(function()
+        local urlB = ScreenGui:FindFirstChild("urlBox", true)
+        if urlB and urlB:IsA("TextBox") then urlB.Text = _webhookUrl end
+    end)
+    -- Mass Attack
+    if type(d.maKillTarget) == "number" then MA.killTarget    = d.maKillTarget end
+    if type(d.mrNextDelay)  == "number" then MR.nextMapDelay  = d.mrNextDelay  end
+    if type(d.mrTpDelay)    == "number" then MR.teleportDelay = d.mrTpDelay    end
+    if type(d.mrSelected) == "table" then
+        for i = 1, 19 do MR.selected[i] = nil end
+        for k, v in pairs(d.mrSelected) do
+            local i = tonumber(k)
+            if i and v then MR.selected[i] = true end
+        end
+    end
+    -- Auto Raid
+    if type(d.raidDifficulty)    == "string"  then RAID.difficulty    = d.raidDifficulty    end
+    if type(d.raidRuneEnabled)   == "boolean" then RAID.runeEnabled   = d.raidRuneEnabled   end
+    if type(d.raidRuneMapTarget) == "number"  then RAID.runeMapTarget = d.raidRuneMapTarget end
+    if type(d.raidUpdownEnabled) == "boolean" then RAID.updownEnabled = d.raidUpdownEnabled end
+    if type(d.raidUpdownDir)     == "string"  then RAID.updownDir     = d.raidUpdownDir     end
+    if type(d.raidPreferMaps) == "table" then
+        RAID.preferMaps = {}
+        for k, v in pairs(d.raidPreferMaps) do
+            local mn = tonumber(k); if mn and v then RAID.preferMaps[mn] = true end
+        end
+    end
+    if type(d.raidRuneGrades) == "table" then
+        RAID.runeGrades = {}
+        for k, v in pairs(d.raidRuneGrades) do
+            if v then RAID.runeGrades[tostring(k)] = true end
+        end
+    end
+    -- Auto Siege
+    if type(d.siegeExcludeMaps) == "table" then
+        for k, v in pairs(d.siegeExcludeMaps) do
+            local mn = tonumber(k); if mn then SIEGE.excludeMaps[mn] = v end
+        end
+    end
+    -- Potato Mode
+    if type(d.potatoMode) == "boolean" then _G.PotatoMode = d.potatoMode end
+    -- Restore toggles UI via FLaSetters registry
+    -- Delay 2s: pastikan semua panel + FLaSetters sudah terisi
+    task.delay(2, function()
+        pcall(function()
+            local S = _G.FLaSetters or {}
+            if S.autoHide and type(d.autoHideReward) == "boolean" then S.autoHide(d.autoHideReward) end
+            if S.anim     and type(d.disableAnim)    == "boolean" then S.anim(d.disableAnim)        end
+            if S.noClip   and type(d.noClip)         == "boolean" then S.noClip(d.noClip)           end
+            if S.antiAfk  and type(d.antiAfk)        == "boolean" then S.antiAfk(d.antiAfk)         end
+            if S.autoSell and type(d.autoSellOn)     == "boolean" then S.autoSell(d.autoSellOn)     end
+            -- Hide Reroll Chat
+            if type(d.hideRerollChat) == "boolean" and d.hideRerollChat ~= _hideRerollChat then
+                _hideRerollChat = d.hideRerollChat
+                if d.hideRerollChat then _startHideRerollChat() else _stopHideRerollChat() end
+            end
+        end)
+    end)
+end
+
+function FLaSave()
+    if _cfgWrite(FLaCollect()) then
+        SystemNotify("💾 Config tersimpan!", 2)
+    else
+        SystemNotify("✗ Gagal save! writefile tidak tersedia?", 3)
+    end
+end
+
+function FLaReset()
+    _cfgDelete()
+    SystemNotify("🗑 Config dihapus. Fresh saat load berikutnya!", 2)
+end
+
+function FLaAutoLoad()
+    local raw = _cfgRead()
+    if not raw then return end
+    local ok, data = pcall(game.GetService, game, "HttpService")
+    if ok then
+        ok, data = pcall(function()
+            return game:GetService("HttpService"):JSONDecode(raw)
+        end)
+    end
+    if ok and type(data) == "table" then
+        FLaApply(data)
+        SystemNotify("💾 Config dimuat!", 1.5)
+    end
+end
+
+-- Auto-load setelah 1.5s (panel sudah dibuat, FLaSetters belum terisi)
+-- FLaApply sendiri akan delay 2s sebelum restore toggles
+task.delay(1.5, function() pcall(FLaAutoLoad) end)
+
 -- PANEL : SETTINGS
 -- ============================================================
 do
  local p = NewPanel("settings")
+ -- ── Save / Reset Config ──────────────────────────────────
+ local _cfgCard = Frame(p, C.BG3, UDim2.new(1,0,0,0))
+ _cfgCard.LayoutOrder=0; _cfgCard.AutomaticSize=Enum.AutomaticSize.Y
+ Corner(_cfgCard,10); Stroke(_cfgCard,C.ACC,1.5,0.35)
+ Padding(_cfgCard,8,8,10,10)
+ New("UIListLayout",{Parent=_cfgCard,FillDirection=Enum.FillDirection.Vertical,
+  SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
+ Label(_cfgCard,"⚙  Save / Reset Config",12,C.TXT,Enum.Font.GothamBold).Size=UDim2.new(1,0,0,16)
+ Label(_cfgCard,"Simpan semua setting aktif, atau reset ke fresh",9,C.TXT3,Enum.Font.GothamBold).Size=UDim2.new(1,0,0,13)
+ local _cfgBtnRow=Frame(_cfgCard,C.BG3,UDim2.new(1,0,0,34))
+ _cfgBtnRow.BackgroundTransparency=1
+ New("UIListLayout",{Parent=_cfgBtnRow,FillDirection=Enum.FillDirection.Horizontal,
+  SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,8)})
+ local _saveBtn=Btn(_cfgBtnRow,C.ACC,UDim2.new(0.65,-4,1,0))
+ _saveBtn.LayoutOrder=1; Corner(_saveBtn,8)
+ local _saveLbl=Label(_saveBtn,"💾  SAVE CONFIG",11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+ _saveLbl.Size=UDim2.new(1,0,1,0)
+ _saveBtn.MouseButton1Click:Connect(function()
+  _saveBtn.Active=false; _saveLbl.Text="Saving..."
+  task.wait(0.1); FLaSave(); task.wait(0.5)
+  _saveLbl.Text="💾  SAVE CONFIG"; _saveBtn.Active=true
+ end)
+ local _resetBtn=Btn(_cfgBtnRow,Color3.fromRGB(160,50,50),UDim2.new(0.35,-4,1,0))
+ _resetBtn.LayoutOrder=2; Corner(_resetBtn,8)
+ local _resetLbl=Label(_resetBtn,"🗑  RESET",11,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+ _resetLbl.Size=UDim2.new(1,0,1,0)
+ _resetBtn.MouseButton1Click:Connect(function()
+  _resetBtn.Active=false; _resetLbl.Text="Deleting..."
+  task.wait(0.1); FLaReset(); task.wait(0.5)
+  _resetLbl.Text="🗑  RESET"; _resetBtn.Active=true
+ end)
+ -- ── End Save / Reset ──────────────────────────────────────
+
  SectionHeader(p,"UI & Performance",1)
  
  ToggleRow(p, "Potato Mode (Anti-Lag)", "Disable all VFX for performance", 2, function(v)
@@ -11518,7 +11798,7 @@ do
  testLbl.Text="[..] Sending..."; testLbl.TextColor3=Color3.fromRGB(255,220,60)
  -- [FIX] Timeout UI 1s: kalau tidak ada callback dalam 1s, reset label
  local _done = false
- task.delay(1, function()
+ task.delay(10, function()
  if not _done then
  _done = true
  testLbl.Text="[!] Timeout"; testLbl.TextColor3=Color3.fromRGB(255,80,60)
@@ -11604,7 +11884,8 @@ do
  local mode = _webhookMode or "both"
  local url = _webhookUrl
  local sent = false
- local hasRaid = next(RAID_LIVE or {}) ~= nil
+ local hasRaid = false
+        if RAID_LIVE then for id, _ in pairs(RAID_LIVE) do if id > 0 then hasRaid = true; break end end end
  local hasSiege = SIEGE and SIEGE.live and next(SIEGE.live) ~= nil
  if (mode == "raid" or mode == "both") and hasRaid then
  if _WH.SendRaid then _WH.SendRaid(url) end; sent = true
@@ -12341,4 +12622,100 @@ task.spawn(function()
             end
         end) 
     end 
+
+-- ============================================================
+-- AUTO CLEANUP SYSTEM
+-- Trigger: CharacterRemoving (relog/respawn) atau game close
+-- Tujuan: hentikan semua loop/thread/koneksi → free memory
+-- ============================================================
+local function FLaFullCleanup(reason)
+    reason = reason or "cleanup"
+    pcall(function() print("[FLa CLEANUP] " .. reason) end)
+
+    -- 1. Stop semua fitur utama
+    pcall(function() if DoMassAttack then DoMassAttack(false) end end)
+    pcall(function() if StopRaid     then StopRaid()          end end)
+    pcall(function() if StopSiege    then StopSiege()         end end)
+    pcall(function() if StopDungeon  then StopDungeon()       end end)
+    pcall(function() if StopST2      then StopST2()           end end)
+
+    -- 2. Stop AG (Auto Goyang/Farm)
+    pcall(function()
+        if AG then AG.running = false end
+        if AG and AG.thread then
+            pcall(function() task.cancel(AG.thread) end)
+            AG.thread = nil
+        end
+    end)
+
+    -- 3. Disconnect semua koneksi event
+    pcall(function() if _animLoopConn then pcall(task.cancel, _animLoopConn); _animLoopConn = nil end end)
+    pcall(function() if _dmgTextConnWorkspace then _dmgTextConnWorkspace:Disconnect(); _dmgTextConnWorkspace = nil end end)
+    pcall(function() if _noClipConn then pcall(task.cancel, _noClipConn); _noClipConn = nil end end)
+    pcall(function() if _hideRerollConn then _hideRerollConn:Disconnect(); _hideRerollConn = nil end end)
+    pcall(function() if _sellConn then _sellConn:Disconnect(); _sellConn = nil end end)
+    pcall(function() if _swConn then pcall(function() task.cancel(_swConn) end); _swConn = nil end end)
+    pcall(function() if DisconnectRaidConns then DisconnectRaidConns() end end)
+
+    -- 4. Destroy BindableEvents
+    pcall(function() if _raidWakeup   then _raidWakeup:Destroy();   _raidWakeup   = nil end end)
+    pcall(function() if _siegeWakeup  then _siegeWakeup:Destroy();  _siegeWakeup  = nil end end)
+    pcall(function() if _dungeonWakeup then _dungeonWakeup:Destroy(); _dungeonWakeup = nil end end)
+
+    -- 5. Clear state tables (free memory)
+    pcall(function() RAID_LIVE = {}; RAID_ID_LIST = {} end)
+    pcall(function() _deadG = {}; _deadG_F = {} end)
+    pcall(function() _runeGradeCache = {}; HERO_GUIDS = {} end)
+    pcall(function() if SIEGE then SIEGE.live = {} end end)
+    pcall(function() _G.SentRaidIds = {}; _G.SentSiegeIds = {} end)
+
+    -- 6. Destroy GUI
+    pcall(function()
+        if ScreenGui and ScreenGui.Parent then
+            ScreenGui:Destroy()
+        end
+    end)
+
+    -- 7. Cancel webhook debounce
+    pcall(function()
+        if _whDebounce then
+            task.cancel(_whDebounce)
+            _whDebounce = nil
+        end
+    end)
+
+    -- 8. Reset MODE dispatcher
+    pcall(function()
+        if MODE then MODE.current = "idle" end
+    end)
+end
+
+-- ── Trigger 1: CharacterRemoving = player relog / respawn ────
+-- Ini terjadi saat player klik "Leave Game" atau server kick
+task.spawn(function()
+    -- Tunggu sampai karakter pertama kali load
+    local char = LP.Character or LP.CharacterAdded:Wait()
+    -- Pasang listener untuk NEXT CharacterRemoving
+    LP.CharacterRemoving:Connect(function()
+        task.delay(0.1, function()
+            FLaFullCleanup("CharacterRemoving - relog/respawn")
+        end)
+    end)
+end)
+
+-- ── Trigger 2: game:BindToClose = executor close / game close ─
+pcall(function()
+    game:BindToClose(function()
+        FLaFullCleanup("game:BindToClose")
+    end)
+end)
+
+-- ── Trigger 3: ScreenGui di-destroy dari luar (executor kill) ─
+ScreenGui.AncestryChanged:Connect(function(_, parent)
+    if not parent then
+        FLaFullCleanup("ScreenGui removed")
+    end
+end)
+
+
 end)

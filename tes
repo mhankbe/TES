@@ -1,8 +1,4 @@
--- init
-_G.UI_REGISTRY = {}
-_G.FLA_IS_RUNNING = true
-_G.FLA_CONNECTIONS = {}
-_G.FLA_HOOK_RESTORED = false
+-- ASH Auto Farm - by FLa Project
 do
  local _RS2 = game:GetService("ReplicatedStorage")
  local _LP2 = game:GetService("Players").LocalPlayer
@@ -41,8 +37,6 @@ CITY_TO_MAP_CONN = {[1000001]=3,[1000002]=7,[1000003]=10,[1000004]=13}
 -- Fungsi ini di-define ulang di bawah setelah SIEGE table siap
 ConnectUpdateCityRaidListener = nil -- forward declare
 
-UI_REGISTRY = {}
-
 -- [v232] GetCityRaidInfos sekarang dipanggil dari ConnectUpdateCityRaidListener
 -- setelah GUI load + delay 5 detik (lihat di bawah SwitchTab)
 end -- do globals
@@ -64,12 +58,6 @@ end
 -- REMOTES
 -- ============================================================
 Remotes = RS:WaitForChild("Remotes", 10)
-
-pcall(function()
-    local sls = Remotes:FindFirstChild("SendLikelySpeakingUsers")
-    if sls then sls.OnClientEvent:Connect(function() end) end
-end)
-
 RE = {
  CollectItem = Remotes:WaitForChild("CollectItem", 10),
  ExtraReward = Remotes:WaitForChild("ExtraReward", 10), -- [v112-FIX] WaitForChild agar tidak nil
@@ -557,7 +545,7 @@ function BuildTopBar()
  Size = UDim2.new(1,0,0,36),
  Position = UDim2.new(0,0,0,0),
  BackgroundTransparency = 1,
- Text = " ARE YOU GAY ?",
+ Text = "Close FLa Script?",
  TextSize = 13,
  TextColor3 = C.WIN_CLOSE,
  Font = Enum.Font.GothamBold,
@@ -605,7 +593,7 @@ function BuildTopBar()
  BackgroundColor3 = C.WIN_CLOSE,
  BackgroundTransparency = 0.2,
  BorderSizePixel = 0,
- Text = "YES DADDY",
+ Text = "YES, CLOSE",
  TextSize = 12,
  TextColor3 = Color3.fromRGB(255,255,255),
  Font = Enum.Font.GothamBold,
@@ -619,57 +607,12 @@ function BuildTopBar()
  pcall(function() popupGui:Destroy() end)
  end)
 
- -- YES: stop semua fitur lalu destroy GUI
+ -- YES: jalankan FLaFullCleanup (stop semua + clear memory + destroy GUI)
  btnYes.MouseButton1Click:Connect(function()
- pcall(function() popupGui:Destroy() end)
- -- [v238 FIX] Stop semua fitur sebelum destroy GUI
- pcall(function() if StopRaid then StopRaid() end end)
- pcall(function()
- if SIEGE then
- SIEGE.running = false
- SIEGE.inMap = false
- if SIEGE.thread then
- pcall(function() task.cancel(SIEGE.thread) end)
- SIEGE.thread = nil
- end
- end
- end)
- pcall(function()
- if MA then
- MA.running = false
- if MA.thread then
- pcall(function() task.cancel(MA.thread) end)
- MA.thread = nil
- end
- end
- end)
- -- Stop Merge Potion loop
- pcall(function()
- if _mergeRunning ~= nil then _mergeRunning = false end
- if _mergeThread ~= nil then
- pcall(function() task.cancel(_mergeThread) end)
- _mergeThread = nil
- end
- end)
- -- Stop Use Potion loop
- pcall(function()
- if _useRunning ~= nil then _useRunning = false end
- if _useThread ~= nil then
- pcall(function() task.cancel(_useThread) end)
- _useThread = nil
- end
- end)
- _raidOn = false
- _raidInterrupt = false
- _siegeInterrupt = false
- MODE.current = "idle" -- [v252] hard reset MODE dispatcher
- -- Destroy semua GUI ASH
- for _, gname in ipairs({"FLa Project"}) do
- pcall(function()
- local g = LP.PlayerGui:FindFirstChild(gname)
- if g then g:Destroy() end
- end)
- end
+  pcall(function() popupGui:Destroy() end)
+  task.spawn(function()
+   FLaFullCleanup("User closed script")
+  end)
  end)
  end)
 end
@@ -1171,7 +1114,7 @@ RAID.bossDelay = 3 -- detik delay sebelum TP ke boss (1-10, user-controlled)
 _maStatusLbl, _noClipConn, _antiAfkThread, _antiAfkStart = nil, nil, nil, nil
 local _deadG, _mOn, _agOn, _tgtThread = {}, false, false, nil
 _deadG_F = {} -- [FIX] global scope agar Death handler bisa akses
-_G.FLaSetters = {} -- [FIX] registry SetState untuk Save/Load restore
+_deathConnGlobal = nil -- koneksi RE.Death global untuk cleanup
 local _activeTbnRow = nil -- [v188-FIX] track row tbn yang sedang aktif
 local ORIGIN_POS, _destroyerConn, _ariseConn = Vector3.new(0,0,0), nil, nil
 local StatusDots, StatusLbls = {}, {}
@@ -1454,7 +1397,7 @@ function FireHeroRemotes(enemyGuid, enemyPos)
 end
 
 if RE.Death then
- local conn = RE.Death.OnClientEvent:Connect(function(d)
+ _deathConnGlobal = RE.Death.OnClientEvent:Connect(function(d)
   if not d then return end
   local g = d.enemyGuid or d.guid
   if not g then return end
@@ -1473,7 +1416,6 @@ if RE.Death then
    if SiegeCounterUpdate then SiegeCounterUpdate() end
   end
  end)
- table.insert(_G.FLA_CONNECTIONS, conn)
 end
 
 -- ============================================================
@@ -2016,11 +1958,7 @@ function DoMassAttack(on)
  end
  while MA.running do
  -- [v252] Pause kalau ada fitur prioritas lebih tinggi aktif
- if MODE.current ~= "idle" and MODE.current ~= "ma"
-   or _raidInterrupt or _siegeInterrupt
-   or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap)
-   or (ST2 and ST2.running)
-   or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
+ if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
  if not MA.running then break end
 
  local mapsToUse = {}
@@ -2035,11 +1973,7 @@ function DoMassAttack(on)
  elseif not cont or not MA.running then
  break
  end
- if MODE.current ~= "idle" and MODE.current ~= "ma"
-   or _raidInterrupt or _siegeInterrupt
-   or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap)
-   or (ST2 and ST2.running)
-   or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
+ if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
  task.wait(MR.nextMapDelay)
  else
  -- [FIX] while+index manual: loop balik ke map pertama setelah map terakhir
@@ -2054,11 +1988,7 @@ function DoMassAttack(on)
  if #_fresh == 0 then mapsToUse = {}; break end
  if _mapIdx > #_fresh then _mapIdx = 1 end
  local m = _fresh[_mapIdx]
- if MODE.current ~= "idle" and MODE.current ~= "ma"
-   or _raidInterrupt or _siegeInterrupt
-   or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap)
-   or (ST2 and ST2.running)
-   or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
+ if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
  if not MA.running then break end
  if _raidInterrupt then _mapIdx = _mapIdx + 1; continue end
  maStatus("-> TP ke "..m.name.."...", Color3.fromRGB(180,220,255))
@@ -2073,11 +2003,7 @@ function DoMassAttack(on)
  elseif not cont or not MA.running then
  break
  end
- if MODE.current ~= "idle" and MODE.current ~= "ma"
-   or _raidInterrupt or _siegeInterrupt
-   or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap)
-   or (ST2 and ST2.running)
-   or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
+ if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
  if not MA.running then break end
  maStatus("[OK] SUCCES "..m.name.." - Go to...", Color3.fromRGB(100,255,150))
  task.wait(MR.nextMapDelay)
@@ -2612,7 +2538,7 @@ MakeGenericDropdown = function(params)
  local popup = Instance.new("Frame")
  popup.Parent = DDLayer; popup.BackgroundColor3 = C.DD_BG; popup.BorderSizePixel = 0
  popup.Size = UDim2.new(0, popupW, 0, HEADER_H + scrollH)
- popup.Position = UDim2.new(0, absPos.X, 0, absPos.Y + absSize.Y + 3)
+ popup.Position = UDim2.new(0, absPos.X, 0, absPos.Y + absSize.Y + 3 - GuiInsetY())
  popup.ZIndex = 9999; popup.ClipsDescendants = true
  Corner(popup, 10); Stroke(popup, C.BORD2, 1.5, 0.2)
 
@@ -2636,7 +2562,7 @@ MakeGenericDropdown = function(params)
  sfp.PaddingLeft=UDim.new(0,4); sfp.PaddingRight=UDim.new(0, 10)
 
  local rowRefs = {}
- function UpdateCount()
+ local function UpdateCount()
  local n = 0; for _ in pairs(selTable) do n = n + 1 end
  countLbl.Text = n.."/"..maxSel.." SELECTED"
  countLbl.TextColor3 = n >= maxSel and Color3.fromRGB(255,100,80) or C.ACC2
@@ -2925,14 +2851,12 @@ end
  local _autoHideRow, _autoHideSet = ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup item", 1, function(on)
      DoAutoHideReward(on)
  end)
- _G.FLaSetters["autoHide"] = _autoHideSet
  _autoHideRow.Name = "ZZZ_AutoHide" -- Trik aman! Memaksa posisinya di bawah Count RYB (LayoutOrder 1) tanpa merusak/menggeser LayoutOrder tombol lain.
 
  -- Toggle UI untuk Disable All Animations & Damage Text
 local _animRow, _animSet = ToggleRow(p, "DISABLE ALL ANIMATIONS", "Matikan animasi hero & teks damage (Anti-Lag)", 2, function(on)
     DoDisableAllAnimations(on)
 end)
-_G.FLaSetters["anim"] = _animSet
 _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berantakan
 
  --  Toggle Auto Sell (DI BAWAH counter) 
@@ -2940,7 +2864,6 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  _autoSellOn = on
  if _sellToggleCb then _sellToggleCb(on) end
  end)
- _G.FLaSetters["autoSell"] = _sellToggleSet
 
  --  Status bar 
  local function SetSellStatus(msg, col)
@@ -3034,7 +2957,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  end
 
  local function StartAutoSell()
- if _sellConn then pcall(function() _sellConn:Disconnect() end); _sellConn = nil end
+ if _sellConn then pcall(function() _sellConn:Disconnect() end) end
  local updateRemote = Remotes:FindFirstChild("UpdateHeroEquip")
  if not updateRemote then SetSellStatus("[!] NOT FOUND!", C.RED); return end
  scanGuidNames()
@@ -3042,32 +2965,27 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  pcall(function()
  local lockR = Remotes:FindFirstChild("LockHeroEquip")
  local unlockR = Remotes:FindFirstChild("UnlockHeroEquip")
- if lockR then 
-  local conn = lockR.OnClientEvent:Connect(function(d)
-   local g=type(d)=="string" and d or (type(d)=="table" and (d.guid or d[1])) or nil
-   if g then _lockedGuids[g]=true end
-  end)
-  table.insert(_G.FLA_CONNECTIONS, conn)
- end
- if unlockR then 
-  local conn = unlockR.OnClientEvent:Connect(function(d)
-   local g=type(d)=="string" and d or (type(d)=="table" and (d.guid or d[1])) or nil
-   if g then _lockedGuids[g]=nil end
-  end)
-  table.insert(_G.FLA_CONNECTIONS, conn)
- end
-end)
+ if lockR then lockR.OnClientEvent:Connect(function(d)
+ local g=type(d)=="string" and d or (type(d)=="table" and (d.guid or d[1])) or nil
+ if g then _lockedGuids[g]=true end
+ end) end
+ if unlockR then unlockR.OnClientEvent:Connect(function(d)
+ local g=type(d)=="string" and d or (type(d)=="table" and (d.guid or d[1])) or nil
+ if g then _lockedGuids[g]=nil end
+ end) end
+ end)
 
  _sellConn = updateRemote.OnClientEvent:Connect(function(data)
  if not _autoSellOn then return end
  if type(data) ~= "table" then return end
  task.spawn(function()
  task.wait(0.3)
+ -- [v186] Struktur confirmed dari sniff:
+ -- item = { guid="...", data = { id=970002, isLock=bool, grade=990001, guid="..." } }
  local items = {}
  if data.heroEquips and type(data.heroEquips)=="table" then items=data.heroEquips
- elseif data.items then items=data.items
- elseif data.heroEquips then items=data.heroEquips
- end
+ elseif data[1] and type(data[1])=="table" then items=data
+ elseif data.guid then items={data} end
 
  for _, item in ipairs(items) do
  if not _autoSellOn then break end
@@ -3084,15 +3002,17 @@ end)
  continue
  end
 
+ -- Scan UI dulu biar nama item tersedia
  scanGuidNames()
  local name = _guidNames[tostring(guid)] or ""
- local prefix = getType(name)
+ local prefix = getType(name) -- R/Y/B dari huruf pertama nama
 
  task.wait(0.15)
  local remote = Remotes:FindFirstChild("DelectHeroEquips")
  if remote then
  local ok = pcall(function() remote:FireServer({tostring(guid)}) end)
  if ok then
+ -- Counter naik di luar pcall, berdasarkan tipe nama
  _cnt[prefix] = (_cnt[prefix] or 0) + 1
  RefreshCounters()
  local total = _cnt.R + _cnt.Y + _cnt.B + _cnt.other
@@ -3103,8 +3023,8 @@ end)
  end
  task.delay(0.5, scanGuidNames)
  end)
-end)
-table.insert(_G.FLA_CONNECTIONS, _sellConn)
+ end)
+ SetSellStatus("[OK] Monitoring Active - Sell All except Locked", Color3.fromRGB(100,220,100))
  end
 
  _sellToggleCb = function(on)
@@ -3266,9 +3186,9 @@ table.insert(_G.FLA_CONNECTIONS, _sellConn)
  if type(newcclosure) ~= "function" then return end -- [FIX] executor guard
  if type(getnamecallmethod) ~= "function" then return end -- [FIX] executor guard
  local old_nc = mt.__namecall
+        _G._FLa_old_nc = old_nc  -- simpan untuk restore saat cleanup
  setreadonly(mt, false)
  mt.__namecall = newcclosure(function(self, ...)
- if not _G.FLA_IS_RUNNING then return old_nc(self, ...) end
  local method = getnamecallmethod()
  if _hideRerollChat and (method == "FireServer" or method == "InvokeServer") then
  pcall(function()
@@ -3541,7 +3461,7 @@ table.insert(_G.FLA_CONNECTIONS, _sellConn)
  swDBtnLbl.Size=UDim2.new(1,-30,1,0); swDBtnLbl.Position=UDim2.new(0,10,0,0)
  swDBtnLbl.TextXAlignment=Enum.TextXAlignment.Left
  swDBtnLbl.TextTruncate=Enum.TextTruncate.AtEnd
- local swDArrow = Label(swDBtn,"▾",13,C.ACC,Enum.Font.GothamBold)
+ local swDArrow = Label(swDBtn,"v",13,C.ACC,Enum.Font.GothamBold)
  swDArrow.Size=UDim2.new(0,22,1,0); swDArrow.Position=UDim2.new(1,-26,0,0)
  swDArrow.TextXAlignment=Enum.TextXAlignment.Center
 
@@ -3631,7 +3551,7 @@ table.insert(_G.FLA_CONNECTIONS, _sellConn)
 
   local selAllBtn = Btn(hdr, Color3.fromRGB(30,100,60), UDim2.new(1,-16,0,26))
   selAllBtn.Position=UDim2.new(0,8,0,34); Corner(selAllBtn,6); selAllBtn.ZIndex=9999
-  local selAllLbl = Label(selAllBtn,"✓  Select All  (jual semua unlocked)",11,C.TXT,Enum.Font.GothamBold)
+  local selAllLbl = Label(selAllBtn,"[OK] Select All  (jual semua unlocked)",11,C.TXT,Enum.Font.GothamBold)
   selAllLbl.Size=UDim2.new(1,0,1,0); selAllLbl.ZIndex=9999
 
   -- ScrollingFrame list
@@ -3660,13 +3580,13 @@ table.insert(_G.FLA_CONNECTIONS, _sellConn)
    if tempSelAll then
     hdrCountLbl.Text       = "Select All aktif"
     hdrCountLbl.TextColor3 = C.ACC2
-    selAllLbl.Text         = "✓  Select All  (aktif)"
+    selAllLbl.Text         = "[OK] Select All  (aktif)"
     selAllLbl.TextColor3   = Color3.fromRGB(80,255,150)
    else
     local n=0; for _ in pairs(tempSel) do n=n+1 end
     hdrCountLbl.Text       = n.." item dipilih"
     hdrCountLbl.TextColor3 = n>0 and C.ACC or C.TXT3
-    selAllLbl.Text         = "✓  Select All  (jual semua unlocked)"
+    selAllLbl.Text         = "[OK] Select All  (jual semua unlocked)"
     selAllLbl.TextColor3   = C.TXT
    end
   end
@@ -3683,7 +3603,7 @@ table.insert(_G.FLA_CONNECTIONS, _sellConn)
    local tick = Frame(row, isSel and C.PILL_ON or C.PILL_OFF, UDim2.new(0,14,0,14))
    tick.AnchorPoint=Vector2.new(0,0.5); tick.Position=UDim2.new(0,5,0.5,0)
    Corner(tick,3); tick.ZIndex=9999
-   local tickMark = Label(tick,"✓",9,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+   local tickMark = Label(tick,"*",9,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
    tickMark.Size=UDim2.new(1,0,1,0); tickMark.ZIndex=9999; tickMark.Visible=isSel
 
    local nmLbl = Label(row, wname, 11, wcol or C.TXT, Enum.Font.GothamBold)
@@ -4826,7 +4746,6 @@ do
  end
  RefreshStatus()
  end)
- _G.FLaSetters["noClip"] = _noClipSet
 
  local _, _antiAfkSet = ToggleRow(p,"Anti AFK","Mencegah kick sistem idle 15 menit",4,function(on)
  STATE.antiAfk=on
@@ -6380,7 +6299,6 @@ task.spawn(function()
  _whSilent = false
  end)
 end)
- _G.FLaSetters["antiAfk"] = _antiAfkSet
 
 --  FALLBACK 3: ExperienceChat BodyText watcher 
 -- Ini yang paling reliable karena BodyText selalu berisi teks penuh
@@ -6532,32 +6450,21 @@ _WH.SendRaid = function(url)
     local isDiscord  = url:find("discord%.com/api/webhooks")
     local isTelegram = url:find("api%.telegram%.org")
 
-    -- Pisah Normal Raid vs Ascension Tower berdasarkan raidId
-    -- raidId >= 935001 = Ascension Tower
-    -- raidId 930xxx   = Normal Raid
+    -- Normal Raid only (mapId 50001-50019)
     local topGrade    = "E"
     local lines_normal = {}
-    local lines_at     = {}
     for _, entry in ipairs(raidList) do
-        local mn   = (entry.mapId or 50000) - 50000
-        local g    = _wh_getGrade(entry)
-        local isAT = (entry.raidId and entry.raidId >= 935001)
+        local mn = (entry.mapId or 50000) - 50000
+        if mn < 1 or mn > 19 then continue end  -- skip non-normal
+        local g  = _wh_getGrade(entry)
         if (_WH_GRADE_RANK[g] or 0) > (_WH_GRADE_RANK[topGrade] or 0) then
             topGrade = g
         end
-        if isAT then
-            -- AT: hitung tower number dari raidId
-            -- AT mapNum = ((raidId - 935001) // 100) % 18 + 1
-            local towerNum = math.floor((entry.raidId - 935001) / 100) % 18 + 1
-            table.insert(lines_at, string.format("Tower %d - Ascension Tower %d [%s]", towerNum, towerNum, g))
-        else
-            local name = MAP_NAMES[mn] or ("Map "..mn)
-            table.insert(lines_normal, string.format("Map %d - %s [%s]", mn, name, g))
-        end
+        local name = MAP_NAMES[mn] or ("Map "..mn)
+        table.insert(lines_normal, string.format("Map %d - %s [%s]", mn, name, g))
     end
     local lines = {}
     for _, l in ipairs(lines_normal) do table.insert(lines, l) end
-    for _, l in ipairs(lines_at)     do table.insert(lines, l) end
 
     if isDiscord then
         local color  = _WH_GRADE_COLOR[topGrade] or _WH_GRADE_COLOR["E"]
@@ -6566,13 +6473,6 @@ _WH.SendRaid = function(url)
             table.insert(fields, {
                 name   = "Normal Raid (" .. #lines_normal .. ")",
                 value  = "```\n" .. table.concat(lines_normal, "\n") .. "\n```",
-                inline = false
-            })
-        end
-        if #lines_at > 0 then
-            table.insert(fields, {
-                name   = "Ascension Tower (" .. #lines_at .. ")",
-                value  = "```\n" .. table.concat(lines_at, "\n") .. "\n```",
                 inline = false
             })
         end
@@ -6592,10 +6492,7 @@ _WH.SendRaid = function(url)
             })
         end)
     elseif isTelegram then
-        local all = {}
-        for _, l in ipairs(lines_normal) do table.insert(all, l) end
-        for _, l in ipairs(lines_at)     do table.insert(all, l) end
-        local msg = "[RAID OPEN] Best: " .. topGrade .. "\n" .. table.concat(all, "\n")
+        local msg = "[RAID OPEN] Best: " .. topGrade .. "\n" .. table.concat(lines_normal, "\n")
         _doSend(url, msg)
     end
 end
@@ -6760,8 +6657,8 @@ _WH.raidConns = {}
 RebuildRaidList = function()
  local sorted = {}
  for _, e in pairs(RAID_LIVE) do
-  -- [FIX] Skip AT entries yang mungkin lolos (mapNum 19+)
-  if e.mapId and (e.mapId - 50000) <= 19 then
+  -- Normal Raid only: mapNum 1-19
+  if e.mapId and (e.mapId - 50000) >= 1 and (e.mapId - 50000) <= 19 then
    table.insert(sorted, e)
   end
  end
@@ -6793,6 +6690,9 @@ ParseRaidEntry = function(k, info)
  local mapId = info.mapId
  local spawnName = info.spawnName or "RE1001"
  if not raidId or not mapId then return end
+ -- Blokir AT raidId (>= 935001) dan mapId AT (50301-50319)
+ if type(raidId) == "number" and raidId >= 935001 then return end
+ if mapId >= 50301 and mapId <= 50319 then return end
  -- Normalize mapId: 50101-50118 -> 50001-50018
  if mapId >= 50101 and mapId <= 50119 then
  mapId = mapId - 100
@@ -7003,41 +6903,78 @@ ConnectRaidListeners = function()
 
  if _RE_Update then
  local conn = _RE_Update.OnClientEvent:Connect(function(data)
-  if type(data) ~= "table" then return end
-  local action = data.action
-  local raidInfos = data.raidInfos
+ if type(data) ~= "table" then return end
+ local action = data.action
+ local raidInfos = data.raidInfos
+ if type(raidInfos) ~= "table" then return end
 
-  if action == "Open" and type(raidInfos) == "table" then
-   for _, r in ipairs(raidInfos) do
-    if type(r) == "table" and r.raidId and r.mapId then
-     RAID_LIVE[r.raidId] = r
-     RAID_ID_LIST[r.raidId] = true
-    end
-   end
-   RebuildRaidList()
-   if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
-  elseif action == "Close" and type(data.raidIds) == "table" then
-   for _, rid in ipairs(data.raidIds) do
-    if RAID_LIVE[rid] then
-     RAID_LIVE[rid] = nil
-     RAID_ID_LIST[rid] = nil
-    end
-   end
-   RebuildRaidList()
-  end
+ if action == "RemoveRaidEnters" then
+ for k in pairs(raidInfos) do
+ local raidId = type(k)=="number" and k or tonumber(k)
+ if raidId then RAID_LIVE[raidId] = nil end
+ end
+ RebuildRaidList()
+ else
+ for k, info in pairs(raidInfos) do
+ if type(info) ~= "table" then continue end
+ local raidId = info.raidId or (type(k)=="number" and k) or tonumber(k)
+ local mapId = info.mapId
+ if not raidId or not mapId then continue end
+ -- Normalize mapId ke lobby range
+ if mapId >= 50101 and mapId <= 50119 then mapId = mapId - 100 end
+ if mapId < 50001 or mapId > 50019 then continue end
+
+ local mapNum = mapId - 50000
+ local spawnName = info.spawnName or "RE1001"
+ local rank = SPAWN_RANK[spawnName] or 0
+ -- [v271] Grade dari RAID_CONFIG_GRADE (formula matematika, cover semua seri)
+ local grade = (RAID_CONFIG_GRADE and RAID_CONFIG_GRADE[raidId]) or (_runeGradeCache and _runeGradeCache[mapNum]) or "?"
+ local tempKey = -(mapId)
+ local entryData = {
+ raidId = raidId,
+ mapId = mapId,
+ spawnName = spawnName,
+ rank = rank,
+ grade = grade,
+ endTime = info.endTime,
+ label = "Map "..mapNum.." - "..(MAP_NAMES[mapNum] or "Map "..mapNum).." ["..grade.."](ID:"..raidId..")",
+ }
+ -- Kalau ada entry temp dari workspace, replace dengan raidId asli
+ if RAID_LIVE[tempKey] then
+ RAID_LIVE[raidId] = entryData
+ RAID_LIVE[tempKey] = nil
+ elseif not RAID_LIVE[raidId] then
+ -- Entry baru (workspace belum detect)
+ ParseRaidEntry(k, info)
+ else
+ -- Sudah ada, update grade saja
+ RAID_LIVE[raidId].grade = grade
+ RAID_LIVE[raidId].rank = rank
+ RAID_LIVE[raidId].label = entryData.label
+ end
+ end
+ RebuildRaidList()
+ if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
+ TriggerWebhookDebounce()
+ end
  end)
- table.insert(_G.FLA_CONNECTIONS, conn)
-end
+ table.insert(_WH.raidConns, conn)
+ end
 
  -- EnterRaidsUpdateInfo: slotIndex + serverMapId saat masuk map
  if _RE_Enter then
  local conn = _RE_Enter.OnClientEvent:Connect(function(data)
-  if type(data) ~= "table" then return end
-  if data.slotIndex then RAID.slotIndex = data.slotIndex end
-  if data.fromMapId then RAID.fromMapId = data.fromMapId end
-  if data.mapId then RAID.targetMapId = data.mapId end
+ if type(data) ~= "table" then return end
+ if data.slotIndex then RAID.slotIndex = data.slotIndex end
+ if data.fromMapId then RAID.fromMapId = data.fromMapId end
+ if data.mapId then
+ local mid = data.mapId
+ if mid >= 50101 and mid <= 50118 then
+ RAID.serverMapId = mid
+ end
+ end
  end)
- table.insert(_G.FLA_CONNECTIONS, conn)
+ table.insert(_WH.raidConns, conn)
  end
 end
 
@@ -7798,11 +7735,7 @@ local function ResolveEntry()
                         local _cfail = false
                         local _cfConn
                         local _cfRe = Remotes:FindFirstChild("ChallengeRaidsFail")
-                        if _cfRe then 
-                            local conn = _cfRe.OnClientEvent:Connect(function() _cfail = true end)
-                            table.insert(_G.FLA_CONNECTIONS, conn)
-                            _cfConn = conn
-                        end
+                        if _cfRe then _cfConn = _cfRe.OnClientEvent:Connect(function() _cfail = true end) end
 
                         if RE.StartChallengeRaidMap then
                             pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = targetMapId}) end)
@@ -7897,20 +7830,12 @@ local function ResolveEntry()
  local connS, connF
  local _reS = Remotes:FindFirstChild("ChallengeRaidsSuccess")
  local _reF = Remotes:FindFirstChild("ChallengeRaidsFail")
- if _reS then 
- local conn = _reS.OnClientEvent:Connect(function()
+ if _reS then connS = _reS.OnClientEvent:Connect(function()
  RAID._raidDone = true; _raidSuccess = true
- end)
- table.insert(_G.FLA_CONNECTIONS, conn)
- connS = conn
- end
- if _reF then 
- local conn = _reF.OnClientEvent:Connect(function()
+ end) end
+ if _reF then connF = _reF.OnClientEvent:Connect(function()
  RAID._raidDone = true
- end)
- table.insert(_G.FLA_CONNECTIONS, conn)
- connF = conn
- end
+ end) end
 
  -- [FIX v256] Reduced wait: 3s untuk map load, SAMBIL cari boss
  -- Sebelumnya: diam 7s -> baru cari boss -> TP -> 2s -> UnEquip -> Equip -> serang
@@ -8877,7 +8802,7 @@ do
  if not RAID.updownDir then RAID.updownDir = "up" end
  local dirDDBtn = Btn(udRowBot, C.BG3, UDim2.new(0.45, -4, 1, -4))
  dirDDBtn.Position = UDim2.new(0,0,0,2); Corner(dirDDBtn,6); Stroke(dirDDBtn,C.BORD, 1.5,0.2)
- local dirDDLbl = Label(dirDDBtn, RAID.updownDir=="up" and " UP ↑" or " DOWN ↓", 11, C.ACC, Enum.Font.GothamBold)
+ local dirDDLbl = Label(dirDDBtn, RAID.updownDir=="up" and " UP [^]" or " DOWN [v]", 11, C.ACC, Enum.Font.GothamBold)
  dirDDLbl.Size = UDim2.new(1,-16,1,0)
  local dirArr = Label(dirDDBtn,"v",10,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
  dirArr.Size = UDim2.new(0,16,1,0); dirArr.Position = UDim2.new(1,-16,0,0)
@@ -8921,8 +8846,8 @@ do
     Instance.new("UIPadding",popup).PaddingTop = UDim.new(0,4)
     
     local opts = {
-        {dir="up", label=" UP ↑", col=Color3.fromRGB(100,220,100)},
-        {dir="down", label=" DOWN ↓", col=Color3.fromRGB(255,140,80)},
+        {dir="up", label=" UP [^]", col=Color3.fromRGB(100,220,100)},
+        {dir="down", label=" DOWN [v]", col=Color3.fromRGB(255,140,80)},
     }
     for i, opt in ipairs(opts) do
         local row = Instance.new("TextButton",popup)
@@ -9350,15 +9275,22 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- [FIX v8] Gunakan _deadG_Siege lokal agar tidak ganggu _deadG global (Mass Attack)
     local _deadG_Siege = {}
 
-    -- Helper: cek apakah player sudah kembali ke baseMapId (server TP keluar)
+    -- Helper: cek apakah player sudah keluar dari siege map (50201-50204)
+    -- [FIX] Server selalu TP ke Map 3 (50003) setelah siege selesai, BUKAN ke baseMapId
+    -- masing-masing. Jadi cek yang benar: MapId sudah di luar range 50201-50204
+    local _enteredSiegeMap = false  -- flag: sudah pernah masuk siege map
     local function isBackAtBase()
         local ok, wm = pcall(function()
             return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
         end)
-        if ok and type(wm) == "number" and baseMapId then
-            return wm == baseMapId
+        if not ok or type(wm) ~= "number" then return false end
+        -- Tandai sudah masuk siege map saat pertama kali di 50201-50204
+        if wm >= 50201 and wm <= 50204 then
+            _enteredSiegeMap = true
+            return false
         end
-        return false
+        -- Sudah di luar siege map (dan pernah masuk) = selesai
+        return _enteredSiegeMap
     end
     local totalTime   = 0
     local MAX_TIME    = 300
@@ -9373,16 +9305,28 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- Pasang listener EnemyDeath lokal untuk Siege (tidak ganggu _deadG global)
     local _deathConn = nil
     if RE.Death then
-        local conn = RE.Death.OnClientEvent:Connect(function(d)
+        _deathConn = RE.Death.OnClientEvent:Connect(function(d)
             if not d then return end
             local g = d.enemyGuid or d.guid
             if g then _deadG_Siege[g] = true end
         end)
-        table.insert(_G.FLA_CONNECTIONS, conn)
+    end
+
+    -- Helper: fire reward dari server (dipanggil di semua exit path)
+    local _rewardFired = false
+    local function fireReward()
+        if _rewardFired then return end
+        _rewardFired = true
+        pcall(function()
+            if RE.GainRaidsRewards then
+                RE.GainRaidsRewards:InvokeServer(1)
+            end
+        end)
     end
 
     local function cleanup()
         if _deathConn then _deathConn:Disconnect(); _deathConn = nil end
+        if _mapWatchConn then pcall(function() _mapWatchConn:Disconnect() end); _mapWatchConn = nil end
         SIEGE.inMap     = false
         _siegeInterrupt = false
         MODE:Release("siege")
@@ -9425,12 +9369,26 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- ============================================================
     -- FASE 2: Attack loop — logika identik Mass Attack (Kill All)
     -- Keluar jika:
-    --   A) alive == 0  → langsung sukses (tanpa timer tambahan)
-    --   B) Tidak ada kill baru dalam STUCK_LIMIT detik → skip
-    --   C) Timeout MAX_TIME
+    --   A) Server TP player keluar dari 50201-50204 (instant detect)
+    --   B) alive == 0 → tunggu server TP max 10 detik
+    --   C) Tidak ada kill baru dalam STUCK_LIMIT detik → skip
+    --   D) Timeout MAX_TIME
     -- ============================================================
+
+    -- [FIX] Pasang watcher MapId perubahan - instant detect saat server TP keluar
+    local _mapExitDetected = false
+    local _mapWatchConn = nil
+    pcall(function()
+        _mapWatchConn = workspace:GetAttributeChangedSignal("MapId"):Connect(function()
+            local wm = workspace:GetAttribute("MapId")
+            if type(wm) == "number" and (wm < 50201 or wm > 50204) then
+                _mapExitDetected = true
+            end
+        end)
+    end)
+
     while SIEGE.running and SIEGE.inMap do
-        totalTime = totalTime + 0.08
+        totalTime = totalTime + 0.15
 
         -- Auto hide UI reward
         pcall(function()
@@ -9440,9 +9398,18 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             end
         end)
 
+        -- [FIX] Instant exit: MapId sudah keluar dari 50201-50204
+        if _mapExitDetected or isBackAtBase() then
+            if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
+            if _mapWatchConn then pcall(function() _mapWatchConn:Disconnect() end); _mapWatchConn = nil end
+            fireReward()
+            cleanup(); return "exited_clean"
+        end
+
         -- Timeout global
         if totalTime >= MAX_TIME then
             if onStatus then onStatus("[!] Timeout "..MAX_TIME.."s - Force OUT") end
+            if _mapWatchConn then pcall(function() _mapWatchConn:Disconnect() end); _mapWatchConn = nil end
             cleanup(); return "timeout"
         end
 
@@ -9457,13 +9424,10 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             end
         end
 
-        -- ── Kondisi UTAMA: Server sudah TP player keluar ke baseMapId ──
+        -- ── Kondisi UTAMA: Server sudah TP player keluar dari siege map ──
         if isBackAtBase() then
             if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
-            -- [FIX] Panggil GainRaidsRewards untuk trigger reward dari server
-            if RE.GainRaidsRewards then
-                pcall(function() RE.GainRaidsRewards:InvokeServer(1) end)
-            end
+            fireReward()
             cleanup(); return "exited_clean"
         end
 
@@ -9476,11 +9440,13 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
                 task.wait(0.3); _waitOut = _waitOut + 0.3
                 if isBackAtBase() then
                     if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
+                    fireReward()
                     cleanup(); return "exited_clean"
                 end
             end
-            -- Timeout tunggu TP → anggap selesai juga
+            -- Timeout tunggu TP → anggap selesai juga, fire reward
             if onStatus then onStatus("[OK] Siege DONE (timeout tunggu TP)") end
+            fireReward()
             cleanup(); return "exited_clean"
         end
 
@@ -9939,7 +9905,7 @@ local DUNGEON_MAP_ID = 50303 -- MapId dalam dungeon
 local DUNGEON_LOBBY_ID = 50005 -- MapId Map 5 (lobby dungeon)
 local DUNGEON_WAIT_ENEMY = 30 -- detik tunggu enemy muncul setelah masuk
 local DUNGEON_MAX_TIME = 3600 -- 60 menit max di dalam dungeon
-local DUNGEON_KILL_TIMEOUT = 120 -- 2 menit: kalau 1 enemy tidak mati → TP keluar
+local DUNGEON_KILL_TIMEOUT = 120 -- 2 menit: kalau 1 enemy tidak mati -> TP keluar
 local DUNGEON_COOLDOWN = 3600 -- 60 menit cooldown setelah keluar
 
 DungeonStatus = function(msg, color)
@@ -9983,17 +9949,17 @@ local function ConnectDungeonListener()
  -- Coba pasang via Remotes (kalau ada ChangeTowerState sebagai RemoteEvent)
  local re = Remotes:FindFirstChild("ChangeTowerState") or Remotes:FindFirstChild("UpdateTowerState") or Remotes:FindFirstChild("TowerStateUpdate")
  if re and re:IsA("RemoteEvent") then
- local conn = re.OnClientEvent:Connect(function(data)
-  if type(data) ~= "table" then return end
-  local ts = data.towerState or data.state
-  local et = data.endTimestamp or data.timestamp
-  if ts then
-  DUNGEON.towerState = ts
-  if et then DUNGEON.endTimestamp = et end
-  if _dungeonWakeup then pcall(function() _dungeonWakeup:Fire() end) end
-  end
+ re.OnClientEvent:Connect(function(data)
+ if type(data) ~= "table" then return end
+ local ts = data.towerState or data.state
+ local et = data.endTimestamp or data.timestamp
+ if ts then
+ DUNGEON.towerState = ts
+ if et then DUNGEON.endTimestamp = et end
+ if _dungeonWakeup then pcall(function() _dungeonWakeup:Fire() end) end
+ end
  end)
- table.insert(_G.FLA_CONNECTIONS, conn)
+ return
  end
 
  -- Fallback: hook __namecall untuk tangkap FireClient/OnClientEvent dari game
@@ -10056,12 +10022,11 @@ local function DungeonAttackLoop(onStatus)
     -- Pasang listener EnemyDeath lokal (tidak ganggu _deadG global MA)
     local _deathConn = nil
     if RE.Death then
-        local conn = RE.Death.OnClientEvent:Connect(function(d)
+        _deathConn = RE.Death.OnClientEvent:Connect(function(d)
             if not d then return end
             local g = d.enemyGuid or d.guid
             if g then _deadG_D[g] = true end
         end)
-        table.insert(_G.FLA_CONNECTIONS, conn)
     end
 
     local function cleanup()
@@ -10514,15 +10479,13 @@ local _st2CurrentMapId = nil  -- diisi oleh listener di bawah
 -- Pasang listener EnterRaidsUpdateInfo untuk ST2 (standalone, tidak ganggu RAID)
 task.spawn(function()
     local _reEnter = Remotes:FindFirstChild("EnterRaidsUpdateInfo")
-    if _reEnter then
-        local conn = _reEnter.OnClientEvent:Connect(function(data)
-            if type(data) ~= "table" then return end
-            if data.mapId then
-                _st2CurrentMapId = data.mapId
-            end
-        end)
-        table.insert(_G.FLA_CONNECTIONS, conn)
-    end
+    if not _reEnter then return end
+    _reEnter.OnClientEvent:Connect(function(data)
+        if type(data) ~= "table" then return end
+        if data.mapId then
+            _st2CurrentMapId = data.mapId
+        end
+    end)
 end)
 
 -- 
@@ -10766,7 +10729,7 @@ function StartST2Loop()
                 end
 
                 _lastEnemySet = ST2GetCurrentEnemyGuids()
-                ST2Status("[S] START Attack! Wave: 0/"..(targetWaves>0 and tostring(targetWaves) or "∞"), Color3.fromRGB(80,220,80))
+                ST2Status("[S] START Attack! Wave: 0/"..(targetWaves>0 and tostring(targetWaves) or "INF"), Color3.fromRGB(80,220,80))
 
                 -- ── STEP 4: ATTACK LOOP ───────────────────────────────────────────
                 while ST2.running and ST2.inMap and ST2.attacking do
@@ -10998,7 +10961,7 @@ do
     infoCard.LayoutOrder = 4; infoCard.AutomaticSize = Enum.AutomaticSize.Y
     Corner(infoCard, 10)
     New("UIPadding",{Parent=infoCard,PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0, 10),PaddingRight=UDim.new(0, 10)})
-    local infoLbl = Label(infoCard,"Delay 2s → TP Map 2 → LocalPlayerTeleportSuccess → Delay 1s → Attack (jika ON) → Exit → Delay 2s → Loop. Attack OFF: loop tetap masuk map tapi tidak menyerang.",10,C.TXT3,Enum.Font.Gotham)
+    local infoLbl = Label(infoCard,"Delay 2s -> TP Map 2 -> LocalPlayerTeleportSuccess -> Delay 1s -> Attack (jika ON) -> Exit -> Delay 2s -> Loop. Attack OFF: loop tetap masuk map tapi tidak menyerang.",10,C.TXT3,Enum.Font.Gotham)
     infoLbl.Size = UDim2.new(1,0,0,0); infoLbl.AutomaticSize = Enum.AutomaticSize.Y
     infoLbl.TextWrapped = true
 
@@ -11329,351 +11292,11 @@ end
 -- ============================================================
 
 -- ============================================================
--- SAVE / LOAD / RESET CONFIG
--- File: FLa_Config.json di Delta/workspace/
--- ============================================================
-local FLA_CFG = "FLa_Config.json"
-
-function _cfgRead()
-    if not readfile then return nil end
-    local ok, raw = pcall(readfile, FLA_CFG)
-    if not ok or not raw or raw == "" or raw == "{}" then return nil end
-    return raw
-end
-
-function _cfgWrite(data)
-    if not writefile then return false end
-    local ok, json = pcall(function()
-        return game:GetService("HttpService"):JSONEncode(data)
-    end)
-    if not ok then return false end
-    return pcall(writefile, FLA_CFG, json)
-end
-
-function _cfgDelete()
-    if delfile then pcall(delfile, FLA_CFG)
-    elseif writefile then pcall(writefile, FLA_CFG, "{}") end
-end
-
-function FLaCollect()
-    local d = {}
-    -- ── Toggles STATE ─────────────────────────────────────────
-    d.autoHideReward = STATE and STATE.autoHideReward or false
-    d.disableAnim    = STATE and STATE.disableAnim    or false
-    d.noClip         = STATE and STATE.noClip         or false
-    d.antiAfk        = STATE and STATE.antiAfk        or false
-    d.autoCollect    = STATE and STATE.autoCollect    or false  -- [v20-PATCH]
-    d.autoDestroyer  = STATE and STATE.autoDestroyer  or false  -- [v20-PATCH]
-    d.autoArise      = STATE and STATE.autoArise      or false  -- [v20-PATCH]
-    d.autoConfirm    = STATE and STATE.autoConfirm    or false  -- [v20-PATCH]
-    d.autoClose      = STATE and STATE.autoClose      or false  -- [v20-PATCH]
-    d.hideRerollChat = _hideRerollChat or false
-    d.potatoMode     = _G.PotatoMode   or false
-    d.autoSellOn     = _autoSellOn     or false
-    -- ── Theme & UI Transparency ───────────────────────────────
-    d.currentTheme   = _G.CurrentTheme      or "Solo Leveling"  -- [v20-PATCH]
-    d.uiTransparency = _G.ThemeTransparency or 0.42             -- [v20-PATCH]
-    -- ── Webhook ───────────────────────────────────────────────
-    d.webhookUrl     = _webhookUrl     or ""
-    d.webhookMode    = _webhookMode    or "both"
-    d.webhookEnabled = _webhookEnabled or false
-    -- ── Mass Attack ───────────────────────────────────────────
-    d.massAttackRunning = MA and MA.running or false  -- [FIX] Simpan status running
-    d.maKillTarget = MA and MA.killTarget    or 7
-    d.mrNextDelay  = MR and MR.nextMapDelay  or 3
-    d.mrTpDelay    = MR and MR.teleportDelay or 3
-    d.mrSelected = {}
-    if MR and MR.selected then
-        for i = 1, 19 do
-            if MR.selected[i] then d.mrSelected[tostring(i)] = true end
-        end
-    end
-    -- ── Auto Raid ─────────────────────────────────────────────
-    d.raidRunning       = RAID and RAID.running       or false  -- [FIX] Simpan status running
-    d.raidDifficulty    = RAID and RAID.difficulty    or "easy"
-    d.raidRuneEnabled   = RAID and RAID.runeEnabled   or false
-    d.raidRuneMapTarget = RAID and RAID.runeMapTarget or 0
-    d.raidUpdownEnabled = RAID and RAID.updownEnabled or false
-    d.raidUpdownDir     = RAID and RAID.updownDir     or "up"
-    d.raidPreferMaps = {}
-    if RAID and RAID.preferMaps then
-        for mn, v in pairs(RAID.preferMaps) do
-            if v then d.raidPreferMaps[tostring(mn)] = true end
-        end
-    end
-    d.raidRuneGrades = {}
-    if RAID and RAID.runeGrades then
-        for g, v in pairs(RAID.runeGrades) do
-            if v then d.raidRuneGrades[tostring(g)] = true end
-        end
-    end
-    -- ── Auto Siege ────────────────────────────────────────────
-    d.siegeRunning     = SIEGE and SIEGE.running or false  -- [FIX] Simpan status running
-    d.siegeExcludeMaps = {}
-    if SIEGE and SIEGE.excludeMaps then
-        for mn, v in pairs(SIEGE.excludeMaps) do
-            d.siegeExcludeMaps[tostring(mn)] = v and true or false
-        end
-    end
-    -- ── Auto Dungeon ──────────────────────────────────────────
-    d.dungeonRunning = DUNGEON and DUNGEON.running or false  -- [FIX] Simpan status running
-    return d
-end
-
-function FLaApply(d)
-    if type(d) ~= "table" then return end
-    task.wait(2)
-    
-    if d.hideRerollChat ~= nil and UI_REGISTRY["hideRerollChat"] then
-        UI_REGISTRY["hideRerollChat"](d.hideRerollChat)
-    end
-    
-    if d.autoSellOn ~= nil and UI_REGISTRY["autoSell"] then
-        UI_REGISTRY["autoSell"](d.autoSellOn)
-    end
-    
-    if d.autoSellWeaponOn ~= nil and UI_REGISTRY["autoSellWeapon"] then
-        UI_REGISTRY["autoSellWeapon"](d.autoSellWeaponOn)
-    end
-    if d.swSelectAll ~= nil then _swSelectAll = d.swSelectAll end
-    if d.swSelectedIds then
-        _swSelectedIds = {}
-        _swSelNames = {}
-        for k, v in pairs(d.swSelectedIds) do
-            local id = tonumber(k)
-            if id and v then
-                _swSelectedIds[id] = true
-                for _, w in ipairs(WEAPON_LIST) do
-                    if w[1] == id then _swSelNames[id] = w[2]; break end
-                end
-            end
-        end
-        if UI_REGISTRY["swDropUpdate"] then UI_REGISTRY["swDropUpdate"]() end
-    end
-    
-    if d.massAttackRunning and UI_REGISTRY["massAttack"] then
-        task.delay(0.5, function() UI_REGISTRY["massAttack"](true) end)
-    end
-    
-    if d.raidRunning or d.raidOn then
-        if UI_REGISTRY["autoRaid"] then
-            task.delay(1, function() UI_REGISTRY["autoRaid"](true) end)
-        end
-    end
-    if d.raidCurPM and UI_REGISTRY["raidPickMode"] then
-        UI_REGISTRY["raidPickMode"](d.raidCurPM)
-    end
-    if d.raidRuneMapTarget ~= nil and UI_REGISTRY["raidRune"] then
-        UI_REGISTRY["raidRune"](d.raidRuneMapTarget)
-    end
-    
-    if d.siegeRunning and UI_REGISTRY["autoSiege"] then
-        task.delay(1.5, function() UI_REGISTRY["autoSiege"](true) end)
-    end
-    
-    if d.dungeonRunning and UI_REGISTRY["autoDungeon"] then
-        task.delay(2, function() UI_REGISTRY["autoDungeon"](true) end)
-    end
-    
-    if d.noClip ~= nil and UI_REGISTRY["noClip"] then
-        UI_REGISTRY["noClip"](d.noClip)
-    end
-    
-    if d.antiAfk ~= nil and UI_REGISTRY["antiAfk"] then
-        UI_REGISTRY["antiAfk"](d.antiAfk)
-    end
-    
-    if d.potatoMode ~= nil and UI_REGISTRY["potato"] then
-        UI_REGISTRY["potato"](d.potatoMode)
-    end
-    
-    if d.webhookUrl and UI_REGISTRY["webhookUrl"] then
-        UI_REGISTRY["webhookUrl"](d.webhookUrl)
-    end
-    if d.webhookCurModeIdx and UI_REGISTRY["webhookMode"] then
-        UI_REGISTRY["webhookMode"](d.webhookCurModeIdx)
-    end
-    if d.webhookEnabled ~= nil and UI_REGISTRY["webhookEnabled"] then
-        UI_REGISTRY["webhookEnabled"](d.webhookEnabled)
-    end
-    
-    if d.autoHideReward ~= nil and UI_REGISTRY["autoHide"] then
-        UI_REGISTRY["autoHide"](d.autoHideReward)
-    end
-    if d.disableAnim ~= nil and UI_REGISTRY["anim"] then
-        UI_REGISTRY["anim"](d.disableAnim)
-    end
-    if d.autoCollect ~= nil and UI_REGISTRY["autoCollect"] then
-        UI_REGISTRY["autoCollect"](d.autoCollect)
-    end
-    if d.autoDestroyer ~= nil and UI_REGISTRY["autoDestroyer"] then
-        UI_REGISTRY["autoDestroyer"](d.autoDestroyer)
-    end
-    if d.autoArise ~= nil and UI_REGISTRY["autoArise"] then
-        UI_REGISTRY["autoArise"](d.autoArise)
-    end
-    if d.autoConfirm ~= nil and UI_REGISTRY["autoConfirm"] then
-        UI_REGISTRY["autoConfirm"](d.autoConfirm)
-    end
-    if d.autoClose ~= nil and UI_REGISTRY["autoClose"] then
-        UI_REGISTRY["autoClose"](d.autoClose)
-    end
-    
-    if d.currentTheme then
-        _G.CurrentTheme = d.currentTheme
-        pcall(function() ApplyTheme(d.currentTheme) end)
-    end
-    if d.uiTransparency then
-        _G.ThemeTransparency = d.uiTransparency
-        if not _G.PotatoMode then
-            Window.BackgroundTransparency = d.uiTransparency
-        end
-    end
-end
-
-function FLaSave()
-    if _cfgWrite(FLaCollect()) then
-        SystemNotify("Config tersimpan!", 2)
-    else
-        SystemNotify("✗ Gagal save! writefile tidak tersedia?", 3)
-    end
-end
-
--- [v20-PATCH] Helper: reset semua toggle GUI ke false (visual + logic sekaligus)
-function FLaResetAllUI()
-    pcall(function()
-        local S = _G.FLaSetters or {}
-        local allKeys = {
-            "autoHide","anim","noClip","antiAfk","autoSell",
-            "autoCollect","autoDestroyer","autoArise","autoConfirm","autoClose"
-        }
-        for _, key in ipairs(allKeys) do
-            if S[key] then pcall(function() S[key](false) end) end
-        end)
-    end
-        -- Reset UI Transparency ke default
-        _G.ThemeTransparency = 0.42
-        if S.uiTransparency then pcall(function() S.uiTransparency(42) end) end
-        pcall(function() Window.BackgroundTransparency = 0.42 end)
-        -- Reset theme ke default
-        _G.CurrentTheme = "Solo Leveling"
-        pcall(function() ApplyTheme("Solo Leveling") end)
-        -- Reset webhook
-        _webhookUrl = ""; _webhookMode = "both"; _webhookEnabled = false
-        pcall(function()
-            local urlB = ScreenGui:FindFirstChild("urlBox", true)
-            if urlB and urlB:IsA("TextBox") then urlB.Text = "" end
-        end)
-        -- Reset MA / MR
-        MA.killTarget = 7
-        MR.nextMapDelay = 3; MR.teleportDelay = 3
-        for i = 1, 19 do MR.selected[i] = nil end
-        -- Reset RAID
-        RAID.difficulty = "easy"; RAID.runeEnabled = false
-        RAID.runeMapTarget = 0; RAID.updownEnabled = false
-        RAID.updownDir = "up"; RAID.preferMaps = {}; RAID.runeGrades = {}
-        -- Reset SIEGE
-        if SIEGE then SIEGE.excludeMaps = {} end
-        -- Reset misc
-        _G.PotatoMode = false
-        _hideRerollChat = false
-        _autoSellOn = false
-function FLaReset()
-    _cfgDelete()                 -- hapus file JSON
-    for key, handler in pairs(UI_REGISTRY) do
-        if type(handler) == "function" then
-            pcall(function()
-                if key:find("massAttack") or key:find("autoRaid") or key:find("autoSiege") or key:find("autoDungeon") or key:find("hideRerollChat") or key:find("autoSell") or key:find("autoHide") or key:find("anim") or key:find("noClip") or key:find("antiAfk") or key:find("potato") or key:find("webhookEnabled") or key:find("autoCollect") or key:find("autoDestroyer") or key:find("autoArise") or key:find("autoConfirm") or key:find("autoClose") then
-                    handler(false)
-                elseif key:find("raidPickMode") then
-                    handler(1)
-                elseif key:find("raidRune") then
-                    handler(0)
-                elseif key:find("webhookMode") then
-                    handler(1)
-                elseif key:find("webhookUrl") then
-                    handler("")
-                end
-            end)
-        end
-    end
-    _cfgDelete()
-    SystemNotify("Config direset! Semua setting kembali ke default.", 2)
-end
-
-function FLaAutoLoad()
-    local raw = _cfgRead()
-    if not raw then return end
-    local ok, data = pcall(function()
-        return game:GetService("HttpService"):JSONDecode(raw)
-    end)
-    if not ok or type(data) ~= "table" then return end
-    task.spawn(function()
-        task.wait(2)
-        for key, value in pairs(data) do
-            local handler = UI_REGISTRY[key]
-            if type(handler) == "function" then
-                pcall(function() handler(value) end)
-            end
-        end
-        task.delay(0.2, function()
-            pcall(function() SystemNotify("Config dimuat!", 1.5) end)
-        end)
-    end)
-end
-
--- [v20-PATCH] task.delay(1.5) DIHAPUS — FLaAutoLoad sekarang dipanggil
--- di akhir script (setelah SEMUA panel + FLaSetters sudah siap).
--- Lihat baris pcall(FLaAutoLoad) di bagian "Eksekusi Akhir" bawah.
 
 -- PANEL : SETTINGS
 -- ============================================================
 do
  local p = NewPanel("settings")
- -- ── Save / Reset Config ──────────────────────────────────
- local _cfgCard = Frame(p, C.BG3, UDim2.new(1,0,0,0))
- _cfgCard.LayoutOrder=0; _cfgCard.AutomaticSize=Enum.AutomaticSize.Y
- Corner(_cfgCard,10); Stroke(_cfgCard,C.ACC,1.5,0.35)
- Padding(_cfgCard,8,8,10,10)
- New("UIListLayout",{Parent=_cfgCard,FillDirection=Enum.FillDirection.Vertical,
-  SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
- Label(_cfgCard,"Save / Load / Reset Config",12,C.TXT,Enum.Font.GothamBold).Size=UDim2.new(1,0,0,16)
- Label(_cfgCard,"Simpan, muat, atau reset semua setting",9,C.TXT3,Enum.Font.GothamBold).Size=UDim2.new(1,0,0,13)
- local _cfgBtnRow=Frame(_cfgCard,C.BG3,UDim2.new(1,0,0,34))
- _cfgBtnRow.BackgroundTransparency=1
- New("UIListLayout",{Parent=_cfgBtnRow,FillDirection=Enum.FillDirection.Horizontal,
-  SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,8)})
- local _saveBtn=Btn(_cfgBtnRow,C.ACC,UDim2.new(0.5,-4,1,0))
- _saveBtn.LayoutOrder=1; Corner(_saveBtn,8)
- local _saveLbl=Label(_saveBtn,"SAVE",11,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- _saveLbl.Size=UDim2.new(1,0,1,0)
- _saveBtn.MouseButton1Click:Connect(function()
-  _saveBtn.Active=false; _saveLbl.Text="Saving..."
-  task.wait(0.1); FLaSave(); task.wait(0.5)
-  _saveLbl.Text="SAVE"; _saveBtn.Active=true
- end)
- local _loadBtn=Btn(_cfgBtnRow,Color3.fromRGB(50,120,80),UDim2.new(0.5,-4,1,0))
- _loadBtn.LayoutOrder=2; Corner(_loadBtn,8)
- local _loadLbl=Label(_loadBtn,"LOAD",11,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- _loadLbl.Size=UDim2.new(1,0,1,0)
- _loadBtn.MouseButton1Click:Connect(function()
-  _loadBtn.Active=false; _loadLbl.Text="Loading..."
-  task.wait(0.1); FLaAutoLoad(); task.wait(0.5)
-  _loadLbl.Text="LOAD"; _loadBtn.Active=true
- end)
- local _resetBtnRow=Frame(_cfgCard,C.BG3,UDim2.new(1,0,0,34))
- _resetBtnRow.BackgroundTransparency=1
- _resetBtnRow.LayoutOrder=3
- local _resetBtn=Btn(_resetBtnRow,Color3.fromRGB(160,50,50),UDim2.new(1,0,1,0))
- Corner(_resetBtn,8)
- local _resetLbl=Label(_resetBtn,"RESET ALL",11,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- _resetLbl.Size=UDim2.new(1,0,1,0)
- _resetBtn.MouseButton1Click:Connect(function()
-  _resetBtn.Active=false; _resetLbl.Text="Deleting..."
-  task.wait(0.1); FLaReset(); task.wait(0.5)
-  _resetLbl.Text="RESET ALL"; _resetBtn.Active=true
- end)
- -- ── End Save / Load / Reset ─────────────────────────────────
 
  SectionHeader(p,"UI & Performance",1)
  
@@ -12540,32 +12163,37 @@ do
             if mt and _old then
                 setreadonly(mt, false)
                 mt.__namecall = newcclosure(function(self, ...)
-                    if not _G.FLA_IS_RUNNING then return _old(self, ...) end
                     local _m = getnamecallmethod()
                     
+                    -- [FAST PATH] Jika bukan remote, langsung lewat (Mencegah UIManager Crash/Log Merah)
                     if _m ~= "FireServer" and _m ~= "InvokeServer" then 
                         return _old(self, ...) 
                     end
 
+                    -- [SAFE CAPTURE] Tanpa pcall di dalam hook agar tidak merusak C-Stack / Memori
                     local args = {...}
                     local arg1 = args[1]
 
                     if type(arg1) == "table" then
+                        -- 1. Hero Reroll
                         if self == _rHero or self == _rAuto then
                             local g = arg1.heroGuid or arg1.HeroGuid or arg1.guid
                             if type(g) == "string" and #g > 20 then
                                 if _HR_RPT then _HR_RPT.guid = g; _HR_RPT.Refresh() end
+                                -- Simpan ke list global untuk Mass Attack / Siege
                                 local dup = false
                                 for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
                                 if not dup then table.insert(HERO_GUIDS, g) end
                             end
                         
+                        -- 2. Weapon Reroll
                         elseif self == _rWeapon then
                             local wg = arg1.guid or arg1.weaponGuid or arg1.id
                             if type(wg) == "string" and #wg > 20 then
                                 if _WR_RPT then _WR_RPT.guid = wg; _WR_RPT.Refresh() end
                             end
                         
+                        -- 3. Pet Gear Reroll
                         elseif self == _rPetG then
                             local pg = arg1.guid
                             local dId = arg1.drawId
@@ -12576,7 +12204,7 @@ do
                                     PGR.captured[si] = true
                                     if PGR.statLbls[si] then
                                         PGR.statLbls[si].Text = "START NOW"
-                                        PGR.statLbls[si].TextColorColor3 = Color3.fromRGB(80,220,80)
+                                        PGR.statLbls[si].TextColor3 = Color3.fromRGB(80,220,80)
                                     end
                                 end
                             end
@@ -12615,7 +12243,6 @@ do
             TweenService:Create(Window, TweenInfo.new(0.3), {BackgroundTransparency = _G.ThemeTransparency}):Play()
         end
     end)
-    _G.FLaSetters["uiTransparency"] = _setUiTransSlider
     
     SectionHeader(p, "Color Palettes (30 Themes)", 10)
     
@@ -12640,199 +12267,7 @@ do
     end
 end
  
-UI_REGISTRY["hideRerollChat"] = function(on)
-    _hideRerollChat = on
-    if on and _startHideRerollChat then _startHideRerollChat() elseif _stopHideRerollChat then _stopHideRerollChat() end
-    pcall(function()
-        TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        TweenService:Create(hrKnob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-        }):Play()
-    end)
-end
 
-_G.FLaSetters["autoSell"] = function(on)
-    _autoSellOn = on
-    local pill = ScreenGui:FindFirstChild("ashPill", true) or ScreenGui:FindFirstChild("sellPill", true)
-    local knob = pill and pill:FindFirstChildOfClass("Frame")
-    if pill then
-        TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-    end
-    if knob then
-        TweenService:Create(knob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-        }):Play()
-    end
-end
-UI_REGISTRY["autoSell"] = _G.FLaSetters["autoSell"]
-
-UI_REGISTRY["autoSellWeapon"] = function(on)
-    _autoSellWeaponOn = on
-    if on then StartAutoSellWeapon() else
-        if _swConn then pcall(function() task.cancel(_swConn) end); _swConn = nil end
-        pcall(function() SetSWStatus("Idle - "..(_swSoldCount or 0).." SOLD", C.TXT3) end)
-    end
-    pcall(function()
-        TweenService:Create(swPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        TweenService:Create(swKnob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-        }):Play()
-    end)
-end
-UI_REGISTRY["swDropUpdate"] = function()
-    pcall(function() UpdateSwDropUI() end)
-end
-
-UI_REGISTRY["massAttack"] = function(on)
-    pcall(function() if DoMassAttack then DoMassAttack(on) end end)
-end
-
-UI_REGISTRY["autoRaid"] = function(on)
-    _raidOn = on
-    RAID.running = on
-    if on then StartRaidLoop() else StopRaid() end
-    pcall(function()
-        local ctrlRow = ScreenGui:FindFirstChild("ctrlRow", true)
-        local pill = ctrlRow and ctrlRow:FindFirstChildOfClass("TextButton")
-        local knob = pill and pill:FindFirstChildOfClass("Frame")
-        if pill then
-            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        end
-        if knob then
-            TweenService:Create(knob, TweenInfo.new(0.16), {
-                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-            }):Play()
-        end
-    end)
-end
-
-UI_REGISTRY["raidPickMode"] = function(idx)
-    curPM = idx
-    RAID.pickMode = PM_KEYS[idx]
-    RAID.difficulty = PM_TO_DIFF[PM_KEYS[idx]]
-    RAID.snapshotMapId = nil
-    pcall(function()
-        pmDDLbl.Text = " " .. PM_OPTS[idx]
-        pmDDLbl.TextColor3 = PM_COLORS[idx]
-        pmDescLbl.Text = PM_DESC[idx]
-    end)
-end
-
-UI_REGISTRY["raidRune"] = function(mapId)
-    RAID.runeMapTarget = mapId
-    pcall(function() SyncRuneState() end)
-    pcall(function()
-        if mapId >= 1 and mapId <= 19 then
-            runeDDVal.Text = " Map " .. mapId .. " - " .. (MAP_NAMES[mapId] or "")
-            runeDDVal.TextColor3 = C.ACC2
-        else
-            runeDDVal.Text = " -- NOT SELECTED --"
-            runeDDVal.TextColor3 = C.TXT3
-        end
-    end)
-end
-
-UI_REGISTRY["autoSiege"] = function(on)
-    if on then StartSiegeLoop() else StopSiege() end
-    pcall(function()
-        local siegeRow = ScreenGui:FindFirstChild("siegeRow", true)
-        local pill = siegeRow and siegeRow:FindFirstChildOfClass("TextButton")
-        local knob = pill and pill:FindFirstChildOfClass("Frame")
-        if pill then
-            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        end
-        if knob then
-            TweenService:Create(knob, TweenInfo.new(0.16), {
-                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-            }):Play()
-        end
-    end)
-end
-
-UI_REGISTRY["autoDungeon"] = function(on)
-    if on then StartDungeonLoop() else StopDungeon() end
-    pcall(function()
-        local dngRow = ScreenGui:FindFirstChild("dungeonRow", true) or ScreenGui:FindFirstChild("dngRow", true)
-        local pill = dngRow and dngRow:FindFirstChildOfClass("TextButton")
-        local knob = pill and pill:FindFirstChildOfClass("Frame")
-        if pill then
-            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        end
-        if knob then
-            TweenService:Create(knob, TweenInfo.new(0.16), {
-                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-            }):Play()
-        end
-    end)
-end
-
-UI_REGISTRY["noClip"] = function(on)
-    STATE.noClip = on
-    if on and StartNoclipLoop then StartNoclipLoop() elseif StopNoclip then StopNoclip() end
-end
-
-UI_REGISTRY["antiAfk"] = function(on)
-    STATE.antiAfk = on
-    if on and StartAntiAfk then StartAntiAfk() elseif StopAntiAfk then StopAntiAfk() end
-end
-
-UI_REGISTRY["potato"] = function(on)
-    _G.PotatoMode = on
-    if on then
-        CleanupVFX()
-        pcall(function()
-            for _, obj in ipairs(ScreenGui:GetDescendants()) do
-                if obj:IsA("ParticleEmitter") or obj:IsA("UIGradient") or obj:IsA("UIStroke") then obj:Destroy() end
-            end
-            Window.BackgroundTransparency = 0
-        end)
-    else
-        Window.BackgroundTransparency = _G.ThemeTransparency
-        pcall(function() ApplyTheme(_G.CurrentTheme) end)
-    end
-end
-
-UI_REGISTRY["webhookEnabled"] = function(on)
-    _webhookEnabled = on
-    if on and FlushWebhookPending then task.spawn(FlushWebhookPending) end
-    pcall(function()
-        TweenService:Create(wPill, TweenInfo.new(0.16), {BackgroundColor3 = on and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
-        TweenService:Create(wKnob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3 = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
-        }):Play()
-        wRow.BackgroundColor3 = on and C.BG2 or C.BG3
-    end)
-end
-
-UI_REGISTRY["webhookUrl"] = function(url)
-    _webhookUrl = url
-    pcall(function()
-        local urlB = ScreenGui:FindFirstChild("urlBox", true)
-        if urlB and urlB:IsA("TextBox") then urlB.Text = url end
-    end)
-    pcall(function() if UpdatePlatformLbl then UpdatePlatformLbl() end end)
-end
-
-UI_REGISTRY["webhookMode"] = function(idx)
-    curModeIdx = idx
-    _webhookMode = MODE_OPTS[idx].value
-    pcall(function()
-        modeDDLbl.Text = " " .. MODE_OPTS[idx].label
-        modeDDLbl.TextColor3 = MODE_OPTS[idx].col
-        modeDescLbl.Text = MODE_OPTS[idx].desc
-    end)
-end
-
---- [v20-PATCH] Auto-load config INSTAN setelah SEMUA panel & FLaSetters sudah siap.
--- Dipindah ke sini dari task.delay(1.5) yang lama → 0 detik delay, langsung restore.
-pcall(FLaAutoLoad)
 
 -- ============================================================
 
@@ -12861,11 +12296,12 @@ task.spawn(function()
     end
 
     if _reCity then
-        local conn = _reCity.OnClientEvent:Connect(function(data)
+        _reCity.OnClientEvent:Connect(function(data)
             if type(data) ~= "table" then return end
             local id, action = data.id, data.action
             local mn = CITY_TO_MAP_CONN[id]
             
+            -- [[ FIX KRITIS: JANGAN PAKAI 'END' SETELAH RETURN ]]
             if not id or not action or not mn then 
                 return 
             elseif action == "OpenCityRaid" then
@@ -12879,8 +12315,7 @@ task.spawn(function()
                 if _siegeChatOpen then _siegeChatOpen[mn] = false end
             end
         end) 
-        table.insert(_G.FLA_CONNECTIONS, conn)
-    end
+    end 
 end) -- [FIX] Close Siege Scanner task.spawn
 
 
@@ -12891,60 +12326,110 @@ end) -- [FIX] Close Siege Scanner task.spawn
 -- ============================================================
 local function FLaFullCleanup(reason)
     reason = reason or "cleanup"
-    _G.FLA_IS_RUNNING = false
+    pcall(function() print("[FLa CLEANUP] " .. reason) end)
 
-    for _, conn in ipairs(_G.FLA_CONNECTIONS or {}) do
-        pcall(function() conn:Disconnect() end)
-    end
-    _G.FLA_CONNECTIONS = {}
-
+    -- 1. Stop semua fitur utama
     pcall(function() if DoMassAttack then DoMassAttack(false) end end)
     pcall(function() if StopRaid     then StopRaid()          end end)
     pcall(function() if StopSiege    then StopSiege()         end end)
     pcall(function() if StopDungeon  then StopDungeon()       end end)
-    pcall(function() if StopST2      then StopST2()           end end)
+    -- ST2: stop manual (tidak ada fungsi StopST2)
+    pcall(function()
+        if ST2 then
+            ST2.running = false
+            if ST2.thread then pcall(task.cancel, ST2.thread); ST2.thread = nil end
+        end
+    end)
 
+    -- 2. Stop AG + Gold Magnet + Destroy Worker
     pcall(function()
         if AG then AG.running = false end
         if AG and AG.thread then
             pcall(function() task.cancel(AG.thread) end)
             AG.thread = nil
         end
+        _goldMagnetRunning = false
+        _collectEnabled    = false
     end)
 
-    pcall(function() if _animLoopConn then pcall(task.cancel, _animLoopConn); _animLoopConn = nil end end)
+    -- 3. Stop Anti-AFK + Hero Attack thread
+    pcall(function()
+        if _antiAfkThread then
+            pcall(function() task.cancel(_antiAfkThread) end)
+            _antiAfkThread = nil
+        end
+        STATE.antiAfk = false
+    end)
+    pcall(function()
+        if _heroAtkThread then
+            pcall(function() task.cancel(_heroAtkThread) end)
+            _heroAtkThread = nil
+        end
+    end)
+    -- Stop Potion threads
+    pcall(function()
+        if _mergeRunning ~= nil then _mergeRunning = false end
+        if _mergeThread  ~= nil then pcall(task.cancel, _mergeThread);  _mergeThread  = nil end
+        if _useRunning   ~= nil then _useRunning   = false end
+        if _useThread    ~= nil then pcall(task.cancel, _useThread);    _useThread    = nil end
+        _autoSellOn = false
+    end)
+
+    -- 4. Disconnect semua koneksi event
+    pcall(function() if _animLoopConn    then pcall(task.cancel, _animLoopConn);    _animLoopConn    = nil; STATE.disableAnim = false end end)
+    pcall(function() if _noClipConn      then pcall(task.cancel, _noClipConn);      _noClipConn      = nil; STATE.noClip      = false end end)
+    pcall(function() if _swConn          then pcall(task.cancel, _swConn);           _swConn          = nil end end)
     pcall(function() if _dmgTextConnWorkspace then _dmgTextConnWorkspace:Disconnect(); _dmgTextConnWorkspace = nil end end)
-    pcall(function() if _noClipConn then pcall(task.cancel, _noClipConn); _noClipConn = nil end end)
-    pcall(function() if _hideRerollConn then _hideRerollConn:Disconnect(); _hideRerollConn = nil end end)
-    pcall(function() if _sellConn then _sellConn:Disconnect(); _sellConn = nil end end)
-    pcall(function() if _swConn then pcall(function() task.cancel(_swConn) end); _swConn = nil end end)
+    pcall(function() if _hideRerollConn  then _hideRerollConn:Disconnect();          _hideRerollConn  = nil end end)
+    pcall(function() _hideRerollChat = false end) -- stop hide reroll flag
+    pcall(function() if _sellConn        then _sellConn:Disconnect();                _sellConn        = nil end end)
+    pcall(function() if _autoHideConn    then _autoHideConn:Disconnect();            _autoHideConn    = nil; STATE.autoHideReward = false end end)
+    pcall(function() if _deathConn       then _deathConn:Disconnect();               _deathConn       = nil end end)
+    pcall(function() if _deathConnGlobal  then _deathConnGlobal:Disconnect();         _deathConnGlobal = nil end end)
     pcall(function() if DisconnectRaidConns then DisconnectRaidConns() end end)
 
-    pcall(function() if _raidWakeup   then _raidWakeup:Destroy();   _raidWakeup   = nil end end)
-    pcall(function() if _siegeWakeup  then _siegeWakeup:Destroy();  _siegeWakeup  = nil end end)
+    -- 5. Restore metatable hook (__namecall) ke original
+    -- Penting: kalau tidak di-restore, hook tetap aktif di background
+    pcall(function()
+        if _G._FLa_old_nc and type(getrawmetatable) == "function" then
+            local mt = getrawmetatable(game)
+            if mt and type(setreadonly) == "function" then
+                setreadonly(mt, false)
+                mt.__namecall = _G._FLa_old_nc
+                setreadonly(mt, true)
+                _G._FLa_old_nc = nil
+            end
+        end
+    end)
+
+    -- 6. Destroy BindableEvents
+    pcall(function() if _raidWakeup    then _raidWakeup:Destroy();    _raidWakeup    = nil end end)
+    pcall(function() if _siegeWakeup   then _siegeWakeup:Destroy();   _siegeWakeup   = nil end end)
     pcall(function() if _dungeonWakeup then _dungeonWakeup:Destroy(); _dungeonWakeup = nil end end)
 
-    pcall(function() RAID_LIVE = {}; RAID_ID_LIST = {} end)
-    pcall(function() _deadG = {}; _deadG_F = {} end)
-    pcall(function() _runeGradeCache = {}; HERO_GUIDS = {} end)
-    pcall(function() if SIEGE then SIEGE.live = {} end end)
+    -- 7. Clear semua state tables (free memory)
+    pcall(function() RAID_LIVE = {}; RAID_ID_LIST = {}; _defaultRRIdx = 0 end)
+    pcall(function() _deadG = {}; _deadG_F = {}; HERO_GUIDS = {} end)
+    pcall(function() _runeGradeCache = {}; _towerBossCache = {}; _runeGradeFromChat = {} end)
+    pcall(function() if SIEGE then SIEGE.live = {}; SIEGE.running = false; SIEGE.inMap = false end end)
     pcall(function() _G.SentRaidIds = {}; _G.SentSiegeIds = {} end)
+    pcall(function() MA.killed = 0; MA.running = false end)
+    pcall(function() _raidOn = false; _raidInterrupt = false; _siegeInterrupt = false end)
 
+    -- 8. Cancel webhook debounce
+    pcall(function()
+        if _whDebounce then task.cancel(_whDebounce); _whDebounce = nil end
+    end)
+
+    -- 9. Reset MODE dispatcher
+    pcall(function() if MODE then MODE.current = "idle" end end)
+
+    -- 10. Destroy GUI (langkah terakhir)
     pcall(function()
         if ScreenGui and ScreenGui.Parent then
             ScreenGui:Destroy()
+            ScreenGui = nil  -- hapus reference agar GC bisa bekerja
         end
-    end)
-
-    pcall(function()
-        if _whDebounce then
-            task.cancel(_whDebounce)
-            _whDebounce = nil
-        end
-    end)
-
-    pcall(function()
-        if MODE then MODE.current = "idle" end
     end)
 end
 
@@ -12956,7 +12441,24 @@ task.spawn(function()
     -- Pasang listener untuk NEXT CharacterRemoving
     LP.CharacterRemoving:Connect(function()
         task.delay(0.1, function()
-            FLaFullCleanup("CharacterRemoving - relog/respawn")
+            -- Saat relog: stop semua fitur tapi JANGAN destroy GUI
+            -- GUI masih diperlukan jika player inject script di server baru
+            pcall(function() if DoMassAttack then DoMassAttack(false) end end)
+            pcall(function() if StopRaid     then StopRaid()          end end)
+            pcall(function() if StopSiege    then StopSiege()         end end)
+            pcall(function() if StopDungeon  then StopDungeon()       end end)
+            pcall(function()
+                if ST2 then ST2.running=false
+                    if ST2.thread then pcall(task.cancel,ST2.thread); ST2.thread=nil end
+                end
+            end)
+            pcall(function() if AG then AG.running=false end; _goldMagnetRunning=false; _collectEnabled=false end)
+            pcall(function() if _antiAfkThread then pcall(task.cancel,_antiAfkThread); _antiAfkThread=nil end end)
+            pcall(function() if _animLoopConn  then pcall(task.cancel,_animLoopConn);  _animLoopConn=nil  end end)
+            pcall(function() if _noClipConn    then pcall(task.cancel,_noClipConn);    _noClipConn=nil    end end)
+            pcall(function() RAID_LIVE={}; RAID_ID_LIST={}; _deadG={}; _deadG_F={} end)
+            pcall(function() if SIEGE then SIEGE.live={}; SIEGE.running=false; SIEGE.inMap=false end end)
+            pcall(function() if MODE then MODE.current="idle" end end)
         end)
     end)
 end)
@@ -12974,3 +12476,5 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         FLaFullCleanup("ScreenGui removed")
     end
 end)
+
+

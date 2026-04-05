@@ -60,6 +60,12 @@ end
 -- REMOTES
 -- ============================================================
 Remotes = RS:WaitForChild("Remotes", 10)
+
+pcall(function()
+    local sls = Remotes:FindFirstChild("SendLikelySpeakingUsers")
+    if sls then sls.OnClientEvent:Connect(function() end) end
+end)
+
 RE = {
  CollectItem = Remotes:WaitForChild("CollectItem", 10),
  ExtraReward = Remotes:WaitForChild("ExtraReward", 10), -- [v112-FIX] WaitForChild agar tidak nil
@@ -12605,7 +12611,7 @@ end
  
 UI_REGISTRY["hideRerollChat"] = function(on)
     _hideRerollChat = on
-    if on then _startHideRerollChat() else _stopHideRerollChat() end
+    if on and _startHideRerollChat then _startHideRerollChat() elseif _stopHideRerollChat then _stopHideRerollChat() end
     pcall(function()
         TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
         TweenService:Create(hrKnob, TweenInfo.new(0.16), {

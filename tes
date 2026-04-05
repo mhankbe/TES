@@ -18,7 +18,8 @@ RunService = game:GetService("RunService")
 RS = game:GetService("ReplicatedStorage")
 TeleportService = game:GetService("TeleportService")
 GuiService = game:GetService("GuiService")
-VIM = game:GetService("VirtualInputManager")
+pcall(function() VIM = game:GetService("VirtualInputManager") end)
+if not VIM then VIM = {} end -- [FIX] VIM nil-safe fallback
 
 LP = Players.LocalPlayer
 PG = LP.PlayerGui
@@ -1198,9 +1199,11 @@ SKL = {
 -- Simulasi tekan tombol keyboard via VirtualInputManager (sama seperti script lama)
 function PK(k)
  pcall(function()
- VIM:SendKeyEvent(true, k, false, game)
- task.wait(0.05)
- VIM:SendKeyEvent(false, k, false, game)
+ if VIM and type(VIM.SendKeyEvent) == "function" then -- [FIX] nil-safe VIM guard
+  VIM:SendKeyEvent(true, k, false, game)
+  task.wait(0.05)
+  VIM:SendKeyEvent(false, k, false, game)
+ end
  end)
 end
 
@@ -2101,27 +2104,6 @@ function WaitSiegeDone()
         end
     end
 end
-function DoMassAttack(on)
- if on then
- _mOn = true
- MA.running = true
- MA.killed = 0
- MA.collected = 0
- StartDestroyWorker(function() return MA.running end)
- StartGoldMagnet(function() return MA.running end) -- [v257] Gold magnet
- MA.thread = task.spawn(function()
- local _maStart = os.time()
- local function maStatus(msg, col)
- if _maStatusLbl then
- local dur = os.time() - _maStart
- local ts = string.format("%02d:%02d:%02d", math.floor(dur/3600), math.floor(dur/60)%60, dur%60)
- _maStatusLbl.Text = "["..ts.."] "..msg
- _maStatusLbl.TextColor3 = col or C.ACC2
- end
- end
- while MA.running do
- -- [v252] Pause kalau ada fitur prioritas lebih tinggi aktif
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
  if not MA.running then break end
 
  local mapsToUse = {}
@@ -3313,11 +3295,14 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  task.spawn(function()
  task.wait(2) -- tunggu hook system ready
  pcall(function()
+ if type(getrawmetatable) ~= "function" then return end -- [FIX] executor guard
  local mt = getrawmetatable(game)
+ if not mt then return end -- [FIX] nil guard
  local old_nc = mt.__namecall
+ if type(setreadonly) ~= "function" then return end -- [FIX] executor guard
  setreadonly(mt, false)
- mt.__namecall = newcclosure(function(self, ...)
- local method = getnamecallmethod()
+ mt.__namecall = newcclosure and newcclosure(function(self, ...)
+ local method = getnamecallmethod and getnamecallmethod() or ""
  if _hideRerollChat and (method == "FireServer" or method == "InvokeServer") then
  pcall(function()
  if _rerollHideNames[self.Name] then
@@ -3326,7 +3311,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  end)
  end
  return old_nc(self, ...)
- end)
+ end) or old_nc
  setreadonly(mt, true)
  end)
  end)
@@ -12653,11 +12638,6 @@ do
         end)
     end
 end
- 
- ApplyTheme("Solo Leveling")
- SwitchTab("main")
- RefreshStatus()
- InitAllCaptureLayers()
 
 -- [v20-PATCH] Auto-load config INSTAN setelah SEMUA panel & FLaSetters sudah siap.
 -- Dipindah ke sini dari task.delay(1.5) yang lama → 0 detik delay, langsung restore.
@@ -12712,6 +12692,7 @@ task.spawn(function()
     end 
 
 -- ============================================================
+end) -- [FIX] Close Siege Scanner task.spawn
 -- AUTO CLEANUP SYSTEM
 -- Trigger: CharacterRemoving (relog/respawn) atau game close
 -- Tujuan: hentikan semua loop/thread/koneksi → free memory
@@ -12804,6 +12785,4 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         FLaFullCleanup("ScreenGui removed")
     end
 end)
-
-
-end)
+-- [FIX v20-FIXED] End of script - all structural fixes applied

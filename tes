@@ -1,4 +1,6 @@
--- ASH Auto Farm - by FLa Project
+_G.FLA_IS_RUNNING = true
+_G.FLA_CONNECTIONS = {}
+_G.FLA_HOOK_RESTORED = false
 do
  local _RS2 = game:GetService("ReplicatedStorage")
  local _LP2 = game:GetService("Players").LocalPlayer
@@ -1450,7 +1452,7 @@ function FireHeroRemotes(enemyGuid, enemyPos)
 end
 
 if RE.Death then
- RE.Death.OnClientEvent:Connect(function(d)
+ local conn = RE.Death.OnClientEvent:Connect(function(d)
   if not d then return end
   local g = d.enemyGuid or d.guid
   if not g then return end
@@ -1469,6 +1471,7 @@ if RE.Death then
    if SiegeCounterUpdate then SiegeCounterUpdate() end
   end
  end)
+ table.insert(_G.FLA_CONNECTIONS, conn)
 end
 
 -- ============================================================
@@ -2011,7 +2014,11 @@ function DoMassAttack(on)
  end
  while MA.running do
  -- [v252] Pause kalau ada fitur prioritas lebih tinggi aktif
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
+ if MODE.current ~= "idle" and MODE.current ~= "ma"
+   or _raidInterrupt or _siegeInterrupt
+   or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap)
+   or (ST2 and ST2.running)
+   or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
  if not MA.running then break end
 
  local mapsToUse = {}
@@ -2026,7 +2033,11 @@ function DoMassAttack(on)
  elseif not cont or not MA.running then
  break
  end
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
+ if MODE.current ~= "idle" and MODE.current ~= "ma"
+   or _raidInterrupt or _siegeInterrupt
+   or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap)
+   or (ST2 and ST2.running)
+   or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
  task.wait(MR.nextMapDelay)
  else
  -- [FIX] while+index manual: loop balik ke map pertama setelah map terakhir
@@ -2041,7 +2052,11 @@ function DoMassAttack(on)
  if #_fresh == 0 then mapsToUse = {}; break end
  if _mapIdx > #_fresh then _mapIdx = 1 end
  local m = _fresh[_mapIdx]
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
+ if MODE.current ~= "idle" and MODE.current ~= "ma"
+   or _raidInterrupt or _siegeInterrupt
+   or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap)
+   or (ST2 and ST2.running)
+   or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
  if not MA.running then break end
  if _raidInterrupt then _mapIdx = _mapIdx + 1; continue end
  maStatus("-> TP ke "..m.name.."...", Color3.fromRGB(180,220,255))
@@ -2056,7 +2071,11 @@ function DoMassAttack(on)
  elseif not cont or not MA.running then
  break
  end
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
+ if MODE.current ~= "idle" and MODE.current ~= "ma"
+   or _raidInterrupt or _siegeInterrupt
+   or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap)
+   or (ST2 and ST2.running)
+   or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
  if not MA.running then break end
  maStatus("[OK] SUCCES "..m.name.." - Go to...", Color3.fromRGB(100,255,150))
  task.wait(MR.nextMapDelay)
@@ -3013,7 +3032,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  end
 
  local function StartAutoSell()
- if _sellConn then pcall(function() _sellConn:Disconnect() end) end
+ if _sellConn then pcall(function() _sellConn:Disconnect() end); _sellConn = nil end
  local updateRemote = Remotes:FindFirstChild("UpdateHeroEquip")
  if not updateRemote then SetSellStatus("[!] NOT FOUND!", C.RED); return end
  scanGuidNames()
@@ -3021,27 +3040,36 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  pcall(function()
  local lockR = Remotes:FindFirstChild("LockHeroEquip")
  local unlockR = Remotes:FindFirstChild("UnlockHeroEquip")
- if lockR then lockR.OnClientEvent:Connect(function(d)
- local g=type(d)=="string" and d or (type(d)=="table" and (d.guid or d[1])) or nil
- if g then _lockedGuids[g]=true end
- end) end
- if unlockR then unlockR.OnClientEvent:Connect(function(d)
- local g=type(d)=="string" and d or (type(d)=="table" and (d.guid or d[1])) or nil
- if g then _lockedGuids[g]=nil end
- end) end
- end)
+ if lockR then 
+  local conn = lockR.OnClientEvent:Connect(function(d)
+   local g=type(d)=="string" and d or (type(d)=="table" and (d.guid or d[1])) or nil
+   if g then _lockedGuids[g]=true end
+  end)
+  table.insert(_G.FLA_CONNECTIONS, conn)
+ end
+ if unlockR then 
+  local conn = unlockR.OnClientEvent:Connect(function(d)
+   local g=type(d)=="string" and d or (type(d)=="table" and (d.guid or d[1])) or nil
+   if g then _lockedGuids[g]=nil end
+  end)
+  table.insert(_G.FLA_CONNECTIONS, conn)
+ end
+end)
 
  _sellConn = updateRemote.OnClientEvent:Connect(function(data)
  if not _autoSellOn then return end
  if type(data) ~= "table" then return end
  task.spawn(function()
  task.wait(0.3)
- -- [v186] Struktur confirmed dari sniff:
- -- item = { guid="...", data = { id=970002, isLock=bool, grade=990001, guid="..." } }
  local items = {}
  if data.heroEquips and type(data.heroEquips)=="table" then items=data.heroEquips
- elseif data[1] and type(data[1])=="table" then items=data
- elseif data.guid then items={data} end
+ elseif data.items then items=data.items
+ elseif data.heroEquips then items=data.heroEquips
+ end
+ scanAndSell(items)
+ end)
+end)
+table.insert(_G.FLA_CONNECTIONS, _sellConn)
 
  for _, item in ipairs(items) do
  if not _autoSellOn then break end
@@ -3244,6 +3272,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local old_nc = mt.__namecall
  setreadonly(mt, false)
  mt.__namecall = newcclosure(function(self, ...)
+ if not _G.FLA_IS_RUNNING then return old_nc(self, ...) end
  local method = getnamecallmethod()
  if _hideRerollChat and (method == "FireServer" or method == "InvokeServer") then
  pcall(function()
@@ -6978,78 +7007,41 @@ ConnectRaidListeners = function()
 
  if _RE_Update then
  local conn = _RE_Update.OnClientEvent:Connect(function(data)
- if type(data) ~= "table" then return end
- local action = data.action
- local raidInfos = data.raidInfos
- if type(raidInfos) ~= "table" then return end
+  if type(data) ~= "table" then return end
+  local action = data.action
+  local raidInfos = data.raidInfos
 
- if action == "RemoveRaidEnters" then
- for k in pairs(raidInfos) do
- local raidId = type(k)=="number" and k or tonumber(k)
- if raidId then RAID_LIVE[raidId] = nil end
- end
- RebuildRaidList()
- else
- for k, info in pairs(raidInfos) do
- if type(info) ~= "table" then continue end
- local raidId = info.raidId or (type(k)=="number" and k) or tonumber(k)
- local mapId = info.mapId
- if not raidId or not mapId then continue end
- -- Normalize mapId ke lobby range
- if mapId >= 50101 and mapId <= 50119 then mapId = mapId - 100 end
- if mapId < 50001 or mapId > 50019 then continue end
-
- local mapNum = mapId - 50000
- local spawnName = info.spawnName or "RE1001"
- local rank = SPAWN_RANK[spawnName] or 0
- -- [v271] Grade dari RAID_CONFIG_GRADE (formula matematika, cover semua seri)
- local grade = (RAID_CONFIG_GRADE and RAID_CONFIG_GRADE[raidId]) or (_runeGradeCache and _runeGradeCache[mapNum]) or "?"
- local tempKey = -(mapId)
- local entryData = {
- raidId = raidId,
- mapId = mapId,
- spawnName = spawnName,
- rank = rank,
- grade = grade,
- endTime = info.endTime,
- label = "Map "..mapNum.." - "..(MAP_NAMES[mapNum] or "Map "..mapNum).." ["..grade.."](ID:"..raidId..")",
- }
- -- Kalau ada entry temp dari workspace, replace dengan raidId asli
- if RAID_LIVE[tempKey] then
- RAID_LIVE[raidId] = entryData
- RAID_LIVE[tempKey] = nil
- elseif not RAID_LIVE[raidId] then
- -- Entry baru (workspace belum detect, atau AT)
- ParseRaidEntry(k, info)
- else
- -- Sudah ada, update grade saja
- RAID_LIVE[raidId].grade = grade
- RAID_LIVE[raidId].rank = rank
- RAID_LIVE[raidId].label = entryData.label
- end
- end
- RebuildRaidList()
- if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
- TriggerWebhookDebounce()
- end
+  if action == "Open" and type(raidInfos) == "table" then
+   for _, r in ipairs(raidInfos) do
+    if type(r) == "table" and r.raidId and r.mapId then
+     RAID_LIVE[r.raidId] = r
+     RAID_ID_LIST[r.raidId] = true
+    end
+   end
+   RebuildRaidList()
+   if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
+  elseif action == "Close" and type(data.raidIds) == "table" then
+   for _, rid in ipairs(data.raidIds) do
+    if RAID_LIVE[rid] then
+     RAID_LIVE[rid] = nil
+     RAID_ID_LIST[rid] = nil
+    end
+   end
+   RebuildRaidList()
+  end
  end)
- table.insert(_WH.raidConns, conn)
- end
+ table.insert(_G.FLA_CONNECTIONS, conn)
+end
 
  -- EnterRaidsUpdateInfo: slotIndex + serverMapId saat masuk map
  if _RE_Enter then
  local conn = _RE_Enter.OnClientEvent:Connect(function(data)
- if type(data) ~= "table" then return end
- if data.slotIndex then RAID.slotIndex = data.slotIndex end
- if data.fromMapId then RAID.fromMapId = data.fromMapId end
- if data.mapId then
- local mid = data.mapId
- if mid >= 50101 and mid <= 50118 then
- RAID.serverMapId = mid
- end
- end
+  if type(data) ~= "table" then return end
+  if data.slotIndex then RAID.slotIndex = data.slotIndex end
+  if data.fromMapId then RAID.fromMapId = data.fromMapId end
+  if data.mapId then RAID.targetMapId = data.mapId end
  end)
- table.insert(_WH.raidConns, conn)
+ table.insert(_G.FLA_CONNECTIONS, conn)
  end
 end
 
@@ -7810,7 +7802,11 @@ local function ResolveEntry()
                         local _cfail = false
                         local _cfConn
                         local _cfRe = Remotes:FindFirstChild("ChallengeRaidsFail")
-                        if _cfRe then _cfConn = _cfRe.OnClientEvent:Connect(function() _cfail = true end) end
+                        if _cfRe then 
+                            local conn = _cfRe.OnClientEvent:Connect(function() _cfail = true end)
+                            table.insert(_G.FLA_CONNECTIONS, conn)
+                            _cfConn = conn
+                        end
 
                         if RE.StartChallengeRaidMap then
                             pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = targetMapId}) end)
@@ -7905,12 +7901,20 @@ local function ResolveEntry()
  local connS, connF
  local _reS = Remotes:FindFirstChild("ChallengeRaidsSuccess")
  local _reF = Remotes:FindFirstChild("ChallengeRaidsFail")
- if _reS then connS = _reS.OnClientEvent:Connect(function()
+ if _reS then 
+ local conn = _reS.OnClientEvent:Connect(function()
  RAID._raidDone = true; _raidSuccess = true
- end) end
- if _reF then connF = _reF.OnClientEvent:Connect(function()
+ end)
+ table.insert(_G.FLA_CONNECTIONS, conn)
+ connS = conn
+ end
+ if _reF then 
+ local conn = _reF.OnClientEvent:Connect(function()
  RAID._raidDone = true
- end) end
+ end)
+ table.insert(_G.FLA_CONNECTIONS, conn)
+ connF = conn
+ end
 
  -- [FIX v256] Reduced wait: 3s untuk map load, SAMBIL cari boss
  -- Sebelumnya: diam 7s -> baru cari boss -> TP -> 2s -> UnEquip -> Equip -> serang
@@ -9373,11 +9377,12 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- Pasang listener EnemyDeath lokal untuk Siege (tidak ganggu _deadG global)
     local _deathConn = nil
     if RE.Death then
-        _deathConn = RE.Death.OnClientEvent:Connect(function(d)
+        local conn = RE.Death.OnClientEvent:Connect(function(d)
             if not d then return end
             local g = d.enemyGuid or d.guid
             if g then _deadG_Siege[g] = true end
         end)
+        table.insert(_G.FLA_CONNECTIONS, conn)
     end
 
     local function cleanup()
@@ -9938,7 +9943,7 @@ local DUNGEON_MAP_ID = 50303 -- MapId dalam dungeon
 local DUNGEON_LOBBY_ID = 50005 -- MapId Map 5 (lobby dungeon)
 local DUNGEON_WAIT_ENEMY = 30 -- detik tunggu enemy muncul setelah masuk
 local DUNGEON_MAX_TIME = 3600 -- 60 menit max di dalam dungeon
-local DUNGEON_KILL_TIMEOUT = 120 -- 2 menit: kalau 1 enemy tidak mati -> TP keluar
+local DUNGEON_KILL_TIMEOUT = 120 -- 2 menit: kalau 1 enemy tidak mati → TP keluar
 local DUNGEON_COOLDOWN = 3600 -- 60 menit cooldown setelah keluar
 
 DungeonStatus = function(msg, color)
@@ -9982,17 +9987,17 @@ local function ConnectDungeonListener()
  -- Coba pasang via Remotes (kalau ada ChangeTowerState sebagai RemoteEvent)
  local re = Remotes:FindFirstChild("ChangeTowerState") or Remotes:FindFirstChild("UpdateTowerState") or Remotes:FindFirstChild("TowerStateUpdate")
  if re and re:IsA("RemoteEvent") then
- re.OnClientEvent:Connect(function(data)
- if type(data) ~= "table" then return end
- local ts = data.towerState or data.state
- local et = data.endTimestamp or data.timestamp
- if ts then
- DUNGEON.towerState = ts
- if et then DUNGEON.endTimestamp = et end
- if _dungeonWakeup then pcall(function() _dungeonWakeup:Fire() end) end
- end
+ local conn = re.OnClientEvent:Connect(function(data)
+  if type(data) ~= "table" then return end
+  local ts = data.towerState or data.state
+  local et = data.endTimestamp or data.timestamp
+  if ts then
+  DUNGEON.towerState = ts
+  if et then DUNGEON.endTimestamp = et end
+  if _dungeonWakeup then pcall(function() _dungeonWakeup:Fire() end) end
+  end
  end)
- return
+ table.insert(_G.FLA_CONNECTIONS, conn)
  end
 
  -- Fallback: hook __namecall untuk tangkap FireClient/OnClientEvent dari game
@@ -10055,11 +10060,12 @@ local function DungeonAttackLoop(onStatus)
     -- Pasang listener EnemyDeath lokal (tidak ganggu _deadG global MA)
     local _deathConn = nil
     if RE.Death then
-        _deathConn = RE.Death.OnClientEvent:Connect(function(d)
+        local conn = RE.Death.OnClientEvent:Connect(function(d)
             if not d then return end
             local g = d.enemyGuid or d.guid
             if g then _deadG_D[g] = true end
         end)
+        table.insert(_G.FLA_CONNECTIONS, conn)
     end
 
     local function cleanup()
@@ -10512,14 +10518,15 @@ local _st2CurrentMapId = nil  -- diisi oleh listener di bawah
 -- Pasang listener EnterRaidsUpdateInfo untuk ST2 (standalone, tidak ganggu RAID)
 task.spawn(function()
     local _reEnter = Remotes:FindFirstChild("EnterRaidsUpdateInfo")
-    if not _reEnter then return end
-    _reEnter.OnClientEvent:Connect(function(data)
-        if type(data) ~= "table" then return end
-        if data.mapId then
-            _st2CurrentMapId = data.mapId
-        end
+    if _reEnter then
+        local conn = _reEnter.OnClientEvent:Connect(function(data)
+            if type(data) ~= "table" then return end
+            if data.mapId then
+                _st2CurrentMapId = data.mapId
+            end
+        end)
+        table.insert(_G.FLA_CONNECTIONS, conn)
     end)
-end)
 
 -- 
 
@@ -12516,37 +12523,32 @@ do
             if mt and _old then
                 setreadonly(mt, false)
                 mt.__namecall = newcclosure(function(self, ...)
+                    if not _G.FLA_IS_RUNNING then return _old(self, ...) end
                     local _m = getnamecallmethod()
                     
-                    -- [FAST PATH] Jika bukan remote, langsung lewat (Mencegah UIManager Crash/Log Merah)
                     if _m ~= "FireServer" and _m ~= "InvokeServer" then 
                         return _old(self, ...) 
                     end
 
-                    -- [SAFE CAPTURE] Tanpa pcall di dalam hook agar tidak merusak C-Stack / Memori
                     local args = {...}
                     local arg1 = args[1]
 
                     if type(arg1) == "table" then
-                        -- 1. Hero Reroll
                         if self == _rHero or self == _rAuto then
                             local g = arg1.heroGuid or arg1.HeroGuid or arg1.guid
                             if type(g) == "string" and #g > 20 then
                                 if _HR_RPT then _HR_RPT.guid = g; _HR_RPT.Refresh() end
-                                -- Simpan ke list global untuk Mass Attack / Siege
                                 local dup = false
                                 for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
                                 if not dup then table.insert(HERO_GUIDS, g) end
                             end
                         
-                        -- 2. Weapon Reroll
                         elseif self == _rWeapon then
                             local wg = arg1.guid or arg1.weaponGuid or arg1.id
                             if type(wg) == "string" and #wg > 20 then
                                 if _WR_RPT then _WR_RPT.guid = wg; _WR_RPT.Refresh() end
                             end
                         
-                        -- 3. Pet Gear Reroll
                         elseif self == _rPetG then
                             local pg = arg1.guid
                             local dId = arg1.drawId
@@ -12557,7 +12559,7 @@ do
                                     PGR.captured[si] = true
                                     if PGR.statLbls[si] then
                                         PGR.statLbls[si].Text = "START NOW"
-                                        PGR.statLbls[si].TextColor3 = Color3.fromRGB(80,220,80)
+                                        PGR.statLbls[si].TextColorColor3 = Color3.fromRGB(80,220,80)
                                     end
                                 end
                             end
@@ -12842,12 +12844,11 @@ task.spawn(function()
     end
 
     if _reCity then
-        _reCity.OnClientEvent:Connect(function(data)
+        local conn = _reCity.OnClientEvent:Connect(function(data)
             if type(data) ~= "table" then return end
             local id, action = data.id, data.action
             local mn = CITY_TO_MAP_CONN[id]
             
-            -- [[ FIX KRITIS: JANGAN PAKAI 'END' SETELAH RETURN ]]
             if not id or not action or not mn then 
                 return 
             elseif action == "OpenCityRaid" then
@@ -12861,6 +12862,7 @@ task.spawn(function()
                 if _siegeChatOpen then _siegeChatOpen[mn] = false end
             end
         end) 
+        table.insert(_G.FLA_CONNECTIONS, conn)
     end 
 end) -- [FIX] Close Siege Scanner task.spawn
 
@@ -12872,16 +12874,19 @@ end) -- [FIX] Close Siege Scanner task.spawn
 -- ============================================================
 local function FLaFullCleanup(reason)
     reason = reason or "cleanup"
-    pcall(function() print("[FLa CLEANUP] " .. reason) end)
+    _G.FLA_IS_RUNNING = false
 
-    -- 1. Stop semua fitur utama
+    for _, conn in ipairs(_G.FLA_CONNECTIONS or {}) do
+        pcall(function() conn:Disconnect() end)
+    end
+    _G.FLA_CONNECTIONS = {}
+
     pcall(function() if DoMassAttack then DoMassAttack(false) end end)
     pcall(function() if StopRaid     then StopRaid()          end end)
     pcall(function() if StopSiege    then StopSiege()         end end)
     pcall(function() if StopDungeon  then StopDungeon()       end end)
     pcall(function() if StopST2      then StopST2()           end end)
 
-    -- 2. Stop AG (Auto Goyang/Farm)
     pcall(function()
         if AG then AG.running = false end
         if AG and AG.thread then
@@ -12890,7 +12895,6 @@ local function FLaFullCleanup(reason)
         end
     end)
 
-    -- 3. Disconnect semua koneksi event
     pcall(function() if _animLoopConn then pcall(task.cancel, _animLoopConn); _animLoopConn = nil end end)
     pcall(function() if _dmgTextConnWorkspace then _dmgTextConnWorkspace:Disconnect(); _dmgTextConnWorkspace = nil end end)
     pcall(function() if _noClipConn then pcall(task.cancel, _noClipConn); _noClipConn = nil end end)
@@ -12899,26 +12903,22 @@ local function FLaFullCleanup(reason)
     pcall(function() if _swConn then pcall(function() task.cancel(_swConn) end); _swConn = nil end end)
     pcall(function() if DisconnectRaidConns then DisconnectRaidConns() end end)
 
-    -- 4. Destroy BindableEvents
     pcall(function() if _raidWakeup   then _raidWakeup:Destroy();   _raidWakeup   = nil end end)
     pcall(function() if _siegeWakeup  then _siegeWakeup:Destroy();  _siegeWakeup  = nil end end)
     pcall(function() if _dungeonWakeup then _dungeonWakeup:Destroy(); _dungeonWakeup = nil end end)
 
-    -- 5. Clear state tables (free memory)
     pcall(function() RAID_LIVE = {}; RAID_ID_LIST = {} end)
     pcall(function() _deadG = {}; _deadG_F = {} end)
     pcall(function() _runeGradeCache = {}; HERO_GUIDS = {} end)
     pcall(function() if SIEGE then SIEGE.live = {} end end)
     pcall(function() _G.SentRaidIds = {}; _G.SentSiegeIds = {} end)
 
-    -- 6. Destroy GUI
     pcall(function()
         if ScreenGui and ScreenGui.Parent then
             ScreenGui:Destroy()
         end
     end)
 
-    -- 7. Cancel webhook debounce
     pcall(function()
         if _whDebounce then
             task.cancel(_whDebounce)
@@ -12926,7 +12926,6 @@ local function FLaFullCleanup(reason)
         end
     end)
 
-    -- 8. Reset MODE dispatcher
     pcall(function()
         if MODE then MODE.current = "idle" end
     end)

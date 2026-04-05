@@ -350,7 +350,7 @@ do
  logo.BackgroundTransparency = 1
  logo.ZIndex = 25
  -- Gunakan rbxthumb agar Decal ID otomatis terbaca sebagai Image oleh Roblox
- logo.Image = "rbxthumb://type=Asset&id=133989674192597&w=420&h=420"
+ logo.Image = "rbxthumb://type=Asset&id=94305233712959&w=420&h=420"
  logo.ImageColor3 = Color3.fromRGB(255, 255, 255)
  logo.ScaleType = Enum.ScaleType.Fit
  

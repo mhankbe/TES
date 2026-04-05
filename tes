@@ -1003,6 +1003,15 @@ function SliderRow(panel, title, min, max, default, onMove)
     valLbl.Position = UDim2.new(1,-25,0,6)
 
     local dragging = false
+    -- [v20-PATCH] SetValue: setter eksternal agar bisa di-restore dari Save/Load
+    local function SetValue(val)
+        val = math.clamp(math.floor(val), min, max)
+        local pos = (val - min) / (max - min)
+        knob.Position = UDim2.new(pos, 0, 0.5, 0)
+        fill.Size = UDim2.new(pos, 0, 1, 0)
+        valLbl.Text = tostring(val)
+        if onMove then onMove(val) end
+    end
     local function Update(input)
         local pos = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
         knob.Position = UDim2.new(pos, 0, 0.5, 0)
@@ -1027,7 +1036,8 @@ function SliderRow(panel, title, min, max, default, onMove)
             Update(input)
         end
     end)
-    return row
+    -- [v20-PATCH] return row DAN setter agar caller bisa restore nilai
+    return row, SetValue
 end
 
 -- ============================================================
@@ -6616,10 +6626,10 @@ _WH.SendRaid = function(url)
         end
         local payload = {
             embeds = {{
-                title  = "[RAID OPEN] Best Rank: " .. topGrade,
+                title  = "[Notif] RAID Tersedia: " ..,
                 color  = color,
                 fields = fields,
-                footer = {text = "ASH GUI FLa Project"},
+                footer = {text = "FLa Project Webhook"},
             }}
         }
         pcall(function()
@@ -11416,20 +11426,27 @@ end
 
 function FLaCollect()
     local d = {}
-    -- Toggles (via FLaSetters registry - semua panel sudah isi saat ini)
-    local S = _G.FLaSetters or {}
+    -- ── Toggles STATE ─────────────────────────────────────────
     d.autoHideReward = STATE and STATE.autoHideReward or false
     d.disableAnim    = STATE and STATE.disableAnim    or false
     d.noClip         = STATE and STATE.noClip         or false
     d.antiAfk        = STATE and STATE.antiAfk        or false
+    d.autoCollect    = STATE and STATE.autoCollect    or false  -- [v20-PATCH]
+    d.autoDestroyer  = STATE and STATE.autoDestroyer  or false  -- [v20-PATCH]
+    d.autoArise      = STATE and STATE.autoArise      or false  -- [v20-PATCH]
+    d.autoConfirm    = STATE and STATE.autoConfirm    or false  -- [v20-PATCH]
+    d.autoClose      = STATE and STATE.autoClose      or false  -- [v20-PATCH]
     d.hideRerollChat = _hideRerollChat or false
-    d.potatoMode     = _G.PotatoMode  or false
-    d.autoSellOn     = _autoSellOn    or false
-    -- Webhook
-    d.webhookUrl     = _webhookUrl    or ""
-    d.webhookMode    = _webhookMode   or "both"
+    d.potatoMode     = _G.PotatoMode   or false
+    d.autoSellOn     = _autoSellOn     or false
+    -- ── Theme & UI Transparency ───────────────────────────────
+    d.currentTheme   = _G.CurrentTheme      or "Solo Leveling"  -- [v20-PATCH]
+    d.uiTransparency = _G.ThemeTransparency or 0.42             -- [v20-PATCH]
+    -- ── Webhook ───────────────────────────────────────────────
+    d.webhookUrl     = _webhookUrl     or ""
+    d.webhookMode    = _webhookMode    or "both"
     d.webhookEnabled = _webhookEnabled or false
-    -- Mass Attack
+    -- ── Mass Attack ───────────────────────────────────────────
     d.maKillTarget = MA and MA.killTarget    or 7
     d.mrNextDelay  = MR and MR.nextMapDelay  or 3
     d.mrTpDelay    = MR and MR.teleportDelay or 3
@@ -11439,7 +11456,7 @@ function FLaCollect()
             if MR.selected[i] then d.mrSelected[tostring(i)] = true end
         end
     end
-    -- Auto Raid
+    -- ── Auto Raid ─────────────────────────────────────────────
     d.raidDifficulty    = RAID and RAID.difficulty    or "easy"
     d.raidRuneEnabled   = RAID and RAID.runeEnabled   or false
     d.raidRuneMapTarget = RAID and RAID.runeMapTarget or 0
@@ -11457,7 +11474,7 @@ function FLaCollect()
             if v then d.raidRuneGrades[tostring(g)] = true end
         end
     end
-    -- Auto Siege
+    -- ── Auto Siege ────────────────────────────────────────────
     d.siegeExcludeMaps = {}
     if SIEGE and SIEGE.excludeMaps then
         for mn, v in pairs(SIEGE.excludeMaps) do
@@ -11469,7 +11486,7 @@ end
 
 function FLaApply(d)
     if type(d) ~= "table" then return end
-    -- Webhook
+    -- ── Webhook ───────────────────────────────────────────────
     if type(d.webhookUrl)     == "string"  then _webhookUrl     = d.webhookUrl  end
     if type(d.webhookMode)    == "string"  then _webhookMode    = d.webhookMode end
     if type(d.webhookEnabled) == "boolean" then _webhookEnabled = d.webhookEnabled end
@@ -11477,7 +11494,7 @@ function FLaApply(d)
         local urlB = ScreenGui:FindFirstChild("urlBox", true)
         if urlB and urlB:IsA("TextBox") then urlB.Text = _webhookUrl end
     end)
-    -- Mass Attack
+    -- ── Mass Attack ───────────────────────────────────────────
     if type(d.maKillTarget) == "number" then MA.killTarget    = d.maKillTarget end
     if type(d.mrNextDelay)  == "number" then MR.nextMapDelay  = d.mrNextDelay  end
     if type(d.mrTpDelay)    == "number" then MR.teleportDelay = d.mrTpDelay    end
@@ -11488,7 +11505,7 @@ function FLaApply(d)
             if i and v then MR.selected[i] = true end
         end
     end
-    -- Auto Raid
+    -- ── Auto Raid ─────────────────────────────────────────────
     if type(d.raidDifficulty)    == "string"  then RAID.difficulty    = d.raidDifficulty    end
     if type(d.raidRuneEnabled)   == "boolean" then RAID.runeEnabled   = d.raidRuneEnabled   end
     if type(d.raidRuneMapTarget) == "number"  then RAID.runeMapTarget = d.raidRuneMapTarget end
@@ -11506,30 +11523,53 @@ function FLaApply(d)
             if v then RAID.runeGrades[tostring(k)] = true end
         end
     end
-    -- Auto Siege
+    -- ── Auto Siege ────────────────────────────────────────────
     if type(d.siegeExcludeMaps) == "table" then
         for k, v in pairs(d.siegeExcludeMaps) do
             local mn = tonumber(k); if mn then SIEGE.excludeMaps[mn] = v end
         end
     end
-    -- Potato Mode
+    -- ── Potato Mode ───────────────────────────────────────────
     if type(d.potatoMode) == "boolean" then _G.PotatoMode = d.potatoMode end
-    -- Restore toggles UI via FLaSetters registry
-    -- Delay 2s: pastikan semua panel + FLaSetters sudah terisi
-    task.delay(2, function()
+    -- ── [v20-PATCH] Theme & UI Transparency ──────────────────
+    if type(d.currentTheme) == "string" then
+        pcall(function() ApplyTheme(d.currentTheme) end)
+    end
+    if type(d.uiTransparency) == "number" then
+        _G.ThemeTransparency = d.uiTransparency
         pcall(function()
+            -- Restore slider visual (skala 1-100)
+            local sliderVal = math.floor(d.uiTransparency * 99) + 1
             local S = _G.FLaSetters or {}
-            if S.autoHide and type(d.autoHideReward) == "boolean" then S.autoHide(d.autoHideReward) end
-            if S.anim     and type(d.disableAnim)    == "boolean" then S.anim(d.disableAnim)        end
-            if S.noClip   and type(d.noClip)         == "boolean" then S.noClip(d.noClip)           end
-            if S.antiAfk  and type(d.antiAfk)        == "boolean" then S.antiAfk(d.antiAfk)         end
-            if S.autoSell and type(d.autoSellOn)     == "boolean" then S.autoSell(d.autoSellOn)     end
-            -- Hide Reroll Chat
-            if type(d.hideRerollChat) == "boolean" and d.hideRerollChat ~= _hideRerollChat then
-                _hideRerollChat = d.hideRerollChat
-                if d.hideRerollChat then _startHideRerollChat() else _stopHideRerollChat() end
+            if S.uiTransparency then S.uiTransparency(sliderVal) end
+        end)
+        pcall(function()
+            if not _G.PotatoMode then
+                Window.BackgroundTransparency = d.uiTransparency
             end
         end)
+    end
+    -- ── [v20-PATCH] Restore semua toggle TANPA DELAY ─────────
+    -- FLaAutoLoad dipanggil setelah semua panel + FLaSetters sudah siap,
+    -- sehingga tidak diperlukan task.delay apapun di sini.
+    pcall(function()
+        local S = _G.FLaSetters or {}
+        if S.autoHide and type(d.autoHideReward) == "boolean" then S.autoHide(d.autoHideReward) end
+        if S.anim     and type(d.disableAnim)    == "boolean" then S.anim(d.disableAnim)        end
+        if S.noClip   and type(d.noClip)         == "boolean" then S.noClip(d.noClip)           end
+        if S.antiAfk  and type(d.antiAfk)        == "boolean" then S.antiAfk(d.antiAfk)         end
+        if S.autoSell and type(d.autoSellOn)     == "boolean" then S.autoSell(d.autoSellOn)     end
+        -- [v20-PATCH] STATE toggles tambahan
+        if S.autoCollect   and type(d.autoCollect)   == "boolean" then S.autoCollect(d.autoCollect)     end
+        if S.autoDestroyer and type(d.autoDestroyer) == "boolean" then S.autoDestroyer(d.autoDestroyer) end
+        if S.autoArise     and type(d.autoArise)     == "boolean" then S.autoArise(d.autoArise)         end
+        if S.autoConfirm   and type(d.autoConfirm)   == "boolean" then S.autoConfirm(d.autoConfirm)     end
+        if S.autoClose     and type(d.autoClose)     == "boolean" then S.autoClose(d.autoClose)         end
+        -- Hide Reroll Chat
+        if type(d.hideRerollChat) == "boolean" and d.hideRerollChat ~= _hideRerollChat then
+            _hideRerollChat = d.hideRerollChat
+            if d.hideRerollChat then _startHideRerollChat() else _stopHideRerollChat() end
+        end
     end)
 end
 
@@ -11541,29 +11581,71 @@ function FLaSave()
     end
 end
 
+-- [v20-PATCH] Helper: reset semua toggle GUI ke false (visual + logic sekaligus)
+function FLaResetAllUI()
+    pcall(function()
+        local S = _G.FLaSetters or {}
+        local allKeys = {
+            "autoHide","anim","noClip","antiAfk","autoSell",
+            "autoCollect","autoDestroyer","autoArise","autoConfirm","autoClose"
+        }
+        for _, key in ipairs(allKeys) do
+            if S[key] then pcall(function() S[key](false) end) end
+        end
+        -- Reset UI Transparency ke default
+        _G.ThemeTransparency = 0.42
+        if S.uiTransparency then pcall(function() S.uiTransparency(42) end) end
+        pcall(function() Window.BackgroundTransparency = 0.42 end)
+        -- Reset theme ke default
+        _G.CurrentTheme = "Solo Leveling"
+        pcall(function() ApplyTheme("Solo Leveling") end)
+        -- Reset webhook
+        _webhookUrl = ""; _webhookMode = "both"; _webhookEnabled = false
+        pcall(function()
+            local urlB = ScreenGui:FindFirstChild("urlBox", true)
+            if urlB and urlB:IsA("TextBox") then urlB.Text = "" end
+        end)
+        -- Reset MA / MR
+        MA.killTarget = 7
+        MR.nextMapDelay = 3; MR.teleportDelay = 3
+        for i = 1, 19 do MR.selected[i] = nil end
+        -- Reset RAID
+        RAID.difficulty = "easy"; RAID.runeEnabled = false
+        RAID.runeMapTarget = 0; RAID.updownEnabled = false
+        RAID.updownDir = "up"; RAID.preferMaps = {}; RAID.runeGrades = {}
+        -- Reset SIEGE
+        if SIEGE then SIEGE.excludeMaps = {} end
+        -- Reset misc
+        _G.PotatoMode = false
+        _hideRerollChat = false
+        _autoSellOn = false
+    end)
+end
+
 function FLaReset()
-    _cfgDelete()
-    SystemNotify("🗑 Config dihapus. Fresh saat load berikutnya!", 2)
+    _cfgDelete()                 -- hapus file JSON
+    FLaResetAllUI()              -- [v20-PATCH] reset semua toggle GUI ke OFF/default
+    SystemNotify("🗑 Config direset! Semua setting kembali ke default.", 2)
 end
 
 function FLaAutoLoad()
     local raw = _cfgRead()
-    if not raw then return end
-    local ok, data = pcall(game.GetService, game, "HttpService")
-    if ok then
-        ok, data = pcall(function()
-            return game:GetService("HttpService"):JSONDecode(raw)
-        end)
-    end
+    if not raw then return end  -- [v20-PATCH] silent jika tidak ada config
+    -- [v20-PATCH] Fix: parse langsung tanpa pcall bertingkat yang salah
+    local ok, data = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(raw)
+    end)
     if ok and type(data) == "table" then
-        FLaApply(data)
-        SystemNotify("💾 Config dimuat!", 1.5)
+        FLaApply(data)  -- [v20-PATCH] langsung, tanpa delay
+        task.delay(0.2, function()
+            pcall(function() SystemNotify("💾 Config dimuat!", 1.5) end)
+        end)
     end
 end
 
--- Auto-load setelah 1.5s (panel sudah dibuat, FLaSetters belum terisi)
--- FLaApply sendiri akan delay 2s sebelum restore toggles
-task.delay(1.5, function() pcall(FLaAutoLoad) end)
+-- [v20-PATCH] task.delay(1.5) DIHAPUS — FLaAutoLoad sekarang dipanggil
+-- di akhir script (setelah SEMUA panel + FLaSetters sudah siap).
+-- Lihat baris pcall(FLaAutoLoad) di bagian "Eksekusi Akhir" bawah.
 
 -- PANEL : SETTINGS
 -- ============================================================
@@ -12540,12 +12622,14 @@ do
     local p = NewPanel("theme")
     SectionHeader(p, "Theme Selection", 1)
     
-    SliderRow(p, "UI Transparency", 1, 100, 42, function(v)
+    -- [v20-PATCH] Simpan setter slider agar bisa di-restore dari Save/Load
+    local _, _setUiTransSlider = SliderRow(p, "UI Transparency", 1, 100, 42, function(v)
         _G.ThemeTransparency = (v - 1) / 99
         if not _G.PotatoMode then
             TweenService:Create(Window, TweenInfo.new(0.3), {BackgroundTransparency = _G.ThemeTransparency}):Play()
         end
     end)
+    _G.FLaSetters["uiTransparency"] = _setUiTransSlider
     
     SectionHeader(p, "Color Palettes (30 Themes)", 10)
     
@@ -12574,6 +12658,10 @@ end
  SwitchTab("main")
  RefreshStatus()
  InitAllCaptureLayers()
+
+-- [v20-PATCH] Auto-load config INSTAN setelah SEMUA panel & FLaSetters sudah siap.
+-- Dipindah ke sini dari task.delay(1.5) yang lama → 0 detik delay, langsung restore.
+pcall(FLaAutoLoad)
 
 -- ============================================================
 

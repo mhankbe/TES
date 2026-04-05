@@ -1,4 +1,4 @@
--- init script
+-- init
 _G.UI_REGISTRY = {}
 _G.FLA_IS_RUNNING = true
 _G.FLA_CONNECTIONS = {}
@@ -41,6 +41,7 @@ CITY_TO_MAP_CONN = {[1000001]=3,[1000002]=7,[1000003]=10,[1000004]=13}
 -- Fungsi ini di-define ulang di bawah setelah SIEGE table siap
 ConnectUpdateCityRaidListener = nil -- forward declare
 
+UI_REGISTRY = {}
 
 -- [v232] GetCityRaidInfos sekarang dipanggil dari ConnectUpdateCityRaidListener
 -- setelah GUI load + delay 5 detik (lihat di bawah SwitchTab)
@@ -11322,44 +11323,308 @@ do
  end)
 end
 
--- PANEL : THEME
 -- ============================================================
-do
-    local p = NewPanel("theme")
-    SectionHeader(p, "Theme Selection", 1)
-    
-    -- [v20-PATCH] Simpan setter slider agar bisa di-restore dari Save/Load
-    local _, _setUiTransSlider = SliderRow(p, "UI Transparency", 1, 100, 42, function(v)
-        _G.ThemeTransparency = (v - 1) / 99
-        if not _G.PotatoMode then
-            TweenService:Create(Window, TweenInfo.new(0.3), {BackgroundTransparency = _G.ThemeTransparency}):Play()
-        end
+-- WEBHOOK SENDER
+-- ============================================================
+-- ============================================================
+
+-- ============================================================
+-- SAVE / LOAD / RESET CONFIG
+-- File: FLa_Config.json di Delta/workspace/
+-- ============================================================
+local FLA_CFG = "FLa_Config.json"
+
+function _cfgRead()
+    if not readfile then return nil end
+    local ok, raw = pcall(readfile, FLA_CFG)
+    if not ok or not raw or raw == "" or raw == "{}" then return nil end
+    return raw
+end
+
+function _cfgWrite(data)
+    if not writefile then return false end
+    local ok, json = pcall(function()
+        return game:GetService("HttpService"):JSONEncode(data)
     end)
-    _G.FLaSetters["uiTransparency"] = _setUiTransSlider
+    if not ok then return false end
+    return pcall(writefile, FLA_CFG, json)
+end
+
+function _cfgDelete()
+    if delfile then pcall(delfile, FLA_CFG)
+    elseif writefile then pcall(writefile, FLA_CFG, "{}") end
+end
+
+function FLaCollect()
+    local d = {}
+    -- ── Toggles STATE ─────────────────────────────────────────
+    d.autoHideReward = STATE and STATE.autoHideReward or false
+    d.disableAnim    = STATE and STATE.disableAnim    or false
+    d.noClip         = STATE and STATE.noClip         or false
+    d.antiAfk        = STATE and STATE.antiAfk        or false
+    d.autoCollect    = STATE and STATE.autoCollect    or false  -- [v20-PATCH]
+    d.autoDestroyer  = STATE and STATE.autoDestroyer  or false  -- [v20-PATCH]
+    d.autoArise      = STATE and STATE.autoArise      or false  -- [v20-PATCH]
+    d.autoConfirm    = STATE and STATE.autoConfirm    or false  -- [v20-PATCH]
+    d.autoClose      = STATE and STATE.autoClose      or false  -- [v20-PATCH]
+    d.hideRerollChat = _hideRerollChat or false
+    d.potatoMode     = _G.PotatoMode   or false
+    d.autoSellOn     = _autoSellOn     or false
+    -- ── Theme & UI Transparency ───────────────────────────────
+    d.currentTheme   = _G.CurrentTheme      or "Solo Leveling"  -- [v20-PATCH]
+    d.uiTransparency = _G.ThemeTransparency or 0.42             -- [v20-PATCH]
+    -- ── Webhook ───────────────────────────────────────────────
+    d.webhookUrl     = _webhookUrl     or ""
+    d.webhookMode    = _webhookMode    or "both"
+    d.webhookEnabled = _webhookEnabled or false
+    -- ── Mass Attack ───────────────────────────────────────────
+    d.massAttackRunning = MA and MA.running or false  -- [FIX] Simpan status running
+    d.maKillTarget = MA and MA.killTarget    or 7
+    d.mrNextDelay  = MR and MR.nextMapDelay  or 3
+    d.mrTpDelay    = MR and MR.teleportDelay or 3
+    d.mrSelected = {}
+    if MR and MR.selected then
+        for i = 1, 19 do
+            if MR.selected[i] then d.mrSelected[tostring(i)] = true end
+        end
+    end
+    -- ── Auto Raid ─────────────────────────────────────────────
+    d.raidRunning       = RAID and RAID.running       or false  -- [FIX] Simpan status running
+    d.raidDifficulty    = RAID and RAID.difficulty    or "easy"
+    d.raidRuneEnabled   = RAID and RAID.runeEnabled   or false
+    d.raidRuneMapTarget = RAID and RAID.runeMapTarget or 0
+    d.raidUpdownEnabled = RAID and RAID.updownEnabled or false
+    d.raidUpdownDir     = RAID and RAID.updownDir     or "up"
+    d.raidPreferMaps = {}
+    if RAID and RAID.preferMaps then
+        for mn, v in pairs(RAID.preferMaps) do
+            if v then d.raidPreferMaps[tostring(mn)] = true end
+        end
+    end
+    d.raidRuneGrades = {}
+    if RAID and RAID.runeGrades then
+        for g, v in pairs(RAID.runeGrades) do
+            if v then d.raidRuneGrades[tostring(g)] = true end
+        end
+    end
+    -- ── Auto Siege ────────────────────────────────────────────
+    d.siegeRunning     = SIEGE and SIEGE.running or false  -- [FIX] Simpan status running
+    d.siegeExcludeMaps = {}
+    if SIEGE and SIEGE.excludeMaps then
+        for mn, v in pairs(SIEGE.excludeMaps) do
+            d.siegeExcludeMaps[tostring(mn)] = v and true or false
+        end
+    end
+    -- ── Auto Dungeon ──────────────────────────────────────────
+    d.dungeonRunning = DUNGEON and DUNGEON.running or false  -- [FIX] Simpan status running
+    return d
+end
+
+function FLaApply(d)
+    if type(d) ~= "table" then return end
+    task.wait(2)
     
-    SectionHeader(p, "Color Palettes (30 Themes)", 10)
+    if d.hideRerollChat ~= nil and UI_REGISTRY["hideRerollChat"] then
+        UI_REGISTRY["hideRerollChat"](d.hideRerollChat)
+    end
     
-    local themeGrid = Frame(p, C.BLACK, UDim2.new(1,0,0,0))
-    themeGrid.BackgroundTransparency = 1; themeGrid.AutomaticSize = Enum.AutomaticSize.Y
-    themeGrid.LayoutOrder = 11
-    local gl = New("UIGridLayout", {
-        Parent = themeGrid, CellPadding = UDim2.new(0,5,0,5),
-        CellSize = UDim2.new(0, math.floor(WIN_W/3)-12, 0, 34),
-        SortOrder = Enum.SortOrder.Name
-    })
+    if d.autoSellOn ~= nil and UI_REGISTRY["autoSell"] then
+        UI_REGISTRY["autoSell"](d.autoSellOn)
+    end
     
-    for name, colors in pairs(ThemePalettes) do
-        local b = Btn(themeGrid, C.SURFACE, UDim2.new(1,0,1,0))
-        b.Name = name; Corner(b, 6); Stroke(b, C.BORD, 1, 0.8)
-        local l = Label(b, name, 8, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-        l.Size = UDim2.new(1,0,1,0); l.TextWrapped = true
-        
-        b.MouseButton1Click:Connect(function()
-            ApplyTheme(name)
-        end)
+    if d.autoSellWeaponOn ~= nil and UI_REGISTRY["autoSellWeapon"] then
+        UI_REGISTRY["autoSellWeapon"](d.autoSellWeaponOn)
+    end
+    if d.swSelectAll ~= nil then _swSelectAll = d.swSelectAll end
+    if d.swSelectedIds then
+        _swSelectedIds = {}
+        _swSelNames = {}
+        for k, v in pairs(d.swSelectedIds) do
+            local id = tonumber(k)
+            if id and v then
+                _swSelectedIds[id] = true
+                for _, w in ipairs(WEAPON_LIST) do
+                    if w[1] == id then _swSelNames[id] = w[2]; break end
+                end
+            end
+        end
+        if UI_REGISTRY["swDropUpdate"] then UI_REGISTRY["swDropUpdate"]() end
+    end
+    
+    if d.massAttackRunning and UI_REGISTRY["massAttack"] then
+        task.delay(0.5, function() UI_REGISTRY["massAttack"](true) end)
+    end
+    
+    if d.raidRunning or d.raidOn then
+        if UI_REGISTRY["autoRaid"] then
+            task.delay(1, function() UI_REGISTRY["autoRaid"](true) end)
+        end
+    end
+    if d.raidCurPM and UI_REGISTRY["raidPickMode"] then
+        UI_REGISTRY["raidPickMode"](d.raidCurPM)
+    end
+    if d.raidRuneMapTarget ~= nil and UI_REGISTRY["raidRune"] then
+        UI_REGISTRY["raidRune"](d.raidRuneMapTarget)
+    end
+    
+    if d.siegeRunning and UI_REGISTRY["autoSiege"] then
+        task.delay(1.5, function() UI_REGISTRY["autoSiege"](true) end)
+    end
+    
+    if d.dungeonRunning and UI_REGISTRY["autoDungeon"] then
+        task.delay(2, function() UI_REGISTRY["autoDungeon"](true) end)
+    end
+    
+    if d.noClip ~= nil and UI_REGISTRY["noClip"] then
+        UI_REGISTRY["noClip"](d.noClip)
+    end
+    
+    if d.antiAfk ~= nil and UI_REGISTRY["antiAfk"] then
+        UI_REGISTRY["antiAfk"](d.antiAfk)
+    end
+    
+    if d.potatoMode ~= nil and UI_REGISTRY["potato"] then
+        UI_REGISTRY["potato"](d.potatoMode)
+    end
+    
+    if d.webhookUrl and UI_REGISTRY["webhookUrl"] then
+        UI_REGISTRY["webhookUrl"](d.webhookUrl)
+    end
+    if d.webhookCurModeIdx and UI_REGISTRY["webhookMode"] then
+        UI_REGISTRY["webhookMode"](d.webhookCurModeIdx)
+    end
+    if d.webhookEnabled ~= nil and UI_REGISTRY["webhookEnabled"] then
+        UI_REGISTRY["webhookEnabled"](d.webhookEnabled)
+    end
+    
+    if d.autoHideReward ~= nil and UI_REGISTRY["autoHide"] then
+        UI_REGISTRY["autoHide"](d.autoHideReward)
+    end
+    if d.disableAnim ~= nil and UI_REGISTRY["anim"] then
+        UI_REGISTRY["anim"](d.disableAnim)
+    end
+    if d.autoCollect ~= nil and UI_REGISTRY["autoCollect"] then
+        UI_REGISTRY["autoCollect"](d.autoCollect)
+    end
+    if d.autoDestroyer ~= nil and UI_REGISTRY["autoDestroyer"] then
+        UI_REGISTRY["autoDestroyer"](d.autoDestroyer)
+    end
+    if d.autoArise ~= nil and UI_REGISTRY["autoArise"] then
+        UI_REGISTRY["autoArise"](d.autoArise)
+    end
+    if d.autoConfirm ~= nil and UI_REGISTRY["autoConfirm"] then
+        UI_REGISTRY["autoConfirm"](d.autoConfirm)
+    end
+    if d.autoClose ~= nil and UI_REGISTRY["autoClose"] then
+        UI_REGISTRY["autoClose"](d.autoClose)
+    end
+    
+    if d.currentTheme then
+        _G.CurrentTheme = d.currentTheme
+        pcall(function() ApplyTheme(d.currentTheme) end)
+    end
+    if d.uiTransparency then
+        _G.ThemeTransparency = d.uiTransparency
+        if not _G.PotatoMode then
+            Window.BackgroundTransparency = d.uiTransparency
+        end
     end
 end
- 
+
+function FLaSave()
+    if _cfgWrite(FLaCollect()) then
+        SystemNotify("Config tersimpan!", 2)
+    else
+        SystemNotify("✗ Gagal save! writefile tidak tersedia?", 3)
+    end
+end
+
+-- [v20-PATCH] Helper: reset semua toggle GUI ke false (visual + logic sekaligus)
+function FLaResetAllUI()
+    pcall(function()
+        local S = _G.FLaSetters or {}
+        local allKeys = {
+            "autoHide","anim","noClip","antiAfk","autoSell",
+            "autoCollect","autoDestroyer","autoArise","autoConfirm","autoClose"
+        }
+        for _, key in ipairs(allKeys) do
+            if S[key] then pcall(function() S[key](false) end) end
+        end)
+    end
+        -- Reset UI Transparency ke default
+        _G.ThemeTransparency = 0.42
+        if S.uiTransparency then pcall(function() S.uiTransparency(42) end) end
+        pcall(function() Window.BackgroundTransparency = 0.42 end)
+        -- Reset theme ke default
+        _G.CurrentTheme = "Solo Leveling"
+        pcall(function() ApplyTheme("Solo Leveling") end)
+        -- Reset webhook
+        _webhookUrl = ""; _webhookMode = "both"; _webhookEnabled = false
+        pcall(function()
+            local urlB = ScreenGui:FindFirstChild("urlBox", true)
+            if urlB and urlB:IsA("TextBox") then urlB.Text = "" end
+        end)
+        -- Reset MA / MR
+        MA.killTarget = 7
+        MR.nextMapDelay = 3; MR.teleportDelay = 3
+        for i = 1, 19 do MR.selected[i] = nil end
+        -- Reset RAID
+        RAID.difficulty = "easy"; RAID.runeEnabled = false
+        RAID.runeMapTarget = 0; RAID.updownEnabled = false
+        RAID.updownDir = "up"; RAID.preferMaps = {}; RAID.runeGrades = {}
+        -- Reset SIEGE
+        if SIEGE then SIEGE.excludeMaps = {} end
+        -- Reset misc
+        _G.PotatoMode = false
+        _hideRerollChat = false
+        _autoSellOn = false
+function FLaReset()
+    _cfgDelete()                 -- hapus file JSON
+    for key, handler in pairs(UI_REGISTRY) do
+        if type(handler) == "function" then
+            pcall(function()
+                if key:find("massAttack") or key:find("autoRaid") or key:find("autoSiege") or key:find("autoDungeon") or key:find("hideRerollChat") or key:find("autoSell") or key:find("autoHide") or key:find("anim") or key:find("noClip") or key:find("antiAfk") or key:find("potato") or key:find("webhookEnabled") or key:find("autoCollect") or key:find("autoDestroyer") or key:find("autoArise") or key:find("autoConfirm") or key:find("autoClose") then
+                    handler(false)
+                elseif key:find("raidPickMode") then
+                    handler(1)
+                elseif key:find("raidRune") then
+                    handler(0)
+                elseif key:find("webhookMode") then
+                    handler(1)
+                elseif key:find("webhookUrl") then
+                    handler("")
+                end
+            end)
+        end
+    end
+    _cfgDelete()
+    SystemNotify("Config direset! Semua setting kembali ke default.", 2)
+end
+
+function FLaAutoLoad()
+    local raw = _cfgRead()
+    if not raw then return end
+    local ok, data = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(raw)
+    end)
+    if not ok or type(data) ~= "table" then return end
+    task.spawn(function()
+        task.wait(2)
+        for key, value in pairs(data) do
+            local handler = UI_REGISTRY[key]
+            if type(handler) == "function" then
+                pcall(function() handler(value) end)
+            end
+        end
+        task.delay(0.2, function()
+            pcall(function() SystemNotify("Config dimuat!", 1.5) end)
+        end)
+    end)
+end
+
+-- [v20-PATCH] task.delay(1.5) DIHAPUS — FLaAutoLoad sekarang dipanggil
+-- di akhir script (setelah SEMUA panel + FLaSetters sudah siap).
+-- Lihat baris pcall(FLaAutoLoad) di bagian "Eksekusi Akhir" bawah.
 
 -- PANEL : SETTINGS
 -- ============================================================
@@ -12337,42 +12602,6 @@ RefreshStatus()
 if InitAllCaptureLayers then InitAllCaptureLayers() end
 
 -- ============================================================
-
-    end
-    
-    if d.raidRunning or d.raidOn then
-        if 
-UI_REGISTRY["hideRerollChat"] then
-        UI_REGISTRY["hideRerollChat"](d.hideRerollChat)
-    end
-    
-    if d.autoSellOn ~= nil and UI_REGISTRY["autoSell"] then
-        UI_REGISTRY["autoSell"](d.autoSellOn)
-    end
-    
-    if d.autoSellWeaponOn ~= nil and UI_REGISTRY["autoSellWeapon"] then
-        UI_REGISTRY["autoSellWeapon"](d.autoSellWeaponOn)
-    end
-    if d.swSelectAll ~= nil then _swSelectAll = d.swSelectAll end
-    if d.swSelectedIds then
-        _swSelectedIds = {}
-        _swSelNames = {}
-        for k, v in pairs(d.swSelectedIds) do
-            local id = tonumber(k)
-            if id and v then
-                _swSelectedIds[id] = true
-                for _, w in ipairs(WEAPON_LIST) do
-                    if w[1] == id then _swSelNames[id] = w[2]; break end
-                end
-            end
-        end
-        if UI_REGISTRY["swDropUpdate"] then UI_REGISTRY["swDropUpdate"]() end
-    end
-    
-    if d.massAttackRunning and UI_REGISTRY["massAttack"] then
-        task.delay(0.5, function() UI_REGISTRY["massAttack"](true) end)
-
-
 -- PANEL : THEME
 -- ============================================================
 do
@@ -12600,584 +12829,148 @@ UI_REGISTRY["webhookMode"] = function(idx)
         modeDescLbl.Text = MODE_OPTS[idx].desc
     end)
 end
-pcall(FLaAutoLoad)
-
--- ============================================================
--- WEBHOOK SENDER
--- ============================================================
--- ============================================================
-
--- ============================================================
--- SAVE / LOAD / RESET CONFIG
--- File: FLa_Config.json di Delta/workspace/
--- ============================================================
-local FLA_CFG = "FLa_Config.json"
-
-function _cfgRead()
-    if not readfile then return nil end
-    local ok, raw = pcall(readfile, FLA_CFG)
-    if not ok or not raw or raw == "" or raw == "{}" then return nil end
-    return raw
-end
-
-function _cfgWrite(data)
-    if not writefile then return false end
-    local ok, json = pcall(function()
-        return game:GetService("HttpService"):JSONEncode(data)
-    end)
-    if not ok then return false end
-    return pcall(writefile, FLA_CFG, json)
-end
-
-function _cfgDelete()
-    if delfile then pcall(delfile, FLA_CFG)
-    elseif writefile then pcall(writefile, FLA_CFG, "{}") end
-end
-
-function FLaCollect()
-    local d = {}
-    -- ── Toggles STATE ─────────────────────────────────────────
-    d.autoHideReward = STATE and STATE.autoHideReward or false
-    d.disableAnim    = STATE and STATE.disableAnim    or false
-    d.noClip         = STATE and STATE.noClip         or false
-    d.antiAfk        = STATE and STATE.antiAfk        or false
-    d.autoCollect    = STATE and STATE.autoCollect    or false  -- [v20-PATCH]
-    d.autoDestroyer  = STATE and STATE.autoDestroyer  or false  -- [v20-PATCH]
-    d.autoArise      = STATE and STATE.autoArise      or false  -- [v20-PATCH]
-    d.autoConfirm    = STATE and STATE.autoConfirm    or false  -- [v20-PATCH]
-    d.autoClose      = STATE and STATE.autoClose      or false  -- [v20-PATCH]
-    d.hideRerollChat = _hideRerollChat or false
-    d.potatoMode     = _G.PotatoMode   or false
-    d.autoSellOn     = _autoSellOn     or false
-    -- ── Theme & UI Transparency ───────────────────────────────
-    d.currentTheme   = _G.CurrentTheme      or "Solo Leveling"  -- [v20-PATCH]
-    d.uiTransparency = _G.ThemeTransparency or 0.42             -- [v20-PATCH]
-    -- ── Webhook ───────────────────────────────────────────────
-    d.webhookUrl     = _webhookUrl     or ""
-    d.webhookMode    = _webhookMode    or "both"
-    d.webhookEnabled = _webhookEnabled or false
-    -- ── Mass Attack ───────────────────────────────────────────
-    d.massAttackRunning = MA and MA.running or false  -- [FIX] Simpan status running
-    d.maKillTarget = MA and MA.killTarget    or 7
-    d.mrNextDelay  = MR and MR.nextMapDelay  or 3
-    d.mrTpDelay    = MR and MR.teleportDelay or 3
-    d.mrSelected = {}
-    if MR and MR.selected then
-        for i = 1, 19 do
-            if MR.selected[i] then d.mrSelected[tostring(i)] = true end
-        end
-    end
-    -- ── Auto Raid ─────────────────────────────────────────────
-    d.raidRunning       = RAID and RAID.running       or false  -- [FIX] Simpan status running
-    d.raidDifficulty    = RAID and RAID.difficulty    or "easy"
-    d.raidRuneEnabled   = RAID and RAID.runeEnabled   or false
-    d.raidRuneMapTarget = RAID and RAID.runeMapTarget or 0
-    d.raidUpdownEnabled = RAID and RAID.updownEnabled or false
-    d.raidUpdownDir     = RAID and RAID.updownDir     or "up"
-    d.raidPreferMaps = {}
-    if RAID and RAID.preferMaps then
-        for mn, v in pairs(RAID.preferMaps) do
-            if v then d.raidPreferMaps[tostring(mn)] = true end
-        end
-    end
-    d.raidRuneGrades = {}
-    if RAID and RAID.runeGrades then
-        for g, v in pairs(RAID.runeGrades) do
-            if v then d.raidRuneGrades[tostring(g)] = true end
-        end
-    end
-    -- ── Auto Siege ────────────────────────────────────────────
-    d.siegeRunning     = SIEGE and SIEGE.running or false  -- [FIX] Simpan status running
-    d.siegeExcludeMaps = {}
-    if SIEGE and SIEGE.excludeMaps then
-        for mn, v in pairs(SIEGE.excludeMaps) do
-            d.siegeExcludeMaps[tostring(mn)] = v and true or false
-        end
-    end
-    -- ── Auto Dungeon ──────────────────────────────────────────
-    d.dungeonRunning = DUNGEON and DUNGEON.running or false  -- [FIX] Simpan status running
-    return d
-end
-
-function FLaApply(d)
-    if type(d) ~= "table" then return end
-    task.wait(2)
-    
-    if d.hideRerollChat ~= nil and UI_REGISTRY["hideRerollChat"] then
-        UI_REGISTRY["hideRerollChat"](d.hideRerollChat)
-    end
-    
-    if d.autoSellOn ~= nil and UI_REGISTRY["autoSell"] then
-        UI_REGISTRY["autoSell"](d.autoSellOn)
-    end
-    
-    if d.autoSellWeaponOn ~= nil and UI_REGISTRY["autoSellWeapon"] then
-        UI_REGISTRY["autoSellWeapon"](d.autoSellWeaponOn)
-    end
-    if d.swSelectAll ~= nil then _swSelectAll = d.swSelectAll end
-    if d.swSelectedIds then
-        _swSelectedIds = {}
-        _swSelNames = {}
-        for k, v in pairs(d.swSelectedIds) do
-            local id = tonumber(k)
-            if id and v then
-                _swSelectedIds[id] = true
-                for _, w in ipairs(WEAPON_LIST) do
-                    if w[1] == id then _swSelNames[id] = w[2]; break end
-                end
-            end
-        end
-        if UI_REGISTRY["swDropUpdate"] then UI_REGISTRY["swDropUpdate"]() end
-    end
-    
-    if d.massAttackRunning and UI_REGISTRY["massAttack"] then
-        task.delay(0.5, function() UI_REGISTRY["massAttack"](true) end)
-
-
-UI_REGISTRY["hideRerollChat"] = function(on)
-    _hideRerollChat = on
-    if on and _startHideRerollChat then _startHideRerollChat() elseif _stopHideRerollChat then _stopHideRerollChat() end
-    pcall(function()
-        TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        TweenService:Create(hrKnob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-        }):Play()
-    end)
-end
-
-_G.FLaSetters["autoSell"] = function(on)
-    _autoSellOn = on
-    local pill = ScreenGui:FindFirstChild("ashPill", true) or ScreenGui:FindFirstChild("sellPill", true)
-    local knob = pill and pill:FindFirstChildOfClass("Frame")
-    if pill then
-        TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-    end
-    if knob then
-        TweenService:Create(knob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-        }):Play()
-    end
-end
-UI_REGISTRY["autoSell"] = _G.FLaSetters["autoSell"]
-
-UI_REGISTRY["autoSellWeapon"] = function(on)
-    _autoSellWeaponOn = on
-    if on then StartAutoSellWeapon() else
-        if _swConn then pcall(function() task.cancel(_swConn) end); _swConn = nil end
-        pcall(function() SetSWStatus("Idle - "..(_swSoldCount or 0).." SOLD", C.TXT3) end)
-    end
-    pcall(function()
-        TweenService:Create(swPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        TweenService:Create(swKnob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-        }):Play()
-    end)
-end
-UI_REGISTRY["swDropUpdate"] = function()
-    pcall(function() UpdateSwDropUI() end)
-end
-
-UI_REGISTRY["massAttack"] = function(on)
-    pcall(function() if DoMassAttack then DoMassAttack(on) end end)
-end
-
-UI_REGISTRY["autoRaid"] = function(on)
-    _raidOn = on
-    RAID.running = on
-    if on then StartRaidLoop() else StopRaid() end
-    pcall(function()
-        local ctrlRow = ScreenGui:FindFirstChild("ctrlRow", true)
-        local pill = ctrlRow and ctrlRow:FindFirstChildOfClass("TextButton")
-        local knob = pill and pill:FindFirstChildOfClass("Frame")
-        if pill then
-            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        end
-        if knob then
-            TweenService:Create(knob, TweenInfo.new(0.16), {
-                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-            }):Play()
-        end
-    end)
-end
-
-UI_REGISTRY["raidPickMode"] = function(idx)
-    curPM = idx
-    RAID.pickMode = PM_KEYS[idx]
-    RAID.difficulty = PM_TO_DIFF[PM_KEYS[idx]]
-    RAID.snapshotMapId = nil
-    pcall(function()
-        pmDDLbl.Text = " " .. PM_OPTS[idx]
-        pmDDLbl.TextColor3 = PM_COLORS[idx]
-        pmDescLbl.Text = PM_DESC[idx]
-    end)
-end
-
-UI_REGISTRY["raidRune"] = function(mapId)
-    RAID.runeMapTarget = mapId
-    pcall(function() SyncRuneState() end)
-    pcall(function()
-        if mapId >= 1 and mapId <= 19 then
-            runeDDVal.Text = " Map " .. mapId .. " - " .. (MAP_NAMES[mapId] or "")
-            runeDDVal.TextColor3 = C.ACC2
-        else
-            runeDDVal.Text = " -- NOT SELECTED --"
-            runeDDVal.TextColor3 = C.TXT3
-        end
-    end)
-end
-
-UI_REGISTRY["autoSiege"] = function(on)
-    if on then StartSiegeLoop() else StopSiege() end
-    pcall(function()
-        local siegeRow = ScreenGui:FindFirstChild("siegeRow", true)
-        local pill = siegeRow and siegeRow:FindFirstChildOfClass("TextButton")
-        local knob = pill and pill:FindFirstChildOfClass("Frame")
-        if pill then
-            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        end
-        if knob then
-            TweenService:Create(knob, TweenInfo.new(0.16), {
-                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-            }):Play()
-        end
-    end)
-end
-
-UI_REGISTRY["autoDungeon"] = function(on)
-    if on then StartDungeonLoop() else StopDungeon() end
-    pcall(function()
-        local dngRow = ScreenGui:FindFirstChild("dungeonRow", true) or ScreenGui:FindFirstChild("dngRow", true)
-        local pill = dngRow and dngRow:FindFirstChildOfClass("TextButton")
-        local knob = pill and pill:FindFirstChildOfClass("Frame")
-        if pill then
-            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
-        end
-        if knob then
-            TweenService:Create(knob, TweenInfo.new(0.16), {
-                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
-            }):Play()
-        end
-    end)
-end
-
-UI_REGISTRY["noClip"] = function(on)
-    STATE.noClip = on
-    if on and StartNoclipLoop then StartNoclipLoop() elseif StopNoclip then StopNoclip() end
-end
-
-UI_REGISTRY["antiAfk"] = function(on)
-    STATE.antiAfk = on
-    if on and StartAntiAfk then StartAntiAfk() elseif StopAntiAfk then StopAntiAfk() end
-end
-
-UI_REGISTRY["potato"] = function(on)
-    _G.PotatoMode = on
-    if on then
-        CleanupVFX()
-        pcall(function()
-            for _, obj in ipairs(ScreenGui:GetDescendants()) do
-                if obj:IsA("ParticleEmitter") or obj:IsA("UIGradient") or obj:IsA("UIStroke") then obj:Destroy() end
-            end
-            Window.BackgroundTransparency = 0
-        end)
-    else
-        Window.BackgroundTransparency = _G.ThemeTransparency
-        pcall(function() ApplyTheme(_G.CurrentTheme) end)
-    end
-end
-
-UI_REGISTRY["webhookEnabled"] = function(on)
-    _webhookEnabled = on
-    if on and FlushWebhookPending then task.spawn(FlushWebhookPending) end
-    pcall(function()
-        TweenService:Create(wPill, TweenInfo.new(0.16), {BackgroundColor3 = on and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
-        TweenService:Create(wKnob, TweenInfo.new(0.16), {
-            Position = on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
-            BackgroundColor3 = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
-        }):Play()
-        wRow.BackgroundColor3 = on and C.BG2 or C.BG3
-    end)
-end
-
-UI_REGISTRY["webhookUrl"] = function(url)
-    _webhookUrl = url
-    pcall(function()
-        local urlB = ScreenGui:FindFirstChild("urlBox", true)
-        if urlB and urlB:IsA("TextBox") then urlB.Text = url end
-    end)
-    pcall(function() if UpdatePlatformLbl then UpdatePlatformLbl() end end)
-end
-
-UI_REGISTRY["webhookMode"] = function(idx)
-    curModeIdx = idx
-    _webhookMode = MODE_OPTS[idx].value
-    pcall(function()
-        modeDDLbl.Text = " " .. MODE_OPTS[idx].label
-        modeDDLbl.TextColor3 = MODE_OPTS[idx].col
-        modeDescLbl.Text = MODE_OPTS[idx].desc
-    end)
-end
 
 --- [v20-PATCH] Auto-load config INSTAN setelah SEMUA panel & FLaSetters sudah siap.
 -- Dipindah ke sini dari task.delay(1.5) yang lama → 0 detik delay, langsung restore.
-
-UI_REGISTRY["autoRaid"] then
-            task.delay(1, function() UI_REGISTRY["autoRaid"](true) end)
-        end
-    end
-    if d.raidCurPM and UI_REGISTRY["raidPickMode"] then
-        UI_REGISTRY["raidPickMode"](d.raidCurPM)
-    end
-    if d.raidRuneMapTarget ~= nil and UI_REGISTRY["raidRune"] then
-        UI_REGISTRY["raidRune"](d.raidRuneMapTarget)
-    end
-    
-    if d.siegeRunning and UI_REGISTRY["autoSiege"] then
-        task.delay(1.5, function() UI_REGISTRY["autoSiege"](true) end)
-    end
-    
-    if d.dungeonRunning and UI_REGISTRY["autoDungeon"] then
-        task.delay(2, function() UI_REGISTRY["autoDungeon"](true) end)
-    end
-    
-    if d.noClip ~= nil and UI_REGISTRY["noClip"] then
-        UI_REGISTRY["noClip"](d.noClip)
-    end
-    
-    if d.antiAfk ~= nil and UI_REGISTRY["antiAfk"] then
-        UI_REGISTRY["antiAfk"](d.antiAfk)
-    end
-    
-    if d.potatoMode ~= nil and UI_REGISTRY["potato"] then
-        UI_REGISTRY["potato"](d.potatoMode)
-    end
-    
-    if d.webhookUrl and UI_REGISTRY["webhookUrl"] then
-        UI_REGISTRY["webhookUrl"](d.webhookUrl)
-    end
-    if d.webhookCurModeIdx and UI_REGISTRY["webhookMode"] then
-        UI_REGISTRY["webhookMode"](d.webhookCurModeIdx)
-    end
-    if d.webhookEnabled ~= nil and UI_REGISTRY["webhookEnabled"] then
-        UI_REGISTRY["webhookEnabled"](d.webhookEnabled)
-    end
-    
-    if d.autoHideReward ~= nil and UI_REGISTRY["autoHide"] then
-        UI_REGISTRY["autoHide"](d.autoHideReward)
-    end
-    if d.disableAnim ~= nil and UI_REGISTRY["anim"] then
-        UI_REGISTRY["anim"](d.disableAnim)
-    end
-    if d.autoCollect ~= nil and UI_REGISTRY["autoCollect"] then
-        UI_REGISTRY["autoCollect"](d.autoCollect)
-    end
-    if d.autoDestroyer ~= nil and UI_REGISTRY["autoDestroyer"] then
-        UI_REGISTRY["autoDestroyer"](d.autoDestroyer)
-    end
-    if d.autoArise ~= nil and UI_REGISTRY["autoArise"] then
-        UI_REGISTRY["autoArise"](d.autoArise)
-    end
-    if d.autoConfirm ~= nil and UI_REGISTRY["autoConfirm"] then
-        UI_REGISTRY["autoConfirm"](d.autoConfirm)
-    end
-    if d.autoClose ~= nil and UI_REGISTRY["autoClose"] then
-        UI_REGISTRY["autoClose"](d.autoClose)
-    end
-    
-    if d.currentTheme then
-        _G.CurrentTheme = d.currentTheme
-        pcall(function() ApplyTheme(d.currentTheme) end)
-    end
-    if d.uiTransparency then
-        _G.ThemeTransparency = d.uiTransparency
-        if not _G.PotatoMode then
-            Window.BackgroundTransparency = d.uiTransparency
-        end
-    end
-end
-
-function FLaSave()
-    local data = {}
-    
-    -- Collect all toggle states from UI_REGISTRY keys
-    for key, _ in pairs(_G.UI_REGISTRY) do
-        if _G[key] ~= nil then
-            data[key] = _G[key]
-        end
-    end
-    
-    -- Additional specific states
-    data.massAttackRunning = MA.running
-    data.raidRunning = RAID.running
-    data.raidOn = _raidOn
-    data.raidCurPM = curPM
-    data.raidRuneMapTarget = RAID.runeMapTarget
-    data.siegeRunning = SIEGE and SIEGE.running
-    data.dungeonRunning = DUNGEON and DUNGEON.running
-    data.st2Running = ST2 and ST2.running
-    data.noClip = STATE.noClip
-    data.antiAfk = STATE.antiAfk
-    data.potatoMode = _G.PotatoMode
-    data.webhookUrl = _webhookUrl
-    data.webhookCurModeIdx = curModeIdx
-    data.webhookEnabled = _webhookEnabled
-    data.autoHideReward = _autoHideReward
-    data.disableAnim = _G.DisableAnimations
-    data.autoSellOn = _autoSellOn
-    data.autoSellWeaponOn = _autoSellWeaponOn
-    data.swSelectAll = _swSelectAll
-    data.swSelectedIds = _swSelectedIds
-    data.currentTheme = _G.CurrentTheme
-    data.themeTransparency = _G.ThemeTransparency
-    
-    local ok, json = pcall(function() 
-        return game:GetService("HttpService"):JSONEncode(data) 
-    end)
-    
-    if not ok then
-        SystemNotify("Failed to encode config!", 3)
-        return
-    end
-    
-    if _cfgWrite(json) then
-        SystemNotify("Config saved!", 2)
-    else
-        SystemNotify("Failed to save!", 3)
-    end
-end
+pcall(FLaAutoLoad)
 
 -- ============================================================
--- [BLOK 3] FLaAutoLoad Function (Ganti fungsi yang ada)
--- ============================================================
 
-function FLaAutoLoad()
-    local raw = _cfgRead()
-    if not raw then
-        SystemNotify("No config file found!", 2)
-        return
+-- SIEGE SCANNER (OPTIMIZED & CLEAN) - FINAL REPAIR
+-- ============================================================
+task.spawn(function()
+    task.wait(5) 
+    local _reCity = Remotes:FindFirstChild("UpdateCityRaidInfo")
+    local getCR = Remotes:FindFirstChild("GetCityRaidInfos")
+
+    if not SIEGE then return end
+    if not SIEGE.live then SIEGE.live = {} end
+
+    if getCR then
+        pcall(function()
+            local result = getCR:InvokeServer()
+            if type(result) == "table" then
+                for _, entry in ipairs(result) do
+                    if entry.id and entry.rankInfo then 
+                        local mn = CITY_TO_MAP_CONN[entry.id]
+                        if mn then SIEGE.live[entry.id] = mn end
+                    end 
+                end 
+            end 
+        end)
     end
-    
-    local ok, data = pcall(function() 
-        return game:GetService("HttpService"):JSONDecode(raw) 
-    end)
-    
-    if not ok or type(data) ~= "table" then
-        SystemNotify("Failed to decode config!", 3)
-        return
-    end
-    
-    task.spawn(function()
-        task.wait(2)
-        
-        -- Iterate through all saved keys
-        for key, value in pairs(data) do
-            local handler = _G.UI_REGISTRY[key]
-            if type(handler) == "function" then
-                pcall(function() handler(value) end)
-            else
-                -- Fallback: set global variable directly
-                _G[key] = value
+
+    if _reCity then
+        local conn = _reCity.OnClientEvent:Connect(function(data)
+            if type(data) ~= "table" then return end
+            local id, action = data.id, data.action
+            local mn = CITY_TO_MAP_CONN[id]
+            
+            if not id or not action or not mn then 
+                return 
+            elseif action == "OpenCityRaid" then
+                SIEGE.live[id] = mn
+                if _siegeWakeup then pcall(function() _siegeWakeup:Fire() end) end
+                if not _whSilent and TriggerWebhookDebounce then 
+                    TriggerWebhookDebounce() 
+                end
+            elseif action == "CloseCityRaid" or action == "LeaveCityRaid" then
+                SIEGE.live[id] = nil
+                if _siegeChatOpen then _siegeChatOpen[mn] = false end
             end
+        end) 
+        table.insert(_G.FLA_CONNECTIONS, conn)
+    end
+end) -- [FIX] Close Siege Scanner task.spawn
+
+
+-- ============================================================
+-- AUTO CLEANUP SYSTEM
+-- Trigger: CharacterRemoving (relog/respawn) atau game close
+-- Tujuan: hentikan semua loop/thread/koneksi → free memory
+-- ============================================================
+local function FLaFullCleanup(reason)
+    reason = reason or "cleanup"
+    _G.FLA_IS_RUNNING = false
+
+    for _, conn in ipairs(_G.FLA_CONNECTIONS or {}) do
+        pcall(function() conn:Disconnect() end)
+    end
+    _G.FLA_CONNECTIONS = {}
+
+    pcall(function() if DoMassAttack then DoMassAttack(false) end end)
+    pcall(function() if StopRaid     then StopRaid()          end end)
+    pcall(function() if StopSiege    then StopSiege()         end end)
+    pcall(function() if StopDungeon  then StopDungeon()       end end)
+    pcall(function() if StopST2      then StopST2()           end end)
+
+    pcall(function()
+        if AG then AG.running = false end
+        if AG and AG.thread then
+            pcall(function() task.cancel(AG.thread) end)
+            AG.thread = nil
         end
-        
-        -- Additional handler calls for complex ecosystems
-        if data.massAttackRunning and _G.UI_REGISTRY["massAttack"] then
-            _G.UI_REGISTRY["massAttack"](true)
+    end)
+
+    pcall(function() if _animLoopConn then pcall(task.cancel, _animLoopConn); _animLoopConn = nil end end)
+    pcall(function() if _dmgTextConnWorkspace then _dmgTextConnWorkspace:Disconnect(); _dmgTextConnWorkspace = nil end end)
+    pcall(function() if _noClipConn then pcall(task.cancel, _noClipConn); _noClipConn = nil end end)
+    pcall(function() if _hideRerollConn then _hideRerollConn:Disconnect(); _hideRerollConn = nil end end)
+    pcall(function() if _sellConn then _sellConn:Disconnect(); _sellConn = nil end end)
+    pcall(function() if _swConn then pcall(function() task.cancel(_swConn) end); _swConn = nil end end)
+    pcall(function() if DisconnectRaidConns then DisconnectRaidConns() end end)
+
+    pcall(function() if _raidWakeup   then _raidWakeup:Destroy();   _raidWakeup   = nil end end)
+    pcall(function() if _siegeWakeup  then _siegeWakeup:Destroy();  _siegeWakeup  = nil end end)
+    pcall(function() if _dungeonWakeup then _dungeonWakeup:Destroy(); _dungeonWakeup = nil end end)
+
+    pcall(function() RAID_LIVE = {}; RAID_ID_LIST = {} end)
+    pcall(function() _deadG = {}; _deadG_F = {} end)
+    pcall(function() _runeGradeCache = {}; HERO_GUIDS = {} end)
+    pcall(function() if SIEGE then SIEGE.live = {} end end)
+    pcall(function() _G.SentRaidIds = {}; _G.SentSiegeIds = {} end)
+
+    pcall(function()
+        if ScreenGui and ScreenGui.Parent then
+            ScreenGui:Destroy()
         end
-        
-        if data.raidRunning and _G.UI_REGISTRY["autoRaid"] then
-            task.delay(1, function() _G.UI_REGISTRY["autoRaid"](true) end)
+    end)
+
+    pcall(function()
+        if _whDebounce then
+            task.cancel(_whDebounce)
+            _whDebounce = nil
         end
-        
-        if data.raidCurPM and _G.UI_REGISTRY["raidPickMode"] then
-            _G.UI_REGISTRY["raidPickMode"](data.raidCurPM)
-        end
-        
-        if data.raidRuneMapTarget ~= nil and _G.UI_REGISTRY["raidRune"] then
-            _G.UI_REGISTRY["raidRune"](data.raidRuneMapTarget)
-        end
-        
-        if data.siegeRunning and _G.UI_REGISTRY["autoSiege"] then
-            task.delay(1.5, function() _G.UI_REGISTRY["autoSiege"](true) end)
-        end
-        
-        if data.dungeonRunning and _G.UI_REGISTRY["autoDungeon"] then
-            task.delay(2, function() _G.UI_REGISTRY["autoDungeon"](true) end)
-        end
-        
-        if data.st2Running and _G.UI_REGISTRY["autoST2"] then
-            task.delay(2.5, function() _G.UI_REGISTRY["autoST2"](true) end)
-        end
-        
-        if data.noClip ~= nil and _G.UI_REGISTRY["noClip"] then
-            _G.UI_REGISTRY["noClip"](data.noClip)
-        end
-        
-        if data.antiAfk ~= nil and _G.UI_REGISTRY["antiAfk"] then
-            _G.UI_REGISTRY["antiAfk"](data.antiAfk)
-        end
-        
-        if data.potatoMode ~= nil and _G.UI_REGISTRY["potato"] then
-            _G.UI_REGISTRY["potato"](data.potatoMode)
-        end
-        
-        if data.webhookUrl and _G.UI_REGISTRY["webhookUrl"] then
-            _G.UI_REGISTRY["webhookUrl"](data.webhookUrl)
-        end
-        
-        if data.webhookCurModeIdx and _G.UI_REGISTRY["webhookMode"] then
-            _G.UI_REGISTRY["webhookMode"](data.webhookCurModeIdx)
-        end
-        
-        if data.webhookEnabled ~= nil and _G.UI_REGISTRY["webhookEnabled"] then
-            _G.UI_REGISTRY["webhookEnabled"](data.webhookEnabled)
-        end
-        
-        if data.autoHideReward ~= nil and _G.UI_REGISTRY["autoHide"] then
-            _G.UI_REGISTRY["autoHide"](data.autoHideReward)
-        end
-        
-        if data.disableAnim ~= nil and _G.UI_REGISTRY["anim"] then
-            _G.UI_REGISTRY["anim"](data.disableAnim)
-        end
-        
-        if data.autoSellOn ~= nil and _G.UI_REGISTRY["autoSell"] then
-            _G.UI_REGISTRY["autoSell"](data.autoSellOn)
-        end
-        
-        if data.autoSellWeaponOn ~= nil and _G.UI_REGISTRY["autoSellWeapon"] then
-            _G.UI_REGISTRY["autoSellWeapon"](data.autoSellWeaponOn)
-        end
-        
-        if data.swSelectedIds and _G.UI_REGISTRY["swDropUpdate"] then
-            _G.UI_REGISTRY["swDropUpdate"]()
-        end
-        
-        if data.currentTheme then
-            task.delay(0.5, function()
-                pcall(function() ApplyTheme(data.currentTheme) end)
-            end)
-        end
-        
-        if data.themeTransparency then
-            _G.ThemeTransparency = data.themeTransparency
-            pcall(function() 
-                if Window then Window.BackgroundTransparency = data.themeTransparency end
-            end)
-        end
-        
-        task.delay(0.2, function()
-            SystemNotify("Config loaded!", 1.5)
+    end)
+
+    pcall(function()
+        if MODE then MODE.current = "idle" end
+    end)
+end
+
+-- ── Trigger 1: CharacterRemoving = player relog / respawn ────
+-- Ini terjadi saat player klik "Leave Game" atau server kick
+task.spawn(function()
+    -- Tunggu sampai karakter pertama kali load
+    local char = LP.Character or LP.CharacterAdded:Wait()
+    -- Pasang listener untuk NEXT CharacterRemoving
+    LP.CharacterRemoving:Connect(function()
+        task.delay(0.1, function()
+            FLaFullCleanup("CharacterRemoving - relog/respawn")
         end)
     end)
-end
+end)
 
--- ============================================================
--- [BLOK 4] FLaReset Function (Ganti fungsi yang ada)
--- ============================================================
+-- ── Trigger 2: game:BindToClose = executor close / game close ─
+pcall(function()
+    game:BindToClose(function()
+        FLaFullCleanup("game:BindToClose")
+    end)
+end)
+
+-- ── Trigger 3: ScreenGui di-destroy dari luar (executor kill) ─
+ScreenGui.AncestryChanged:Connect(function(_, parent)
+    if not parent then
+        FLaFullCleanup("ScreenGui removed")
+    end
+end)

@@ -37,6 +37,8 @@ CITY_TO_MAP_CONN = {[1000001]=3,[1000002]=7,[1000003]=10,[1000004]=13}
 -- Fungsi ini di-define ulang di bawah setelah SIEGE table siap
 ConnectUpdateCityRaidListener = nil -- forward declare
 
+UI_REGISTRY = {}
+
 -- [v232] GetCityRaidInfos sekarang dipanggil dari ConnectUpdateCityRaidListener
 -- setelah GUI load + delay 5 detik (lihat di bawah SwitchTab)
 end -- do globals
@@ -11410,116 +11412,113 @@ end
 
 function FLaApply(d)
     if type(d) ~= "table" then return end
-    -- ── Webhook ───────────────────────────────────────────────
-    if type(d.webhookUrl)     == "string"  then _webhookUrl     = d.webhookUrl  end
-    if type(d.webhookMode)    == "string"  then _webhookMode    = d.webhookMode end
-    if type(d.webhookEnabled) == "boolean" then _webhookEnabled = d.webhookEnabled end
-    pcall(function()
-        local urlB = ScreenGui:FindFirstChild("urlBox", true)
-        if urlB and urlB:IsA("TextBox") then urlB.Text = _webhookUrl end
-    end)
-    -- ── Mass Attack ───────────────────────────────────────────
-    if type(d.maKillTarget) == "number" then MA.killTarget    = d.maKillTarget end
-    if type(d.mrNextDelay)  == "number" then MR.nextMapDelay  = d.mrNextDelay  end
-    if type(d.mrTpDelay)    == "number" then MR.teleportDelay = d.mrTpDelay    end
-    if type(d.mrSelected) == "table" then
-        for i = 1, 19 do MR.selected[i] = nil end
-        for k, v in pairs(d.mrSelected) do
-            local i = tonumber(k)
-            if i and v then MR.selected[i] = true end
+    task.wait(2)
+    
+    if d.hideRerollChat ~= nil and UI_REGISTRY["hideRerollChat"] then
+        UI_REGISTRY["hideRerollChat"](d.hideRerollChat)
+    end
+    
+    if d.autoSellOn ~= nil and UI_REGISTRY["autoSell"] then
+        UI_REGISTRY["autoSell"](d.autoSellOn)
+    end
+    
+    if d.autoSellWeaponOn ~= nil and UI_REGISTRY["autoSellWeapon"] then
+        UI_REGISTRY["autoSellWeapon"](d.autoSellWeaponOn)
+    end
+    if d.swSelectAll ~= nil then _swSelectAll = d.swSelectAll end
+    if d.swSelectedIds then
+        _swSelectedIds = {}
+        _swSelNames = {}
+        for k, v in pairs(d.swSelectedIds) do
+            local id = tonumber(k)
+            if id and v then
+                _swSelectedIds[id] = true
+                for _, w in ipairs(WEAPON_LIST) do
+                    if w[1] == id then _swSelNames[id] = w[2]; break end
+                end
+            end
+        end
+        if UI_REGISTRY["swDropUpdate"] then UI_REGISTRY["swDropUpdate"]() end
+    end
+    
+    if d.massAttackRunning and UI_REGISTRY["massAttack"] then
+        task.delay(0.5, function() UI_REGISTRY["massAttack"](true) end)
+    end
+    
+    if d.raidRunning or d.raidOn then
+        if UI_REGISTRY["autoRaid"] then
+            task.delay(1, function() UI_REGISTRY["autoRaid"](true) end)
         end
     end
-    -- [FIX] Restore Mass Attack running state
-    if type(d.massAttackRunning) == "boolean" and d.massAttackRunning then
-        task.delay(1, function()
-            pcall(function() if DoMassAttack then DoMassAttack(true) end end)
-        end)
+    if d.raidCurPM and UI_REGISTRY["raidPickMode"] then
+        UI_REGISTRY["raidPickMode"](d.raidCurPM)
     end
-    -- ── Auto Raid ─────────────────────────────────────────────
-    if type(d.raidDifficulty)    == "string"  then RAID.difficulty    = d.raidDifficulty    end
-    if type(d.raidRuneEnabled)   == "boolean" then RAID.runeEnabled   = d.raidRuneEnabled   end
-    if type(d.raidRuneMapTarget) == "number"  then RAID.runeMapTarget = d.raidRuneMapTarget end
-    if type(d.raidUpdownEnabled) == "boolean" then RAID.updownEnabled = d.raidUpdownEnabled end
-    if type(d.raidUpdownDir)     == "string"  then RAID.updownDir     = d.raidUpdownDir     end
-    if type(d.raidPreferMaps) == "table" then
-        RAID.preferMaps = {}
-        for k, v in pairs(d.raidPreferMaps) do
-            local mn = tonumber(k); if mn and v then RAID.preferMaps[mn] = true end
-        end
+    if d.raidRuneMapTarget ~= nil and UI_REGISTRY["raidRune"] then
+        UI_REGISTRY["raidRune"](d.raidRuneMapTarget)
     end
-    if type(d.raidRuneGrades) == "table" then
-        RAID.runeGrades = {}
-        for k, v in pairs(d.raidRuneGrades) do
-            if v then RAID.runeGrades[tostring(k)] = true end
-        end
+    
+    if d.siegeRunning and UI_REGISTRY["autoSiege"] then
+        task.delay(1.5, function() UI_REGISTRY["autoSiege"](true) end)
     end
-    -- [FIX] Restore Raid running state
-    if type(d.raidRunning) == "boolean" and d.raidRunning then
-        task.delay(1.5, function()
-            pcall(function() if StartRaid then StartRaid() end end)
-        end)
+    
+    if d.dungeonRunning and UI_REGISTRY["autoDungeon"] then
+        task.delay(2, function() UI_REGISTRY["autoDungeon"](true) end)
     end
-    -- ── Auto Siege ────────────────────────────────────────────
-    if type(d.siegeExcludeMaps) == "table" then
-        for k, v in pairs(d.siegeExcludeMaps) do
-            local mn = tonumber(k); if mn then SIEGE.excludeMaps[mn] = v end
-        end
+    
+    if d.noClip ~= nil and UI_REGISTRY["noClip"] then
+        UI_REGISTRY["noClip"](d.noClip)
     end
-    -- [FIX] Restore Siege running state
-    if type(d.siegeRunning) == "boolean" and d.siegeRunning then
-        task.delay(2, function()
-            pcall(function() if StartSiege then StartSiege() end end)
-        end)
+    
+    if d.antiAfk ~= nil and UI_REGISTRY["antiAfk"] then
+        UI_REGISTRY["antiAfk"](d.antiAfk)
     end
-    -- ── Auto Dungeon ──────────────────────────────────────────
-    -- [FIX] Restore Dungeon running state
-    if type(d.dungeonRunning) == "boolean" and d.dungeonRunning then
-        task.delay(2.5, function()
-            pcall(function() if StartDungeon then StartDungeon() end end)
-        end)
+    
+    if d.potatoMode ~= nil and UI_REGISTRY["potato"] then
+        UI_REGISTRY["potato"](d.potatoMode)
     end
-    -- ── Potato Mode ───────────────────────────────────────────
-    if type(d.potatoMode) == "boolean" then _G.PotatoMode = d.potatoMode end
-    -- ── [v20-PATCH] Theme & UI Transparency ──────────────────
-    if type(d.currentTheme) == "string" then
+    
+    if d.webhookUrl and UI_REGISTRY["webhookUrl"] then
+        UI_REGISTRY["webhookUrl"](d.webhookUrl)
+    end
+    if d.webhookCurModeIdx and UI_REGISTRY["webhookMode"] then
+        UI_REGISTRY["webhookMode"](d.webhookCurModeIdx)
+    end
+    if d.webhookEnabled ~= nil and UI_REGISTRY["webhookEnabled"] then
+        UI_REGISTRY["webhookEnabled"](d.webhookEnabled)
+    end
+    
+    if d.autoHideReward ~= nil and UI_REGISTRY["autoHide"] then
+        UI_REGISTRY["autoHide"](d.autoHideReward)
+    end
+    if d.disableAnim ~= nil and UI_REGISTRY["anim"] then
+        UI_REGISTRY["anim"](d.disableAnim)
+    end
+    if d.autoCollect ~= nil and UI_REGISTRY["autoCollect"] then
+        UI_REGISTRY["autoCollect"](d.autoCollect)
+    end
+    if d.autoDestroyer ~= nil and UI_REGISTRY["autoDestroyer"] then
+        UI_REGISTRY["autoDestroyer"](d.autoDestroyer)
+    end
+    if d.autoArise ~= nil and UI_REGISTRY["autoArise"] then
+        UI_REGISTRY["autoArise"](d.autoArise)
+    end
+    if d.autoConfirm ~= nil and UI_REGISTRY["autoConfirm"] then
+        UI_REGISTRY["autoConfirm"](d.autoConfirm)
+    end
+    if d.autoClose ~= nil and UI_REGISTRY["autoClose"] then
+        UI_REGISTRY["autoClose"](d.autoClose)
+    end
+    
+    if d.currentTheme then
+        _G.CurrentTheme = d.currentTheme
         pcall(function() ApplyTheme(d.currentTheme) end)
     end
-    if type(d.uiTransparency) == "number" then
+    if d.uiTransparency then
         _G.ThemeTransparency = d.uiTransparency
-        pcall(function()
-            -- Restore slider visual (skala 1-100)
-            local sliderVal = math.floor(d.uiTransparency * 99) + 1
-            local S = _G.FLaSetters or {}
-            if S.uiTransparency then S.uiTransparency(sliderVal) end
-        end)
-        pcall(function()
-            if not _G.PotatoMode then
-                Window.BackgroundTransparency = d.uiTransparency
-            end
-        end)
-    end
-    -- ── [v20-PATCH] Restore semua toggle TANPA DELAY ─────────
-    -- FLaAutoLoad dipanggil setelah semua panel + FLaSetters sudah siap,
-    -- sehingga tidak diperlukan task.delay apapun di sini.
-    pcall(function()
-        local S = _G.FLaSetters or {}
-        if S.autoHide and type(d.autoHideReward) == "boolean" then S.autoHide(d.autoHideReward) end
-        if S.anim     and type(d.disableAnim)    == "boolean" then S.anim(d.disableAnim)        end
-        if S.noClip   and type(d.noClip)         == "boolean" then S.noClip(d.noClip)           end
-        if S.antiAfk  and type(d.antiAfk)        == "boolean" then S.antiAfk(d.antiAfk)         end
-        if S.autoSell and type(d.autoSellOn)     == "boolean" then S.autoSell(d.autoSellOn)     end
-        -- [v20-PATCH] STATE toggles tambahan
-        if S.autoCollect   and type(d.autoCollect)   == "boolean" then S.autoCollect(d.autoCollect)     end
-        if S.autoDestroyer and type(d.autoDestroyer) == "boolean" then S.autoDestroyer(d.autoDestroyer) end
-        if S.autoArise     and type(d.autoArise)     == "boolean" then S.autoArise(d.autoArise)         end
-        if S.autoConfirm   and type(d.autoConfirm)   == "boolean" then S.autoConfirm(d.autoConfirm)     end
-        if S.autoClose     and type(d.autoClose)     == "boolean" then S.autoClose(d.autoClose)         end
-        -- Hide Reroll Chat
-        if type(d.hideRerollChat) == "boolean" and d.hideRerollChat ~= _hideRerollChat then
-            _hideRerollChat = d.hideRerollChat
-            if d.hideRerollChat then _startHideRerollChat() else _stopHideRerollChat() end
+        if not _G.PotatoMode then
+            Window.BackgroundTransparency = d.uiTransparency
         end
-    end)
+    end
 end
 
 function FLaSave()
@@ -11579,15 +11578,16 @@ end
 
 function FLaAutoLoad()
     local raw = _cfgRead()
-    if not raw then return end  -- [v20-PATCH] silent jika tidak ada config
-    -- [v20-PATCH] Fix: parse langsung tanpa pcall bertingkat yang salah
+    if not raw then return end
     local ok, data = pcall(function()
         return game:GetService("HttpService"):JSONDecode(raw)
     end)
     if ok and type(data) == "table" then
-        FLaApply(data)  -- [v20-PATCH] langsung, tanpa delay
-        task.delay(0.2, function()
-            pcall(function() SystemNotify("💾 Config dimuat!", 1.5) end)
+        task.spawn(function()
+            FLaApply(data)
+            task.delay(0.2, function()
+                pcall(function() SystemNotify("💾 Config dimuat!", 1.5) end)
+            end)
         end)
     end
 end
@@ -12603,8 +12603,197 @@ do
     end
 end
  
+UI_REGISTRY["hideRerollChat"] = function(on)
+    _hideRerollChat = on
+    if on then _startHideRerollChat() else _stopHideRerollChat() end
+    pcall(function()
+        TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
+        TweenService:Create(hrKnob, TweenInfo.new(0.16), {
+            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
+        }):Play()
+    end)
+end
 
--- [v20-PATCH] Auto-load config INSTAN setelah SEMUA panel & FLaSetters sudah siap.
+_G.FLaSetters["autoSell"] = function(on)
+    _autoSellOn = on
+    local pill = ScreenGui:FindFirstChild("ashPill", true) or ScreenGui:FindFirstChild("sellPill", true)
+    local knob = pill and pill:FindFirstChildOfClass("Frame")
+    if pill then
+        TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
+    end
+    if knob then
+        TweenService:Create(knob, TweenInfo.new(0.16), {
+            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
+        }):Play()
+    end
+end
+UI_REGISTRY["autoSell"] = _G.FLaSetters["autoSell"]
+
+UI_REGISTRY["autoSellWeapon"] = function(on)
+    _autoSellWeaponOn = on
+    if on then StartAutoSellWeapon() else
+        if _swConn then pcall(function() task.cancel(_swConn) end); _swConn = nil end
+        pcall(function() SetSWStatus("Idle - "..(_swSoldCount or 0).." SOLD", C.TXT3) end)
+    end
+    pcall(function()
+        TweenService:Create(swPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
+        TweenService:Create(swKnob, TweenInfo.new(0.16), {
+            Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
+        }):Play()
+    end)
+end
+UI_REGISTRY["swDropUpdate"] = function()
+    pcall(function() UpdateSwDropUI() end)
+end
+
+UI_REGISTRY["massAttack"] = function(on)
+    pcall(function() if DoMassAttack then DoMassAttack(on) end end)
+end
+
+UI_REGISTRY["autoRaid"] = function(on)
+    _raidOn = on
+    RAID.running = on
+    if on then StartRaidLoop() else StopRaid() end
+    pcall(function()
+        local ctrlRow = ScreenGui:FindFirstChild("ctrlRow", true)
+        local pill = ctrlRow and ctrlRow:FindFirstChildOfClass("TextButton")
+        local knob = pill and pill:FindFirstChildOfClass("Frame")
+        if pill then
+            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
+        end
+        if knob then
+            TweenService:Create(knob, TweenInfo.new(0.16), {
+                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
+            }):Play()
+        end
+    end)
+end
+
+UI_REGISTRY["raidPickMode"] = function(idx)
+    curPM = idx
+    RAID.pickMode = PM_KEYS[idx]
+    RAID.difficulty = PM_TO_DIFF[PM_KEYS[idx]]
+    RAID.snapshotMapId = nil
+    pcall(function()
+        pmDDLbl.Text = " " .. PM_OPTS[idx]
+        pmDDLbl.TextColor3 = PM_COLORS[idx]
+        pmDescLbl.Text = PM_DESC[idx]
+    end)
+end
+
+UI_REGISTRY["raidRune"] = function(mapId)
+    RAID.runeMapTarget = mapId
+    pcall(function() SyncRuneState() end)
+    pcall(function()
+        if mapId >= 1 and mapId <= 19 then
+            runeDDVal.Text = " Map " .. mapId .. " - " .. (MAP_NAMES[mapId] or "")
+            runeDDVal.TextColor3 = C.ACC2
+        else
+            runeDDVal.Text = " -- NOT SELECTED --"
+            runeDDVal.TextColor3 = C.TXT3
+        end
+    end)
+end
+
+UI_REGISTRY["autoSiege"] = function(on)
+    if on then StartSiegeLoop() else StopSiege() end
+    pcall(function()
+        local siegeRow = ScreenGui:FindFirstChild("siegeRow", true)
+        local pill = siegeRow and siegeRow:FindFirstChildOfClass("TextButton")
+        local knob = pill and pill:FindFirstChildOfClass("Frame")
+        if pill then
+            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
+        end
+        if knob then
+            TweenService:Create(knob, TweenInfo.new(0.16), {
+                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
+            }):Play()
+        end
+    end)
+end
+
+UI_REGISTRY["autoDungeon"] = function(on)
+    if on then StartDungeonLoop() else StopDungeon() end
+    pcall(function()
+        local dngRow = ScreenGui:FindFirstChild("dungeonRow", true) or ScreenGui:FindFirstChild("dngRow", true)
+        local pill = dngRow and dngRow:FindFirstChildOfClass("TextButton")
+        local knob = pill and pill:FindFirstChildOfClass("Frame")
+        if pill then
+            TweenService:Create(pill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
+        end
+        if knob then
+            TweenService:Create(knob, TweenInfo.new(0.16), {
+                Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+                BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
+            }):Play()
+        end
+    end)
+end
+
+UI_REGISTRY["noClip"] = function(on)
+    STATE.noClip = on
+    if on then StartNoclipLoop() else StopNoclip() end
+end
+
+UI_REGISTRY["antiAfk"] = function(on)
+    STATE.antiAfk = on
+    if on then StartAntiAfk() else StopAntiAfk() end
+end
+
+UI_REGISTRY["potato"] = function(on)
+    _G.PotatoMode = on
+    if on then
+        CleanupVFX()
+        pcall(function()
+            for _, obj in ipairs(ScreenGui:GetDescendants()) do
+                if obj:IsA("ParticleEmitter") or obj:IsA("UIGradient") or obj:IsA("UIStroke") then obj:Destroy() end
+            end
+            Window.BackgroundTransparency = 0
+        end)
+    else
+        Window.BackgroundTransparency = _G.ThemeTransparency
+        pcall(function() ApplyTheme(_G.CurrentTheme) end)
+    end
+end
+
+UI_REGISTRY["webhookEnabled"] = function(on)
+    _webhookEnabled = on
+    if on and FlushWebhookPending then task.spawn(FlushWebhookPending) end
+    pcall(function()
+        TweenService:Create(wPill, TweenInfo.new(0.16), {BackgroundColor3 = on and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
+        TweenService:Create(wKnob, TweenInfo.new(0.16), {
+            Position = on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+            BackgroundColor3 = on and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
+        }):Play()
+        wRow.BackgroundColor3 = on and C.BG2 or C.BG3
+    end)
+end
+
+UI_REGISTRY["webhookUrl"] = function(url)
+    _webhookUrl = url
+    pcall(function()
+        local urlB = ScreenGui:FindFirstChild("urlBox", true)
+        if urlB and urlB:IsA("TextBox") then urlB.Text = url end
+    end)
+    pcall(function() if UpdatePlatformLbl then UpdatePlatformLbl() end end)
+end
+
+UI_REGISTRY["webhookMode"] = function(idx)
+    curModeIdx = idx
+    _webhookMode = MODE_OPTS[idx].value
+    pcall(function()
+        modeDDLbl.Text = " " .. MODE_OPTS[idx].label
+        modeDDLbl.TextColor3 = MODE_OPTS[idx].col
+        modeDescLbl.Text = MODE_OPTS[idx].desc
+    end)
+end
+
+--- [v20-PATCH] Auto-load config INSTAN setelah SEMUA panel & FLaSetters sudah siap.
 -- Dipindah ke sini dari task.delay(1.5) yang lama → 0 detik delay, langsung restore.
 pcall(FLaAutoLoad)
 
@@ -12751,5 +12940,3 @@ ScreenGui.AncestryChanged:Connect(function(_, parent)
         FLaFullCleanup("ScreenGui removed")
     end
 end)
-
-

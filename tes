@@ -1147,6 +1147,8 @@ _visPotato      = nil  -- Settings: Potato Mode visual
 _visWeaponSell  = nil  -- Main: Auto Sell Weapon visual (manual pill)
 _visDecompGem   = nil  -- Main: Auto Decomp Gem visual (manual pill)
 _setTransSlider = nil  -- Theme: UI Transparency slider setter
+_visWebhookToggle = nil  -- Settings: Webhook toggle visual
+_setWebhookToggle = nil  -- Settings: Webhook toggle logic
 _visHideReroll  = nil  -- Main: Hide Reroll Chat visual (manual pill)
 _hideRerollState= false -- tracking _hideRerollChat state
 _setSpeedSlider = nil  -- Player: WalkSpeed slider setter
@@ -11823,6 +11825,7 @@ do
   pcall(function()
    if _webhookUrlBox then _webhookUrlBox.Text = "" end
    if _webhookModeSetIdx then _webhookModeSetIdx(3) end
+   if _visWebhookToggle then _visWebhookToggle(false) end
   end)
   -- Theme: reset ke default
   pcall(function() ApplyTheme("Solo Leveling") end)
@@ -11983,6 +11986,8 @@ do
   pcall(function() if _webhookUrlBox    then _webhookUrlBox.Text = whUrl end end)
   pcall(function() if _webhookModeSetIdx then _webhookModeSetIdx(whModeIdx) end end)
   _webhookEnabled = whEnabled
+  -- Restore visual webhook toggle langsung
+  pcall(function() if _visWebhookToggle then _visWebhookToggle(whEnabled) end end)
   -- Theme (langsung)
   _G.ThemeTransparency = (transpPct - 1) / 99
   pcall(function() ApplyTheme(themeName) end)
@@ -12027,6 +12032,8 @@ do
    pcall(function() if st2On    and _setST2Toggle     then _setST2Toggle(true)    end end)
    -- Potato mode (butuh VFX cleanup)
    pcall(function() if potatoOn and _setPotatoToggle then _setPotatoToggle(true) end end)
+   -- Webhook enable (flush pending setelah URL terisi)
+   pcall(function() if whEnabled and _setWebhookToggle then _setWebhookToggle(true) end end)
   end)
  end
 
@@ -12255,10 +12262,31 @@ do
  wRow.BackgroundColor3=on and C.BG2 or C.BG3
  UpdatePlatformLbl()
  if on then
- -- [v129] Flush pending: reset cooldown + kirim semua data cache yang ada
  if FlushWebhookPending then task.spawn(FlushWebhookPending) end
  end
  end)
+ -- Visual-only setter untuk webhook toggle (update pill tanpa trigger logic)
+ _visWebhookToggle = function(v)
+  TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=v and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
+  TweenService:Create(wKnob,TweenInfo.new(0.16),{
+   Position=v and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+   BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
+  }):Play()
+  wRow.BackgroundColor3=v and C.BG2 or C.BG3
+ end
+ -- Logic setter untuk webhook toggle
+ _setWebhookToggle = function(v)
+  if v == _webhookEnabled then return end
+  _webhookEnabled = v
+  TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=v and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
+  TweenService:Create(wKnob,TweenInfo.new(0.16),{
+   Position=v and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+   BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
+  }):Play()
+  wRow.BackgroundColor3=v and C.BG2 or C.BG3
+  pcall(UpdatePlatformLbl)
+  if v and FlushWebhookPending then task.spawn(FlushWebhookPending) end
+ end
 
  --  Row: Test Webhook + Verify Link 
  local btnRow = Frame(p, C.BLACK, UDim2.new(1,0,0,36))

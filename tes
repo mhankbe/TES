@@ -1030,7 +1030,16 @@ function SliderRow(panel, title, min, max, default, onMove)
             Update(input)
         end
     end)
-    return row
+    -- SetValue: restore slider ke nilai tertentu tanpa input event
+    local function SetValue(val)
+        val = math.clamp(val, min, max)
+        local pos = (val - min) / (max - min)
+        knob.Position = UDim2.new(pos, 0, 0.5, 0)
+        fill.Size = UDim2.new(pos, 0, 1, 0)
+        valLbl.Text = tostring(val)
+        if onMove then onMove(val) end
+    end
+    return row, SetValue
 end
 
 -- ============================================================
@@ -1137,6 +1146,12 @@ _visST2         = nil  -- Automation: ST2 visual
 _visPotato      = nil  -- Settings: Potato Mode visual
 _visWeaponSell  = nil  -- Main: Auto Sell Weapon visual (manual pill)
 _visDecompGem   = nil  -- Main: Auto Decomp Gem visual (manual pill)
+_setTransSlider = nil  -- Theme: UI Transparency slider setter
+_visHideReroll  = nil  -- Main: Hide Reroll Chat visual (manual pill)
+_hideRerollState= false -- tracking _hideRerollChat state
+_setSpeedSlider = nil  -- Player: WalkSpeed slider setter
+_setGemLevelSlider = nil -- Main: Gem Level slider setter
+_setHideRerollToggle = nil -- Main: Hide Reroll Chat setter
 
 -- ============================================================
 -- [v252] MODE DISPATCHER - Single source of truth
@@ -3381,18 +3396,35 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
 
  hrPill.MouseButton1Click:Connect(function()
  _hideRerollChat = not _hideRerollChat
+ _hideRerollState = _hideRerollChat
  local on = _hideRerollChat
  TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
  TweenService:Create(hrKnob, TweenInfo.new(0.16), {
  Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
  BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
  }):Play()
- if on then
- _startHideRerollChat()
- else
- _stopHideRerollChat()
- end
+ if on then _startHideRerollChat() else _stopHideRerollChat() end
  end)
+ -- Visual-only setter untuk Hide Reroll Chat
+ _visHideReroll = function(v)
+  _hideRerollState = v
+  TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = v and C.PILL_ON or C.PILL_OFF}):Play()
+  TweenService:Create(hrKnob, TweenInfo.new(0.16), {
+   Position = v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+   BackgroundColor3 = v and C.KNOB_ON or C.KNOB_OFF,
+  }):Play()
+ end
+ -- Logic setter untuk Hide Reroll Chat
+ _setHideRerollToggle = function(v)
+  if v == _hideRerollChat then return end
+  _hideRerollChat = v; _hideRerollState = v
+  TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = v and C.PILL_ON or C.PILL_OFF}):Play()
+  TweenService:Create(hrKnob, TweenInfo.new(0.16), {
+   Position = v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+   BackgroundColor3 = v and C.KNOB_ON or C.KNOB_OFF,
+  }):Play()
+  if v then _startHideRerollChat() else _stopHideRerollChat() end
+ end
 
  -- 
  -- 
@@ -4079,13 +4111,14 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local function SetDGLevel(lv)
  lv = math.clamp(lv, 1, 150)
  _gemMaxLevel = lv
- _gemMaxLevelState = lv  -- track untuk global config
+ _gemMaxLevelState = lv
  local pct = (lv-1)/149
  dgSliderVal.Text = "Lv 1 - "..lv
  TweenService:Create(dgFill,TweenInfo.new(0.1),{Size=UDim2.new(pct,0,1,0)}):Play()
  TweenService:Create(dgThumb,TweenInfo.new(0.1),{Position=UDim2.new(pct,0,0.5,0)}):Play()
  end
  SetDGLevel(9)
+ _setGemLevelSlider = SetDGLevel  -- expose ke global config
 
  dgMinus.MouseButton1Click:Connect(function() SetDGLevel(_gemMaxLevel - 1) end)
  dgPlus.MouseButton1Click:Connect(function() SetDGLevel(_gemMaxLevel + 1) end)
@@ -4952,11 +4985,15 @@ do
  local isDragging=false
  function SetSpeed(relX)
  local frac=math.clamp(relX,0,1); local spd=math.floor(frac*160)
- _walkSpeedState = spd  -- track untuk global config
+ _walkSpeedState = spd
  wsValLbl.Text=spd.." ("..math.floor(spd/16*100).."%)"
  sliderFill.Size=UDim2.new(frac,0,1,0); sliderKnob.Position=UDim2.new(frac,-7,0.5,-7)
  local char=LP.Character
  if char then local hum=char:FindFirstChild("Humanoid"); if hum then hum.WalkSpeed=spd end end
+ end
+ -- Expose setter berdasarkan speed value (bukan fraction)
+ _setSpeedSlider = function(spd)
+  SetSpeed(math.clamp(spd, 0, 160) / 160)
  end
  sliderTrack.InputBegan:Connect(function(i)
  if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
@@ -11663,7 +11700,7 @@ do
   end
   local jsonStr = string.format(
    '{'..
-   '"main":{"autoHide":%s,"disableAnim":%s,"sellHero":%s,"sellWeapon":%s,"swSelectAll":%s,"decompGem":%s,"gemMaxLevel":%d,"mergePotion":%s,"usePotion":%s},'..
+   '"main":{"autoHide":%s,"disableAnim":%s,"hideReroll":%s,"sellHero":%s,"sellWeapon":%s,"swSelectAll":%s,"decompGem":%s,"gemMaxLevel":%d,"mergePotion":%s,"usePotion":%s},'..
    '"farm":{"randomAttack":%s},'..
    '"attack":{"massAttack":%s,"killTargetIdx":%d,"delayIdx":%d,"maMaps":"%s"},'..
    '"player":{"noClip":%s,"antiAfk":%s,"walkSpeed":%d},'..
@@ -11674,6 +11711,7 @@ do
    -- main
    STATE.autoHideReward and "true" or "false",
    STATE.disableAnim and "true" or "false",
+   _hideRerollState and "true" or "false",
    _autoSellOnState and "true" or "false",
    _autoSellWeaponState and "true" or "false",
    _swSelectAllState and "true" or "false",
@@ -11730,9 +11768,11 @@ do
   -- Main
   pcall(function() if _setAutoHideToggle then _setAutoHideToggle(false) end end)
   pcall(function() if _setAnimToggle then _setAnimToggle(false) end end)
+  pcall(function() if _setHideRerollToggle then _setHideRerollToggle(false) end end)
   pcall(function() if _setSellHeroToggle then _setSellHeroToggle(false) end end)
   pcall(function() if _autoSellWeaponSet then _autoSellWeaponSet(false) end end)
   pcall(function() if _autoDecompGemSet then _autoDecompGemSet(false) end end)
+  pcall(function() if _setGemLevelSlider then _setGemLevelSlider(9) end end)
   -- Farm
   pcall(function() if _setRAToggle then _setRAToggle(false) end end)
   -- Attack
@@ -11743,7 +11783,8 @@ do
    for mn = 1, 19 do _maMapSelState[mn] = nil; MR.selected[mn] = nil end
   end
   pcall(UpdateMapDDLbl)
-  -- Player
+  -- Player (reset speed ke 16)
+  pcall(function() if _setSpeedSlider then _setSpeedSlider(16) end end)
   pcall(function() if _setNoClipToggle then _setNoClipToggle(false) end end)
   pcall(function() if _setAntiAfkToggle then _setAntiAfkToggle(false) end end)
   -- AutoRoll
@@ -11785,6 +11826,7 @@ do
   end)
   -- Theme: reset ke default
   pcall(function() ApplyTheme("Solo Leveling") end)
+  pcall(function() if _setTransSlider then _setTransSlider(43) end end)  -- default 42% transparency
   -- Hapus file
   pcall(function() if isfile(GLOBAL_CFG_FILE) then delfile(GLOBAL_CFG_FILE) end end)
   -- Hapus juga file Automation config lama
@@ -11807,11 +11849,12 @@ do
   local themeBlock    = content:match('"theme":%s*(%b{})') or ""
 
   -- Parse main
-  local autoHide, disAnim, sellHero, sellWeapon, swSelAll, decompGem, gemLv, mergeOn, useOn =
-   false, false, false, false, true, false, 9, false, false
+  local autoHide, disAnim, hideReroll, sellHero, sellWeapon, swSelAll, decompGem, gemLv, mergeOn, useOn =
+   false, false, false, false, false, true, false, 9, false, false
   if mainBlock ~= "" then
    autoHide   = mainBlock:match('"autoHide":(%a+)') == "true"
    disAnim    = mainBlock:match('"disableAnim":(%a+)') == "true"
+   hideReroll = mainBlock:match('"hideReroll":(%a+)') == "true"
    sellHero   = mainBlock:match('"sellHero":(%a+)') == "true"
    sellWeapon = mainBlock:match('"sellWeapon":(%a+)') == "true"
    swSelAll   = mainBlock:match('"swSelectAll":(%a+)') ~= "false"
@@ -11881,9 +11924,11 @@ do
   -- Main toggles
   pcall(function() if _visAutoHide    then _visAutoHide(autoHide)     end end)
   pcall(function() if _visDisableAnim then _visDisableAnim(disAnim)   end end)
+  pcall(function() if _visHideReroll  then _visHideReroll(hideReroll); _hideRerollState = hideReroll end end)
   pcall(function() if _visSellHero    then _visSellHero(sellHero);    _autoSellOnState = sellHero     end end)
   pcall(function() if _visWeaponSell  then _visWeaponSell(sellWeapon); _autoSellWeaponState = sellWeapon end end)
   pcall(function() if _visDecompGem   then _visDecompGem(decompGem);  _autoDecompGemState = decompGem  end end)
+  pcall(function() if _setGemLevelSlider then _setGemLevelSlider(gemLv) end end)
   -- Farm
   pcall(function() if _visRandomAtk   then _visRandomAtk(raOn);       _raRunningState = raOn           end end)
   -- Attack
@@ -11902,6 +11947,8 @@ do
   -- Player
   pcall(function() if _visNoClip  then _visNoClip(noClip)   end end)
   pcall(function() if _visAntiAfk then _visAntiAfk(antiAfk) end end)
+  -- WalkSpeed slider — restore visual langsung
+  pcall(function() if _setSpeedSlider then _setSpeedSlider(spd) end end)
   -- Automation
   pcall(function() if _visSiege   then _visSiege(siegeOn);   _siegeToggleState = siegeOn   end end)
   pcall(function() if _visDungeon then _visDungeon(dungeonOn); _dungeonToggleState = dungeonOn end end)
@@ -11939,6 +11986,8 @@ do
   -- Theme (langsung)
   _G.ThemeTransparency = (transpPct - 1) / 99
   pcall(function() ApplyTheme(themeName) end)
+  -- Restore transparency slider visual
+  pcall(function() if _setTransSlider then _setTransSlider(transpPct) end end)
   -- Gem level (langsung)
   _gemMaxLevelState = gemLv
   _swSelectAllState = swSelAll
@@ -11950,6 +11999,7 @@ do
    -- Main logic
    pcall(function() if autoHide  and STATE then STATE.autoHideReward = true; DoAutoHideReward(true) end end)
    pcall(function() if disAnim   and STATE then STATE.disableAnim = true; DoDisableAllAnimations(true) end end)
+   pcall(function() if hideReroll and _setHideRerollToggle then _setHideRerollToggle(true) end end)
    pcall(function() if sellHero  and _setSellHeroToggle  then _setSellHeroToggle(true)  end end)
    pcall(function() if sellWeapon and _autoSellWeaponSet then _autoSellWeaponSet(true)  end end)
    pcall(function() if decompGem and _autoDecompGemSet   then _autoDecompGemSet(true)   end end)
@@ -11966,8 +12016,7 @@ do
     if char then local hum = char:FindFirstChildOfClass("Humanoid"); if hum then hum.WalkSpeed = spd end end
    end)
    pcall(function() if noClip  and _setNoClipToggle  then _setNoClipToggle(true)  end end)
-   pcall(function() if antiAfk and _setAntiAfkToggle then _setAntiAfkToggle(true) end end)
-   -- Automation Raid
+   pcall(function() if antiAfk and _setAntiAfkToggle then _setAntiAfkToggle(true) end end)   -- Automation Raid
    if raidBlock ~= "" and _RAID_LoadConfig then pcall(function() _RAID_LoadConfig(raidBlock) end) end
   end)
 
@@ -12973,12 +13022,13 @@ do
     local p = NewPanel("theme")
     SectionHeader(p, "Theme Selection", 1)
     
-    SliderRow(p, "UI Transparency", 1, 100, 42, function(v)
+    local _, _setTransSliderLocal = SliderRow(p, "UI Transparency", 1, 100, 42, function(v)
         _G.ThemeTransparency = (v - 1) / 99
         if not _G.PotatoMode then
             TweenService:Create(Window, TweenInfo.new(0.3), {BackgroundTransparency = _G.ThemeTransparency}):Play()
         end
     end)
+    _setTransSlider = _setTransSliderLocal
     
     SectionHeader(p, "Color Palettes (30 Themes)", 10)
     

@@ -9719,9 +9719,9 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
         -- ── Kondisi A: musuh habis tapi belum di-TP server (fallback) ──
         if alive == 0 and _everSawEnemy then
             if onStatus then onStatus("[..] Musuh habis, tunggu server TP keluar...") end
-            -- Tunggu server TP max 10 detik
+            -- Tunggu server TP max 2 detik
             local _waitOut = 0
-            while _waitOut < 10 and SIEGE.running do
+            while _waitOut < 2 and SIEGE.running do
                 task.wait(0.3); _waitOut = _waitOut + 0.3
                 if isBackAtBase() then
                     if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end

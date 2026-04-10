@@ -9912,6 +9912,11 @@ StartSiegeLoop = function()
             end
 
             SIEGE.inMap = true
+            SiegeStatus("[S] "..d.name.." - Masuk map, standby 2s...", Color3.fromRGB(255,200,60))
+            if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
+            task.wait(2)  -- jeda 2 detik setelah benar-benar masuk map sebelum serang
+            if not SIEGE.running then SIEGE.inMap = false; break end
+
             SiegeStatus("[S] "..d.name.." - Attack!", Color3.fromRGB(80,220,80))
             if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(80,220,80) end
 

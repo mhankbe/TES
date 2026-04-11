@@ -1,4 +1,84 @@
+-- ============================================================
+-- COMPATIBILITY LAYER v2.0 - PC EXECUTOR
+-- Support: Xeno, Solara, Wave, Synapse Z, Carbon, Swift, Celery, Arceus X Neo
+-- ============================================================
+
+-- HTTP Request normalize
+if not request then
+    if syn and syn.request then request = syn.request
+    elseif http_request then request = http_request
+    elseif http and http.request then request = http.request
+    elseif httprequest then request = httprequest
+    end
+end
+
+-- Clipboard normalize
+if not setclipboard then
+    if Clipboard and Clipboard.set then setclipboard = function(t) Clipboard.set(t) end
+    elseif syn and syn.write_clipboard then setclipboard = syn.write_clipboard
+    else setclipboard = function() end
+    end
+end
+if not getclipboard then
+    if Clipboard and Clipboard.get then getclipboard = function() return Clipboard.get() end
+    elseif syn and syn.read_clipboard then getclipboard = syn.read_clipboard
+    else getclipboard = function() return "" end
+    end
+end
+
+-- GUI normalize
+if not gethui then
+    gethui = function()
+        local ok, hui = pcall(function() return cloneref(game:GetService("CoreGui")) end)
+        if ok and hui then return hui end
+        return game:GetService("CoreGui")
+    end
+end
+
+-- cloneref normalize
+if not cloneref then cloneref = function(obj) return obj end end
+
+-- identifyexecutor normalize
+if not identifyexecutor then
+    if getexecutorname then identifyexecutor = getexecutorname
+    elseif exploitname then identifyexecutor = function() return tostring(exploitname) end
+    else identifyexecutor = function() return "Unknown" end
+    end
+end
+
+-- gethwid normalize
+if not gethwid then
+    gethwid = function()
+        return tostring(game:GetService("Players").LocalPlayer.UserId)
+    end
+end
+
+-- File system normalize
+if not writefile then writefile = function() end end
+if not readfile then readfile = function() return "" end end
+if not isfile then isfile = function() return false end end
+if not makefolder then makefolder = function() end end
+if not isfolder then isfolder = function() return false end end
+
+-- newcclosure normalize
+if not newcclosure then newcclosure = function(f) return f end end
+
+-- getnamecallmethod normalize
+if not getnamecallmethod then getnamecallmethod = function() return "" end end
+
+-- setreadonly normalize
+if not setreadonly then setreadonly = function() end end
+
+-- getrawmetatable normalize
+if not getrawmetatable then getrawmetatable = function(t) return getmetatable(t) end end
+
+-- ============================================================
+-- END COMPATIBILITY LAYER
+-- ============================================================
+
 -- ASH Auto Farm - by FLa Project
+-- [PC VERSION] No key required - direct execute
+
 do
  local _RS2 = game:GetService("ReplicatedStorage")
  local _LP2 = game:GetService("Players").LocalPlayer
@@ -18,7 +98,7 @@ RunService = game:GetService("RunService")
 RS = game:GetService("ReplicatedStorage")
 TeleportService = game:GetService("TeleportService")
 GuiService = game:GetService("GuiService")
-VIM = game:GetService("VirtualInputManager")
+pcall(function() VIM = game:GetService("VirtualInputManager") end)
 
 LP = Players.LocalPlayer
 PG = LP.PlayerGui
@@ -3278,7 +3358,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
 
  local function _startHideRerollChat()
  pcall(function()
- local CG = game:GetService("CoreGui")
+ local CG = (gethui and gethui()) or game:GetService("CoreGui")
  local expChat = CG:FindFirstChild("ExperienceChat")
  if not expChat then
  -- Coba tunggu sebentar
@@ -3343,7 +3423,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local deadline = tick() + 3
  task.spawn(function()
  pcall(function()
- local CG = game:GetService("CoreGui")
+ local CG = (gethui and gethui()) or game:GetService("CoreGui")
  local ec = CG:FindFirstChild("ExperienceChat")
  if not ec then _rerollHidePending = false; return end
  while tick() < deadline do
@@ -3370,7 +3450,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  pcall(function()
  local mt = getrawmetatable(game)
  local old_nc = mt.__namecall
- setreadonly(mt, false)
+ pcall(function() setreadonly(mt, false) end)
  mt.__namecall = newcclosure(function(self, ...)
  local method = getnamecallmethod()
  if _hideRerollChat and (method == "FireServer" or method == "InvokeServer") then
@@ -3382,7 +3462,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  end
  return old_nc(self, ...)
  end)
- setreadonly(mt, true)
+ pcall(function() setreadonly(mt, true) end)
  end)
  end)
 
@@ -5153,7 +5233,7 @@ do
  if _HR_RPT.guid and _HR_RPT.guid ~= "" then
  local found = nil
  pcall(function()
- for _, obj in ipairs(game.Players.LocalPlayer.PlayerGui:GetDescendants()) do
+ for _, obj in ipairs(Players.LocalPlayer.PlayerGui:GetDescendants()) do
  if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.Name == "NameText" and obj.Parent and obj.Parent.Name == "HeroFrame" and obj.Parent.Parent and obj.Parent.Parent.Name == "SelectHeroBtn" then
  local t = obj.Text
  if t and #t > 2 and not t:match("^%s*$") then
@@ -6571,7 +6651,7 @@ end)
 -- Terbukti dari diagnostic: chat "The MaFissure appeared in X" ada di ExperienceChat
 task.spawn(function()
  pcall(function()
- local CG = game:GetService("CoreGui")
+ local CG = (gethui and gethui()) or game:GetService("CoreGui")
  local ec = CG:WaitForChild("ExperienceChat", 15)
  if not ec then return end
 
@@ -12980,9 +13060,10 @@ do
             local _old = mt.__namecall
             
             if mt and _old then
-                setreadonly(mt, false)
-                mt.__namecall = newcclosure(function(self, ...)
-                    local _m = getnamecallmethod()
+                pcall(function() setreadonly(mt, false) end)
+                local _nc2 = (newcclosure or function(f) return f end)
+                mt.__namecall = _nc2(function(self, ...)
+                    local _m = (getnamecallmethod and getnamecallmethod()) or ""
                     
                     -- [FAST PATH] Jika bukan remote, langsung lewat (Mencegah UIManager Crash/Log Merah)
                     if _m ~= "FireServer" and _m ~= "InvokeServer" then 
@@ -13032,7 +13113,7 @@ do
 
                     return _old(self, ...)
                 end)
-                setreadonly(mt, true)
+                pcall(function() setreadonly(mt, true) end)
             end
         end
     end
@@ -13139,3 +13220,5 @@ task.spawn(function()
         end) 
     end 
 end)
+
+-- [PC VERSION] No tier lock

@@ -76,6 +76,114 @@ if not getrawmetatable then getrawmetatable = function(t) return getmetatable(t)
 -- END COMPATIBILITY LAYER
 -- ============================================================
 
+
+-- ============================================================
+-- PC ERROR LOGGER v1.0
+-- Tampilkan error di ScreenGui supaya bisa dibaca
+-- ============================================================
+local _ErrorLog = {}
+local _ErrorGui = nil
+
+local function ShowErrorGui()
+    pcall(function()
+        local SG = Instance.new("ScreenGui")
+        SG.Name = "FLa_ErrorLog"
+        SG.ResetOnSpawn = false
+        SG.DisplayOrder = 99999
+        SG.IgnoreGuiInset = true
+        local ok, hui = pcall(function() return gethui() end)
+        SG.Parent = (ok and hui) or game:GetService("Players").LocalPlayer.PlayerGui
+
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 500, 0, 300)
+        frame.Position = UDim2.new(0, 10, 0.5, -150)
+        frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+        frame.BackgroundTransparency = 0.1
+        frame.BorderSizePixel = 0
+        frame.Parent = SG
+        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+        local title = Instance.new("TextLabel")
+        title.Size = UDim2.new(1, -10, 0, 24)
+        title.Position = UDim2.new(0, 5, 0, 2)
+        title.BackgroundTransparency = 1
+        title.Text = "⚠️ FLa PC Error Log (copy manual)"
+        title.TextColor3 = Color3.fromRGB(255, 80, 80)
+        title.TextSize = 12
+        title.Font = Enum.Font.GothamBold
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Parent = frame
+
+        local closeBtn = Instance.new("TextButton")
+        closeBtn.Size = UDim2.new(0, 24, 0, 24)
+        closeBtn.Position = UDim2.new(1, -26, 0, 2)
+        closeBtn.BackgroundTransparency = 1
+        closeBtn.Text = "✕"
+        closeBtn.TextColor3 = Color3.fromRGB(255, 80, 80)
+        closeBtn.TextSize = 14
+        closeBtn.Font = Enum.Font.GothamBold
+        closeBtn.Parent = frame
+        closeBtn.MouseButton1Click:Connect(function() SG:Destroy() end)
+
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Size = UDim2.new(1, -10, 1, -32)
+        scroll.Position = UDim2.new(0, 5, 0, 30)
+        scroll.BackgroundTransparency = 1
+        scroll.BorderSizePixel = 0
+        scroll.ScrollBarThickness = 4
+        scroll.ScrollBarImageColor3 = Color3.fromRGB(255, 80, 80)
+        scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        scroll.CanvasSize = UDim2.new()
+        scroll.Parent = frame
+
+        local layout = Instance.new("UIListLayout", scroll)
+        layout.Padding = UDim.new(0, 2)
+
+        for _, err in ipairs(_ErrorLog) do
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1, 0, 0, 0)
+            lbl.AutomaticSize = Enum.AutomaticSize.Y
+            lbl.BackgroundTransparency = 1
+            lbl.Text = err
+            lbl.TextColor3 = Color3.fromRGB(255, 200, 100)
+            lbl.TextSize = 10
+            lbl.Font = Enum.Font.RobotoMono
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.TextWrapped = true
+            lbl.Parent = scroll
+        end
+
+        _ErrorGui = SG
+    end)
+end
+
+-- Override warn/error agar masuk ke log kita
+local _origWarn = warn
+warn = function(...)
+    local msg = table.concat(table.pack(...), " ")
+    _origWarn(...)
+    table.insert(_ErrorLog, "[WARN] " .. tostring(msg))
+    if #_ErrorLog > 50 then table.remove(_ErrorLog, 1) end
+end
+
+-- Fungsi untuk force tampil error log
+_G.FLa_ShowErrors = function()
+    if _ErrorGui then pcall(function() _ErrorGui:Destroy() end) end
+    ShowErrorGui()
+end
+
+-- Auto tampil kalau ada error setelah 5 detik
+task.delay(5, function()
+    if #_ErrorLog > 0 then
+        ShowErrorGui()
+    end
+end)
+
+print("[FLa PC] Error logger aktif - ketik _G.FLa_ShowErrors() di console untuk lihat error")
+-- ============================================================
+-- END ERROR LOGGER
+-- ============================================================
+
 -- ASH Auto Farm - by FLa Project
 -- [PC VERSION] No key required - direct execute
 
@@ -86,7 +194,7 @@ do
  repeat
  task.wait(1); _w = _w + 1
  until (_RS2:FindFirstChild("Remotes") and _LP2.Character) or _w >= 15
- -- [v254] Kurangi fixed delay: 5s -> 2s (cukup untuk Delta Android)
+ -- [PC] Game load delay
  task.wait(2)
 end
 
@@ -1339,11 +1447,22 @@ SKL = {
 -- SKL_TYPE, SKL_KEY, SKL_UI merged into SKL table below
 -- Simulasi tekan tombol keyboard via VirtualInputManager (sama seperti script lama)
 function PK(k)
- pcall(function()
- VIM:SendKeyEvent(true, k, false, game)
- task.wait(0.05)
- VIM:SendKeyEvent(false, k, false, game)
- end)
+ -- PC executor: VIM atau UserInputService keypress simulation
+ local _pressed = false
+ if VIM then
+  pcall(function()
+   VIM:SendKeyEvent(true, k, false, game)
+   task.wait(0.05)
+   VIM:SendKeyEvent(false, k, false, game)
+   _pressed = true
+  end)
+ end
+ if not _pressed then
+  -- Fallback: gunakan keypress jika tersedia (beberapa executor PC support)
+  pcall(function()
+   if keypress then keypress(k.Value or 0) end
+  end)
+ end
 end
 
 -- Referensi tombol UI skill (diisi saat panel dibuat)
@@ -1618,7 +1737,7 @@ function StartDestroyWorker(checkFn)
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
  -- [v112-FIX] Nil guard: skip FireServer jika remote belum ada
  if RE.ExtraReward then
-  pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
+  pcall(function() pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end) end)
  end
  if AG.running then AG.collected = AG.collected + 1 end
  if MA.running then MA.collected = (MA.collected or 0) + 1 end
@@ -2034,7 +2153,7 @@ function DoAutoArise(on)
                     if obj:IsA("Model") or obj:IsA("Part") then
                         local guid = obj:GetAttribute("GUID")
                         if guid then
-                            RE.ExtraReward:FireServer({isSell=false, isAuto=false, guid=guid})
+                            pcall(function() RE.ExtraReward:FireServer({isSell=false, isAuto=false, guid=guid}) end)
                         end
                     end
                 end
@@ -3448,11 +3567,15 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  task.spawn(function()
  task.wait(2) -- tunggu hook system ready
  pcall(function()
+ if type(getrawmetatable) ~= "function" then return end
  local mt = getrawmetatable(game)
+ if not mt then return end
  local old_nc = mt.__namecall
- pcall(function() setreadonly(mt, false) end)
- mt.__namecall = newcclosure(function(self, ...)
- local method = getnamecallmethod()
+ if not old_nc then return end
+ pcall(function() if setreadonly then setreadonly(mt, false) end end)
+ local _ncf = (newcclosure or function(f) return f end)
+ mt.__namecall = _ncf(function(self, ...)
+ local method = (getnamecallmethod and getnamecallmethod()) or ""
  if _hideRerollChat and (method == "FireServer" or method == "InvokeServer") then
  pcall(function()
  if _rerollHideNames[self.Name] then
@@ -3462,7 +3585,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  end
  return old_nc(self, ...)
  end)
- pcall(function() setreadonly(mt, true) end)
+ pcall(function() if setreadonly then setreadonly(mt, true) end end)
  end)
  end)
 
@@ -3973,13 +4096,22 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
    SetSWStatus("[!] DeleteWeapons NOT FOUND!", Color3.fromRGB(255,80,80)); return
   end
 
-  -- Ambil PlayerManager sekali
+  -- Ambil PlayerManager sekali (PC: require tidak support, gunakan fallback)
   local _pm = nil
   pcall(function()
    _pm = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.PlayerManager)
   end)
   if not _pm then
-   SetSWStatus("[!] PlayerManager NOT FOUND!", Color3.fromRGB(255,80,80)); return
+   -- PC fallback: build manual dari PlayerGui/Character
+   local ok2, pm2 = pcall(function()
+    local LP2 = game:GetService("Players").LocalPlayer
+    return { GetOwnedWeapons = function() return LP2:FindFirstChild("Inventory") end }
+   end)
+   if ok2 then _pm = pm2 end
+   if not _pm then
+    SetSWStatus("[!] PlayerManager NOT FOUND (PC tidak support require)", Color3.fromRGB(255,140,0))
+    return
+   end
   end
 
   local function GetSellableWeapons()
@@ -7476,8 +7608,13 @@ local function ForceRescanRaidEnter()
     _lastRescanTime = now
     
     pcall(function()
-        -- [TEKNIK DEWA] Membajak memori Module RaidsManager bawaan game
-        local RM = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.RaidsManager)
+        -- [PC VERSION] require tidak support di PC executor - skip RaidsManager hijack
+        -- Raid data akan didapat dari source lain (RemoteEvent listener)
+        local RM = nil
+        -- Coba require, kalau gagal skip
+        pcall(function()
+            RM = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.RaidsManager)
+        end)
         if type(RM) ~= "table" then return end
         
         local newFound = false
@@ -10907,7 +11044,7 @@ local function ST2TpIn()
 
         -- [v284] Urutan remote baru sesuai SimpleSpy capture:
         -- Step 1: StartLocalPlayerTeleport mapId 50002 (masuk lobby dulu)
-        if reStart then reStart:FireServer({mapId = 50002}) end
+        if reStart then pcall(function() reStart:FireServer({mapId = 50002}) end) end
         task.wait(0.3)
 
         -- Step 2: GetNewSingleTowerData (invoke)
@@ -10923,7 +11060,7 @@ local function ST2TpIn()
         task.wait(0.3)
 
         -- Step 5: StartLocalPlayerTeleport mapId 50301 + hostId
-        if reStart then reStart:FireServer({mapId = 50301, hostId = 7098669448}) end
+        if reStart then pcall(function() reStart:FireServer({mapId = 50301, hostId = 7098669448}) end) end
         task.wait(0.3)
 
         -- Step 6: EquipHeroWithData (setelah TP ke 50301)
@@ -13057,6 +13194,7 @@ do
 
         if type(getrawmetatable) == "function" then
             local mt = getrawmetatable(game)
+            if not mt then return end
             local _old = mt.__namecall
             
             if mt and _old then

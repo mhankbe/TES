@@ -648,6 +648,58 @@ function BuildTopBar()
  local BtnMax = MkWinBtn(WIN_W - 52, C.WIN_MAX, "+")
  local BtnClose = MkWinBtn(WIN_W - 26, C.WIN_CLOSE, "x")
 
+ -- [PC] Tombol ! untuk lihat error log
+ local BtnErr = MkWinBtn(WIN_W - 108, Color3.fromRGB(180, 40, 40), "!")
+ BtnErr.MouseButton1Click:Connect(function()
+  pcall(function()
+   local old = ScreenGui:FindFirstChild("FLa_ErrBox")
+   if old then old:Destroy(); return end
+   local box = Instance.new("Frame")
+   box.Name = "FLa_ErrBox"
+   box.Size = UDim2.new(0, WIN_W - 20, 0, 220)
+   box.Position = UDim2.new(0, 10, 0, 50)
+   box.BackgroundColor3 = Color3.fromRGB(12, 8, 8)
+   box.BackgroundTransparency = 0.05
+   box.BorderSizePixel = 0
+   box.ZIndex = 200
+   box.Parent = ScreenGui
+   Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+   local sk = Instance.new("UIStroke", box)
+   sk.Color = Color3.fromRGB(200, 40, 40); sk.Thickness = 1.5
+   local ttl = Instance.new("TextLabel", box)
+   ttl.Size = UDim2.new(1,-30,0,22); ttl.Position = UDim2.new(0,8,0,4)
+   ttl.BackgroundTransparency = 1
+   ttl.Text = "⚠️ Error Log (" .. #_ErrorLog .. " errors)"
+   ttl.TextColor3 = Color3.fromRGB(255,80,80); ttl.TextSize = 11
+   ttl.Font = Enum.Font.GothamBold
+   ttl.TextXAlignment = Enum.TextXAlignment.Left; ttl.ZIndex = 201
+   local cx = Instance.new("TextButton", box)
+   cx.Size = UDim2.new(0,22,0,22); cx.Position = UDim2.new(1,-24,0,2)
+   cx.BackgroundTransparency = 1; cx.Text = "x"
+   cx.TextColor3 = Color3.fromRGB(255,80,80); cx.TextSize = 13
+   cx.Font = Enum.Font.GothamBold; cx.ZIndex = 202
+   cx.MouseButton1Click:Connect(function() box:Destroy() end)
+   local sc = Instance.new("ScrollingFrame", box)
+   sc.Size = UDim2.new(1,-8,1,-30); sc.Position = UDim2.new(0,4,0,28)
+   sc.BackgroundTransparency = 1; sc.BorderSizePixel = 0
+   sc.ScrollBarThickness = 3
+   sc.AutomaticCanvasSize = Enum.AutomaticSize.Y
+   sc.CanvasSize = UDim2.new(); sc.ZIndex = 201
+   Instance.new("UIListLayout", sc).Padding = UDim.new(0,2)
+   local errs = #_ErrorLog == 0 and {"✅ Tidak ada error!"} or _ErrorLog
+   for i2 = #errs, math.max(1, #errs-40), -1 do
+    local lb = Instance.new("TextLabel", sc)
+    lb.Size = UDim2.new(1,0,0,0); lb.AutomaticSize = Enum.AutomaticSize.Y
+    lb.BackgroundTransparency = 1
+    lb.Text = i2 .. ". " .. tostring(errs[i2])
+    lb.TextColor3 = #_ErrorLog==0 and Color3.fromRGB(80,220,80) or Color3.fromRGB(255,190,80)
+    lb.TextSize = 10; lb.Font = Enum.Font.RobotoMono
+    lb.TextXAlignment = Enum.TextXAlignment.Left
+    lb.TextWrapped = true; lb.ZIndex = 202
+   end
+  end)
+ end)
+
  -- Drag Window
  local dragging, dragStart, startPos = false, nil, nil
  TopBar.InputBegan:Connect(function(i)

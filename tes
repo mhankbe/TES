@@ -172,14 +172,18 @@ _G.FLa_ShowErrors = function()
     ShowErrorGui()
 end
 
--- Auto tampil kalau ada error setelah 5 detik
-task.delay(5, function()
-    if #_ErrorLog > 0 then
-        ShowErrorGui()
+-- Auto tampil kalau ada error (cek tiap 3 detik, 5x)
+task.spawn(function()
+    for _i = 1, 5 do
+        task.wait(3)
+        if #_ErrorLog > 0 then
+            ShowErrorGui()
+            break
+        end
     end
 end)
 
-print("[FLa PC] Error logger aktif - ketik _G.FLa_ShowErrors() di console untuk lihat error")
+print("[FLa PC] Error logger aktif!")
 -- ============================================================
 -- END ERROR LOGGER
 -- ============================================================

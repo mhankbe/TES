@@ -1,26 +1,4 @@
 -- ASH Auto Farm - by FLa Project
--- ============================================================
--- TIER GUARD: Script tidak akan jalan sebelum key diverify
--- _G.FLa_Tier diset oleh Cobru_FLA_FINAL.lua setelah verify
--- ============================================================
-do
- -- Reset tier dulu untuk pastikan tidak ada nilai lama
- -- _G.FLa_Verified harus diset oleh Cobru_FLA_FINAL SETELAH verify berhasil
- -- Kalau tidak ada = bypass attempt = STOP
- local _waitVerify = 0
- while not _G.FLa_Verified and _waitVerify < 30 do
-  task.wait(1); _waitVerify = _waitVerify + 1
- end
- if not _G.FLa_Verified then
-  warn("[FLa ASH] Script tidak bisa dijalankan tanpa key yang valid!")
-  return
- end
- -- Double check tier juga harus ada
- if not _G.FLa_Tier then
-  _G.FLa_Tier = "free"
- end
-end
-
 do
  local _RS2 = game:GetService("ReplicatedStorage")
  local _LP2 = game:GetService("Players").LocalPlayer
@@ -978,6 +956,7 @@ function SectionHeader(panel, title, order)
 end
 
 function ToggleRow(panel, title, desc, order, onToggle)
+ -- desc tidak ditampilkan (V139: clean toggle, nama fitur saja)
  local row = Frame(panel, C.SURFACE, UDim2.new(1,0,0,44))
  row.LayoutOrder = order or 1; Corner(row, 10); Stroke(row, C.BORD, 1.5, 0.88)
  local lbl = Label(row, title, 13, C.TXT, Enum.Font.GothamBold)
@@ -989,21 +968,17 @@ function ToggleRow(panel, title, desc, order, onToggle)
  knob.AnchorPoint = Vector2.new(0, 0.5)
  knob.Position = UDim2.new(0,3,0.5,0); Corner(knob, 12)
  local state = false
- local function SetVisual(v)
-  -- Update pill visual ONLY, tanpa trigger onToggle
-  state = v
-  TweenService:Create(pill, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundColor3 = v and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {
-   Position = v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3 = v and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
- end
  local function SetState(v)
-  SetVisual(v)
-  if onToggle then onToggle(v) end
+ state = v
+ TweenService:Create(pill, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundColor3 = v and C.PILL_ON or C.PILL_OFF}):Play()
+ TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {
+ Position = v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+ BackgroundColor3 = v and C.KNOB_ON or C.KNOB_OFF,
+ }):Play()
+ if onToggle then onToggle(v) end
  end
  pill.MouseButton1Click:Connect(function() SetState(not state) end)
- return row, SetState, SetVisual
+ return row, SetState
 end
 
 function SliderRow(panel, title, min, max, default, onMove)
@@ -1052,16 +1027,7 @@ function SliderRow(panel, title, min, max, default, onMove)
             Update(input)
         end
     end)
-    -- SetValue: restore slider ke nilai tertentu tanpa input event
-    local function SetValue(val)
-        val = math.clamp(val, min, max)
-        local pos = (val - min) / (max - min)
-        knob.Position = UDim2.new(pos, 0, 0.5, 0)
-        fill.Size = UDim2.new(pos, 0, 1, 0)
-        valLbl.Text = tostring(val)
-        if onMove then onMove(val) end
-    end
-    return row, SetValue
+    return row
 end
 
 -- ============================================================
@@ -1152,30 +1118,6 @@ _setUseToggle       = nil  -- AutoRoll: Use Potion
 _setPotatoToggle    = nil  -- Settings: Potato Mode
 _webhookModeSetIdx  = nil  -- Settings: webhook mode setter
 _webhookUrlBox      = nil  -- Settings: urlBox reference untuk restore text
--- Visual-only setters (update pill tanpa trigger logic — untuk restore UI saat load config)
-_visAutoHide    = nil  -- Main: Auto Hide Reward visual
-_visDisableAnim = nil  -- Main: Disable Anim visual
-_visSellHero    = nil  -- Main: Sell Hero visual
-_visRandomAtk   = nil  -- Farm: Random Attack visual
-_visMassAtk     = nil  -- Attack: Mass Attack visual
-_visNoClip      = nil  -- Player: No Clip visual
-_visAntiAfk     = nil  -- Player: Anti AFK visual
-_visMerge       = nil  -- AutoRoll: Merge Potion visual
-_visUse         = nil  -- AutoRoll: Use Potion visual
-_visSiege       = nil  -- Automation: Siege visual
-_visDungeon     = nil  -- Automation: Dungeon visual
-_visST2         = nil  -- Automation: ST2 visual
-_visPotato      = nil  -- Settings: Potato Mode visual
-_visWeaponSell  = nil  -- Main: Auto Sell Weapon visual (manual pill)
-_visDecompGem   = nil  -- Main: Auto Decomp Gem visual (manual pill)
-_setTransSlider = nil  -- Theme: UI Transparency slider setter
-_visWebhookToggle = nil  -- Settings: Webhook toggle visual
-_setWebhookToggle = nil  -- Settings: Webhook toggle logic
-_visHideReroll  = nil  -- Main: Hide Reroll Chat visual (manual pill)
-_hideRerollState= false -- tracking _hideRerollChat state
-_setSpeedSlider = nil  -- Player: WalkSpeed slider setter
-_setGemLevelSlider = nil -- Main: Gem Level slider setter
-_setHideRerollToggle = nil -- Main: Hide Reroll Chat setter
 
 -- ============================================================
 -- [v252] MODE DISPATCHER - Single source of truth
@@ -3051,29 +2993,26 @@ end
  end)
 
 --  [NEW] Toggle Auto Hide Reward
- local _autoHideRow, _autoHideSet, _autoHideVis = ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup item", 1, function(on)
+ local _autoHideRow, _autoHideSet = ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup item", 1, function(on)
      DoAutoHideReward(on)
  end)
  _setAutoHideToggle = _autoHideSet
- _visAutoHide = _autoHideVis
  _autoHideRow.Name = "ZZZ_AutoHide" -- Trik aman! Memaksa posisinya di bawah Count RYB (LayoutOrder 1) tanpa merusak/menggeser LayoutOrder tombol lain.
 
  -- Toggle UI untuk Disable All Animations & Damage Text
-local _animRow, _animSet, _animVis = ToggleRow(p, "DISABLE ALL ANIMATIONS", "Matikan animasi hero & teks damage (Anti-Lag)", 2, function(on)
+local _animRow, _animSet = ToggleRow(p, "DISABLE ALL ANIMATIONS", "Matikan animasi hero & teks damage (Anti-Lag)", 2, function(on)
     DoDisableAllAnimations(on)
 end)
 _setAnimToggle = _animSet
-_visDisableAnim = _animVis
 _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berantakan
 
  --  Toggle Auto Sell (DI BAWAH counter) 
- local _sellToggleRow, _sellToggleSet, _sellVis = ToggleRow(p,"AUTO SELL HERO EQUIP","Auto sell all items (except Locked)",4,function(on)
+ local _sellToggleRow, _sellToggleSet = ToggleRow(p,"AUTO SELL HERO EQUIP","Auto sell all items (except Locked)",4,function(on)
  _autoSellOn = on
  _autoSellOnState = on
  if _sellToggleCb then _sellToggleCb(on) end
  end)
  _setSellHeroToggle = _sellToggleSet
- _visSellHero = _sellVis
 
  --  Status bar 
  local function SetSellStatus(msg, col)
@@ -3420,35 +3359,18 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
 
  hrPill.MouseButton1Click:Connect(function()
  _hideRerollChat = not _hideRerollChat
- _hideRerollState = _hideRerollChat
  local on = _hideRerollChat
  TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
  TweenService:Create(hrKnob, TweenInfo.new(0.16), {
  Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
  BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
  }):Play()
- if on then _startHideRerollChat() else _stopHideRerollChat() end
+ if on then
+ _startHideRerollChat()
+ else
+ _stopHideRerollChat()
+ end
  end)
- -- Visual-only setter untuk Hide Reroll Chat
- _visHideReroll = function(v)
-  _hideRerollState = v
-  TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = v and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(hrKnob, TweenInfo.new(0.16), {
-   Position = v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3 = v and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
- end
- -- Logic setter untuk Hide Reroll Chat
- _setHideRerollToggle = function(v)
-  if v == _hideRerollChat then return end
-  _hideRerollChat = v; _hideRerollState = v
-  TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = v and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(hrKnob, TweenInfo.new(0.16), {
-   Position = v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3 = v and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
-  if v then _startHideRerollChat() else _stopHideRerollChat() end
- end
 
  -- 
  -- 
@@ -4012,16 +3934,8 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
    SetSWStatus("Idle - ".._swSoldCount.." SOLD", C.TXT3)
   end
  end
- -- Visual-only untuk weapon sell (update pill tanpa logic)
- _visWeaponSell = function(v)
-  _autoSellWeaponState = v
-  TweenService:Create(swPill,TweenInfo.new(0.16),{BackgroundColor3=v and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(swKnob,TweenInfo.new(0.16),{
-   Position=v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3=v and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
- end
  -- Track selectAll state untuk config
+ local _swOrigSelectAll = _swSelectAll
  _swSelectAllState = _swSelectAll
 
 
@@ -4135,14 +4049,13 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local function SetDGLevel(lv)
  lv = math.clamp(lv, 1, 150)
  _gemMaxLevel = lv
- _gemMaxLevelState = lv
+ _gemMaxLevelState = lv  -- track untuk global config
  local pct = (lv-1)/149
  dgSliderVal.Text = "Lv 1 - "..lv
  TweenService:Create(dgFill,TweenInfo.new(0.1),{Size=UDim2.new(pct,0,1,0)}):Play()
  TweenService:Create(dgThumb,TweenInfo.new(0.1),{Position=UDim2.new(pct,0,0.5,0)}):Play()
  end
  SetDGLevel(9)
- _setGemLevelSlider = SetDGLevel  -- expose ke global config
 
  dgMinus.MouseButton1Click:Connect(function() SetDGLevel(_gemMaxLevel - 1) end)
  dgPlus.MouseButton1Click:Connect(function() SetDGLevel(_gemMaxLevel + 1) end)
@@ -4337,15 +4250,6 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
    if _autoDecompGemThread then pcall(function() task.cancel(_autoDecompGemThread) end) end
    SetDGStatus("Idle - STOPPED", C.TXT3)
   end
- end
- -- Visual-only untuk gem decomp
- _visDecompGem = function(v)
-  _autoDecompGemState = v
-  TweenService:Create(dgPill,TweenInfo.new(0.16),{BackgroundColor3=v and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(dgKnob,TweenInfo.new(0.16),{
-   Position=v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3=v and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
  end
 
 end
@@ -4575,12 +4479,11 @@ do
  end
 
  -- GUI
- local _, SetRA, SetRAVis = ToggleRow(p, "Random Attack", "Attack Enemy", 1, function(on)
+ local _, SetRA = ToggleRow(p, "Random Attack", "Attack Enemy", 1, function(on)
  _raRunningState = on
  if on then StartRA() else StopRA() end
  end)
  _setRAToggle = SetRA
- _visRandomAtk = SetRAVis
 
  local raKillLbl = Label(p, "Kill: 0", 10, C.DIM, Enum.Font.GothamBold)
  raKillLbl.Size = UDim2.new(1,0,0,14); raKillLbl.LayoutOrder = 2
@@ -4936,11 +4839,10 @@ do
  end)
  end
 
- local _maToggleRow, _setMaToggle, _maToglVis = ToggleRow(p,"Mass Attack","Serang semua musuh di map sekaligus",6,function(on)
+ local _maToggleRow, _setMaToggle = ToggleRow(p,"Mass Attack","Serang semua musuh di map sekaligus",6,function(on)
     DoMassAttack(on)
   end)
  _setMaToggleGlobal = _setMaToggle
- _visMassAtk = _maToglVis
 
 end
 
@@ -5009,15 +4911,11 @@ do
  local isDragging=false
  function SetSpeed(relX)
  local frac=math.clamp(relX,0,1); local spd=math.floor(frac*160)
- _walkSpeedState = spd
+ _walkSpeedState = spd  -- track untuk global config
  wsValLbl.Text=spd.." ("..math.floor(spd/16*100).."%)"
  sliderFill.Size=UDim2.new(frac,0,1,0); sliderKnob.Position=UDim2.new(frac,-7,0.5,-7)
  local char=LP.Character
  if char then local hum=char:FindFirstChild("Humanoid"); if hum then hum.WalkSpeed=spd end end
- end
- -- Expose setter berdasarkan speed value (bukan fraction)
- _setSpeedSlider = function(spd)
-  SetSpeed(math.clamp(spd, 0, 160) / 160)
  end
  sliderTrack.InputBegan:Connect(function(i)
  if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
@@ -5034,7 +4932,7 @@ do
  end)
 
  do
-  local _r, _s, _v = ToggleRow(p,"No Clip","Tembus tembok & objek apapun selama aktif",2,function(on)
+  local _r, _s = ToggleRow(p,"No Clip","Tembus tembok & objek apapun selama aktif",2,function(on)
    STATE.noClip=on
    if _noClipConn then _noClipConn:Disconnect(); _noClipConn=nil end
    if on then
@@ -5057,11 +4955,10 @@ do
    RefreshStatus()
   end)
   _setNoClipToggle = _s
-  _visNoClip = _v
  end
 
  do
-  local _r, _s, _v = ToggleRow(p,"Anti AFK","Mencegah kick sistem idle 15 menit",4,function(on)
+  local _r, _s = ToggleRow(p,"Anti AFK","Mencegah kick sistem idle 15 menit",4,function(on)
   STATE.antiAfk=on
   if _antiAfkThread then pcall(function() task.cancel(_antiAfkThread) end); _antiAfkThread=nil end
   if on then
@@ -5130,7 +5027,6 @@ do
   RefreshStatus()
   end)
   _setAntiAfkToggle = _s
-  _visAntiAfk = _v
  end
  SectionHeader(p,"OTHER",10)
  local rejoinCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,50))
@@ -6155,7 +6051,7 @@ do
  mSliderWrap.LayoutOrder = 1; mSliderWrap.Size = UDim2.new(1,0,0,32)
 
  -- Toggle ON/OFF
- local _, _mergeToggleSet, _mergeVis = ToggleRow(mergeInner,"Merge Potion","ON = START merge",3,function(on)
+ local _, _mergeToggleSet = ToggleRow(mergeInner,"Merge Potion","ON = START merge",3,function(on)
  if on then
  if not _mergeSelectedId then
  if _mergeStatusLbl then _mergeStatusLbl.Text = "[!] SELECT ITEM PLEASE!" end
@@ -6188,7 +6084,6 @@ do
  end
  end)
  _setMergeToggle = _mergeToggleSet
- _visMerge = _mergeVis
 
  mergeHeader.MouseButton1Click:Connect(function()
  mergeOpen = not mergeOpen; mergeBody.Visible = mergeOpen
@@ -6280,7 +6175,7 @@ do
  uSliderWrap.LayoutOrder = 1; uSliderWrap.Size = UDim2.new(1,0,0,32)
 
  -- Toggle ON/OFF
- local _, _useToggleSet, _useVis = ToggleRow(useInner,"Use Potion","ON = start use potion",3,function(on)
+ local _, _useToggleSet = ToggleRow(useInner,"Use Potion","ON = start use potion",3,function(on)
  if on then
  if not _useSelectedId then
  if _useStatusLbl then _useStatusLbl.Text = "[!] SELECT ITEM PLEASE!" end
@@ -6312,7 +6207,6 @@ do
  end
  end)
  _setUseToggle = _useToggleSet
- _visUse = _useVis
 
  useHeader.MouseButton1Click:Connect(function()
  useOpen = not useOpen; useBody.Visible = useOpen
@@ -9741,9 +9635,9 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
         -- ── Kondisi A: musuh habis tapi belum di-TP server (fallback) ──
         if alive == 0 and _everSawEnemy then
             if onStatus then onStatus("[..] Musuh habis, tunggu server TP keluar...") end
-            -- Tunggu server TP max 2 detik
+            -- Tunggu server TP max 10 detik
             local _waitOut = 0
-            while _waitOut < 2 and SIEGE.running do
+            while _waitOut < 10 and SIEGE.running do
                 task.wait(0.3); _waitOut = _waitOut + 0.3
                 if isBackAtBase() then
                     if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
@@ -9934,11 +9828,6 @@ StartSiegeLoop = function()
             end
 
             SIEGE.inMap = true
-            SiegeStatus("[S] "..d.name.." - Masuk map, standby 2s...", Color3.fromRGB(255,200,60))
-            if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
-            task.wait(2)  -- jeda 2 detik setelah benar-benar masuk map sebelum serang
-            if not SIEGE.running then SIEGE.inMap = false; break end
-
             SiegeStatus("[S] "..d.name.." - Attack!", Color3.fromRGB(80,220,80))
             if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(80,220,80) end
 
@@ -10027,12 +9916,11 @@ do
 
  -- Toggle utama - capture SetState (pill+knob visual) ke global _setSiegeToggle
  do
-  local _row, _set, _vis = ToggleRow(p,"Auto Siege","ON = Waiting Enter SIEGE",1,function(on)
+  local _row, _set = ToggleRow(p,"Auto Siege","ON = Waiting Enter SIEGE",1,function(on)
    _siegeToggleState = on
    if on then StartSiegeLoop() else StopSiege() end
   end)
   _setSiegeToggle = _set
-  _visSiege = _vis
  end
 
  -- [v273] EXCLUDE MAP: Semua map masuk by default, user pilih map yg di-skip
@@ -10721,7 +10609,7 @@ do
 
  -- Toggle utama - capture SetState (pill+knob visual) ke global _setDungeonToggle
  do
-  local _row, _set, _vis = ToggleRow(p2,"Auto Dungeon","PRIORITY",2,function(on)
+  local _row, _set = ToggleRow(p2,"Auto Dungeon","PRIORITY",2,function(on)
    _dungeonToggleState = on
    if on then
     StartDungeonLoop()
@@ -10732,7 +10620,6 @@ do
    end
   end)
   _setDungeonToggle = _set
-  _visDungeon = _vis
  end
 
  -- Counter row
@@ -11177,10 +11064,9 @@ do
     ST2.statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
 
     -- Toggle ON/OFF
-    local _st2ToggleRow, _setST2Toggle, _st2Vis = ToggleRow(inner,"Auto Single Tower Map 2","ON = ENTER",1,function(on)
+    local _st2ToggleRow, _setST2Toggle = ToggleRow(inner,"Auto Single Tower Map 2","ON = ENTER",1,function(on)
         if on then StartST2Loop() else StopST2() end
     end)
-    _visST2 = _st2Vis
 
     -- Wave dropdown
     local ddCard = Frame(inner, C.SURFACE, UDim2.new(1,0,0,0))
@@ -11729,7 +11615,7 @@ do
   end
   local jsonStr = string.format(
    '{'..
-   '"main":{"autoHide":%s,"disableAnim":%s,"hideReroll":%s,"sellHero":%s,"sellWeapon":%s,"swSelectAll":%s,"decompGem":%s,"gemMaxLevel":%d,"mergePotion":%s,"usePotion":%s},'..
+   '"main":{"autoHide":%s,"disableAnim":%s,"sellHero":%s,"sellWeapon":%s,"swSelectAll":%s,"decompGem":%s,"gemMaxLevel":%d,"mergePotion":%s,"usePotion":%s},'..
    '"farm":{"randomAttack":%s},'..
    '"attack":{"massAttack":%s,"killTargetIdx":%d,"delayIdx":%d,"maMaps":"%s"},'..
    '"player":{"noClip":%s,"antiAfk":%s,"walkSpeed":%d},'..
@@ -11740,7 +11626,6 @@ do
    -- main
    STATE.autoHideReward and "true" or "false",
    STATE.disableAnim and "true" or "false",
-   _hideRerollState and "true" or "false",
    _autoSellOnState and "true" or "false",
    _autoSellWeaponState and "true" or "false",
    _swSelectAllState and "true" or "false",
@@ -11797,11 +11682,9 @@ do
   -- Main
   pcall(function() if _setAutoHideToggle then _setAutoHideToggle(false) end end)
   pcall(function() if _setAnimToggle then _setAnimToggle(false) end end)
-  pcall(function() if _setHideRerollToggle then _setHideRerollToggle(false) end end)
   pcall(function() if _setSellHeroToggle then _setSellHeroToggle(false) end end)
   pcall(function() if _autoSellWeaponSet then _autoSellWeaponSet(false) end end)
   pcall(function() if _autoDecompGemSet then _autoDecompGemSet(false) end end)
-  pcall(function() if _setGemLevelSlider then _setGemLevelSlider(9) end end)
   -- Farm
   pcall(function() if _setRAToggle then _setRAToggle(false) end end)
   -- Attack
@@ -11812,8 +11695,7 @@ do
    for mn = 1, 19 do _maMapSelState[mn] = nil; MR.selected[mn] = nil end
   end
   pcall(UpdateMapDDLbl)
-  -- Player (reset speed ke 16)
-  pcall(function() if _setSpeedSlider then _setSpeedSlider(16) end end)
+  -- Player
   pcall(function() if _setNoClipToggle then _setNoClipToggle(false) end end)
   pcall(function() if _setAntiAfkToggle then _setAntiAfkToggle(false) end end)
   -- AutoRoll
@@ -11852,11 +11734,9 @@ do
   pcall(function()
    if _webhookUrlBox then _webhookUrlBox.Text = "" end
    if _webhookModeSetIdx then _webhookModeSetIdx(3) end
-   if _visWebhookToggle then _visWebhookToggle(false) end
   end)
   -- Theme: reset ke default
   pcall(function() ApplyTheme("Solo Leveling") end)
-  pcall(function() if _setTransSlider then _setTransSlider(43) end end)  -- default 42% transparency
   -- Hapus file
   pcall(function() if isfile(GLOBAL_CFG_FILE) then delfile(GLOBAL_CFG_FILE) end end)
   -- Hapus juga file Automation config lama
@@ -11865,203 +11745,204 @@ do
 
  local function GlobalLoadConfig()
   local ok, content = pcall(function() return readfile(GLOBAL_CFG_FILE) end)
-  if not ok or not content or content == "" then return end
+  if not ok or not content or content == "" then
+   -- Fallback: coba load file Automation lama jika ada
+   local ok2, c2 = pcall(function() return readfile("FLa_Automation_Config.json") end)
+   if ok2 and c2 and c2 ~= "" then
+    -- Load Automation config lama saja (Raid+Siege+Dungeon)
+    pcall(function()
+     local raidBlock = c2:match('"raid":%s*(%b{})') or ""
+     if raidBlock ~= "" and _RAID_LoadConfig then _RAID_LoadConfig(raidBlock) end
+     local siegeBlock = c2:match('"siege":%s*(%b{})') or ""
+     if siegeBlock ~= "" then
+      local siegeOn = siegeBlock:match('"siegeOn":(%a+)') == "true"
+      if siegeOn then task.delay(3, function() pcall(function() if _setSiegeToggle then _setSiegeToggle(true) end end) end) end
+     end
+     local dungeonBlock = c2:match('"dungeon":%s*(%b{})') or ""
+     if dungeonBlock ~= "" then
+      local dungeonOn = dungeonBlock:match('"dungeonOn":(%a+)') == "true"
+      if dungeonOn then task.delay(3, function() pcall(function() if _setDungeonToggle then _setDungeonToggle(true) end end) end) end
+     end
+    end)
+   end
+   return
+  end
 
-  -- ══════════════════════════════════════════════════════
-  -- FASE 1: Parse semua data dulu
-  -- ══════════════════════════════════════════════════════
-  local mainBlock     = content:match('"main":%s*(%b{})') or ""
-  local farmBlock     = content:match('"farm":%s*(%b{})') or ""
-  local atkBlock      = content:match('"attack":%s*(%b{})') or ""
-  local playerBlock   = content:match('"player":%s*(%b{})') or ""
-  local autoBlock     = content:match('"automation":%s*(%b{})') or ""
-  local settingsBlock = content:match('"settings":%s*(%b{})') or ""
-  local themeBlock    = content:match('"theme":%s*(%b{})') or ""
-
-  -- Parse main
-  local autoHide, disAnim, hideReroll, sellHero, sellWeapon, swSelAll, decompGem, gemLv, mergeOn, useOn =
-   false, false, false, false, false, true, false, 9, false, false
+  -- ── Main ────────────────────────────────────────────────────────
+  local mainBlock = content:match('"main":%s*(%b{})') or ""
   if mainBlock ~= "" then
-   autoHide   = mainBlock:match('"autoHide":(%a+)') == "true"
-   disAnim    = mainBlock:match('"disableAnim":(%a+)') == "true"
-   hideReroll = mainBlock:match('"hideReroll":(%a+)') == "true"
-   sellHero   = mainBlock:match('"sellHero":(%a+)') == "true"
-   sellWeapon = mainBlock:match('"sellWeapon":(%a+)') == "true"
-   swSelAll   = mainBlock:match('"swSelectAll":(%a+)') ~= "false"
-   decompGem  = mainBlock:match('"decompGem":(%a+)') == "true"
-   gemLv      = tonumber(mainBlock:match('"gemMaxLevel":(%d+)')) or 9
-   mergeOn    = mainBlock:match('"mergePotion":(%a+)') == "true"
-   useOn      = mainBlock:match('"usePotion":(%a+)') == "true"
-  end
-
-  -- Parse farm
-  local raOn = farmBlock ~= "" and farmBlock:match('"randomAttack":(%a+)') == "true"
-
-  -- Parse attack
-  local maOn, killIdx, delayIdx, maMaps = false, 1, 2, ""
-  if atkBlock ~= "" then
-   maOn     = atkBlock:match('"massAttack":(%a+)') == "true"
-   killIdx  = tonumber(atkBlock:match('"killTargetIdx":(%d+)')) or 1
-   delayIdx = tonumber(atkBlock:match('"delayIdx":(%d+)')) or 2
-   maMaps   = atkBlock:match('"maMaps":"([^"]*)"') or ""
-  end
-
-  -- Parse player
-  local noClip, antiAfk, spd = false, false, 16
-  if playerBlock ~= "" then
-   noClip  = playerBlock:match('"noClip":(%a+)') == "true"
-   antiAfk = playerBlock:match('"antiAfk":(%a+)') == "true"
-   spd     = tonumber(playerBlock:match('"walkSpeed":(%d+)')) or 16
-  end
-
-  -- Parse automation
-  local raidBlock, siegeBlock, dungeonBlock, st2On = "", "", "", false
-  local siegeOn, siegeExStr, dungeonOn = false, "", false
-  if autoBlock ~= "" then
-   raidBlock   = autoBlock:match('"raid":%s*(%b{})') or ""
-   siegeBlock  = autoBlock:match('"siege":%s*(%b{})') or ""
-   dungeonBlock= autoBlock:match('"dungeon":%s*(%b{})') or ""
-   st2On       = autoBlock:match('"st2On":(%a+)') == "true"
-   if siegeBlock ~= "" then
-    siegeOn    = siegeBlock:match('"siegeOn":(%a+)') == "true"
-    siegeExStr = siegeBlock:match('"excludeMaps":"([^"]*)"') or ""
-   end
-   if dungeonBlock ~= "" then
-    dungeonOn  = dungeonBlock:match('"dungeonOn":(%a+)') == "true"
-   end
-  end
-
-  -- Parse settings
-  local potatoOn, whEnabled, whUrl, whModeIdx = false, false, "", 3
-  if settingsBlock ~= "" then
-   potatoOn  = settingsBlock:match('"potatoMode":(%a+)') == "true"
-   whEnabled = settingsBlock:match('"webhookEnabled":(%a+)') == "true"
-   whUrl     = settingsBlock:match('"webhookUrl":"([^"]*)"') or ""
-   whModeIdx = tonumber(settingsBlock:match('"webhookModeIdx":(%d+)')) or 3
-  end
-
-  -- Parse theme
-  local themeName, transpPct = "Solo Leveling", 43
-  if themeBlock ~= "" then
-   themeName  = themeBlock:match('"name":"([^"]*)"') or "Solo Leveling"
-   transpPct  = tonumber(themeBlock:match('"transparency":(%d+)')) or 43
-  end
-
-  -- ══════════════════════════════════════════════════════
-  -- FASE 2: Restore VISUAL langsung (tanpa delay)
-  -- Semua pill/toggle langsung ON sesuai config
-  -- ══════════════════════════════════════════════════════
-  -- Main toggles
-  pcall(function() if _visAutoHide    then _visAutoHide(autoHide)     end end)
-  pcall(function() if _visDisableAnim then _visDisableAnim(disAnim)   end end)
-  pcall(function() if _visHideReroll  then _visHideReroll(hideReroll); _hideRerollState = hideReroll end end)
-  pcall(function() if _visSellHero    then _visSellHero(sellHero);    _autoSellOnState = sellHero     end end)
-  pcall(function() if _visWeaponSell  then _visWeaponSell(sellWeapon); _autoSellWeaponState = sellWeapon end end)
-  pcall(function() if _visDecompGem   then _visDecompGem(decompGem);  _autoDecompGemState = decompGem  end end)
-  pcall(function() if _setGemLevelSlider then _setGemLevelSlider(gemLv) end end)
-  -- Farm
-  pcall(function() if _visRandomAtk   then _visRandomAtk(raOn);       _raRunningState = raOn           end end)
-  -- Attack
-  pcall(function() if _visMassAtk     then _visMassAtk(maOn)          end end)
-  pcall(function() if _setKillDDGlobal  then _setKillDDGlobal(killIdx)  end end)
-  pcall(function() if _setDelayDDGlobal then _setDelayDDGlobal(delayIdx) end end)  -- Restore map selection Attack
-  if _maMapSelState then
-   for mn = 1, 19 do _maMapSelState[mn] = nil; MR.selected[mn] = nil end
-   if maMaps ~= "" then
-    for mn in maMaps:gmatch("(%d+)") do
-     local n = tonumber(mn); if n and n>=1 and n<=19 then _maMapSelState[n]=true; MR.selected[n]=true end
-    end
-   end
-  end
-  pcall(UpdateMapDDLbl)
-  -- Player
-  pcall(function() if _visNoClip  then _visNoClip(noClip)   end end)
-  pcall(function() if _visAntiAfk then _visAntiAfk(antiAfk) end end)
-  -- WalkSpeed slider — restore visual langsung
-  pcall(function() if _setSpeedSlider then _setSpeedSlider(spd) end end)
-  -- Automation
-  pcall(function() if _visSiege   then _visSiege(siegeOn);   _siegeToggleState = siegeOn   end end)
-  pcall(function() if _visDungeon then _visDungeon(dungeonOn); _dungeonToggleState = dungeonOn end end)
-  pcall(function() if _visST2     then _visST2(st2On)        end end)
-  -- Siege exclude maps UI
-  if SIEGE.excludeMaps then
-   for _, mn in ipairs(SIEGE_MAP_NUMS) do SIEGE.excludeMaps[mn] = false end
-   if siegeExStr ~= "" then
-    for mn in siegeExStr:gmatch("(%d+)") do
-     local n = tonumber(mn); if n then SIEGE.excludeMaps[n] = true end
-    end
-   end
-  end
-  pcall(function()
-   if _siegeItemRefs then
-    for _, mn in ipairs(SIEGE_MAP_NUMS) do
-     local excl = SIEGE.excludeMaps and SIEGE.excludeMaps[mn]
-     local r = _siegeItemRefs[mn]; if not r then continue end
-     r.chkMark.Text = excl and "x" or ""
-     r.badge.BackgroundColor3 = excl and Color3.fromRGB(60,20,20) or Color3.fromRGB(20,60,30)
-     r.badgeLbl.Text = excl and "SKIP" or "ENTER"
-     r.badgeLbl.TextColor3 = excl and Color3.fromRGB(255,120,60) or C.GRN
-     r.rowLbl.TextColor3 = excl and C.DIM or C.TXT
-     TweenService:Create(r.row, TweenInfo.new(0.12), {BackgroundColor3 = excl and Color3.fromRGB(50,20,20) or C.SURFACE}):Play()
-    end
-   end
-  end)
-  pcall(function() if _updateSiegeDdLabel then _updateSiegeDdLabel() end end)
-  -- Settings
-  pcall(function() if _visPotato then _visPotato(potatoOn) end end)
-  _webhookUrl = whUrl
-  pcall(function() if _webhookUrlBox    then _webhookUrlBox.Text = whUrl end end)
-  pcall(function() if _webhookModeSetIdx then _webhookModeSetIdx(whModeIdx) end end)
-  _webhookEnabled = whEnabled
-  -- Restore visual webhook toggle langsung
-  pcall(function() if _visWebhookToggle then _visWebhookToggle(whEnabled) end end)
-  -- Theme (langsung)
-  _G.ThemeTransparency = (transpPct - 1) / 99
-  pcall(function() ApplyTheme(themeName) end)
-  -- Restore transparency slider visual
-  pcall(function() if _setTransSlider then _setTransSlider(transpPct) end end)
-  -- Gem level (langsung)
-  _gemMaxLevelState = gemLv
-  _swSelectAllState = swSelAll
-
-  -- ══════════════════════════════════════════════════════
-  -- FASE 3: Jalankan LOGIC (dengan delay biar game siap)
-  -- ══════════════════════════════════════════════════════
-  task.delay(2, function()
-   -- Main logic
-   pcall(function() if autoHide  and STATE then STATE.autoHideReward = true; DoAutoHideReward(true) end end)
-   pcall(function() if disAnim   and STATE then STATE.disableAnim = true; DoDisableAllAnimations(true) end end)
-   pcall(function() if hideReroll and _setHideRerollToggle then _setHideRerollToggle(true) end end)
-   pcall(function() if sellHero  and _setSellHeroToggle  then _setSellHeroToggle(true)  end end)
-   pcall(function() if sellWeapon and _autoSellWeaponSet then _autoSellWeaponSet(true)  end end)
-   pcall(function() if decompGem and _autoDecompGemSet   then _autoDecompGemSet(true)   end end)
-   pcall(function() if mergeOn   and _setMergeToggle     then _setMergeToggle(true)     end end)
-   pcall(function() if useOn     and _setUseToggle       then _setUseToggle(true)       end end)
-   -- Farm
-   pcall(function() if raOn and _setRAToggle then _setRAToggle(true) end end)
-   -- Attack
-   pcall(function() if maOn and _setMaToggleGlobal then _setMaToggleGlobal(true) end end)
-   -- Player
-   pcall(function()
-    _walkSpeedState = spd
-    local char = LP.Character
-    if char then local hum = char:FindFirstChildOfClass("Humanoid"); if hum then hum.WalkSpeed = spd end end
+   local autoHide  = mainBlock:match('"autoHide":(%a+)') == "true"
+   local disAnim   = mainBlock:match('"disableAnim":(%a+)') == "true"
+   local sellHero  = mainBlock:match('"sellHero":(%a+)') == "true"
+   local sellWeapon= mainBlock:match('"sellWeapon":(%a+)') == "true"
+   local swSelAll  = mainBlock:match('"swSelectAll":(%a+)') ~= "false"
+   local decompGem = mainBlock:match('"decompGem":(%a+)') == "true"
+   local gemLv     = tonumber(mainBlock:match('"gemMaxLevel":(%d+)')) or 9
+   local mergeOn   = mainBlock:match('"mergePotion":(%a+)') == "true"
+   local useOn     = mainBlock:match('"usePotion":(%a+)') == "true"
+   task.delay(1.5, function()
+    pcall(function() if autoHide  and _setAutoHideToggle  then _setAutoHideToggle(true)  end end)
+    pcall(function() if disAnim   and _setAnimToggle       then _setAnimToggle(true)       end end)
+    pcall(function() if sellHero  and _setSellHeroToggle   then _setSellHeroToggle(true)   end end)
+    pcall(function() if sellWeapon and _autoSellWeaponSet  then _autoSellWeaponSet(true)   end end)
+    pcall(function() _swSelectAllState = swSelAll end)
+    pcall(function() if _autoDecompGemSet then
+     -- Restore gem level dulu
+     if _gemMaxLevelState ~= gemLv then
+      -- Cari SetDGLevel via callback — sudah di-update langsung lewat _gemMaxLevelState
+      _gemMaxLevelState = gemLv
+      -- Panggil SetDGLevel tidak bisa dari sini karena local, tapi _gemMaxLevel di dalam closure
+      -- Solusi: update dgSliderVal langsung tidak bisa. Cukup set value, visual akan update saat user buka
+     end
+     if decompGem then _autoDecompGemSet(true) end
+    end end)
+    pcall(function() if mergeOn and _setMergeToggle then _setMergeToggle(true) end end)
+    pcall(function() if useOn   and _setUseToggle   then _setUseToggle(true)   end end)
    end)
-   pcall(function() if noClip  and _setNoClipToggle  then _setNoClipToggle(true)  end end)
-   pcall(function() if antiAfk and _setAntiAfkToggle then _setAntiAfkToggle(true) end end)   -- Automation Raid
-   if raidBlock ~= "" and _RAID_LoadConfig then pcall(function() _RAID_LoadConfig(raidBlock) end) end
-  end)
+  end
 
-  task.delay(4, function()
-   -- Automation Siege/Dungeon/ST2 (butuh game connection)
-   pcall(function() if siegeOn  and _setSiegeToggle  then _setSiegeToggle(true)  end end)
-   pcall(function() if dungeonOn and _setDungeonToggle then _setDungeonToggle(true) end end)
-   pcall(function() if st2On    and _setST2Toggle     then _setST2Toggle(true)    end end)
-   -- Potato mode (butuh VFX cleanup)
-   pcall(function() if potatoOn and _setPotatoToggle then _setPotatoToggle(true) end end)
-   -- Webhook enable (flush pending setelah URL terisi)
-   pcall(function() if whEnabled and _setWebhookToggle then _setWebhookToggle(true) end end)
-  end)
+  -- ── Farm ─────────────────────────────────────────────────────────
+  local farmBlock = content:match('"farm":%s*(%b{})') or ""
+  if farmBlock ~= "" then
+   local raOn = farmBlock:match('"randomAttack":(%a+)') == "true"
+   task.delay(1.5, function()
+    pcall(function() if raOn and _setRAToggle then _setRAToggle(true) end end)
+   end)
+  end
+
+  -- ── Attack ───────────────────────────────────────────────────────
+  local atkBlock = content:match('"attack":%s*(%b{})') or ""
+  if atkBlock ~= "" then
+   local maOn     = atkBlock:match('"massAttack":(%a+)') == "true"
+   local killIdx  = tonumber(atkBlock:match('"killTargetIdx":(%d+)')) or 1
+   local delayIdx = tonumber(atkBlock:match('"delayIdx":(%d+)')) or 2
+   local maMaps   = atkBlock:match('"maMaps":"([^"]*)"') or ""
+   -- Restore map selection
+   if _maMapSelState then
+    for mn = 1, 19 do _maMapSelState[mn] = nil; MR.selected[mn] = nil end
+    if maMaps ~= "" then
+     for mn in maMaps:gmatch("(%d+)") do
+      local n = tonumber(mn)
+      if n and n >= 1 and n <= 19 then _maMapSelState[n] = true; MR.selected[n] = true end
+     end
+    end
+   end
+   pcall(UpdateMapDDLbl)
+   pcall(function() if _setKillDDGlobal then _setKillDDGlobal(killIdx) end end)
+   pcall(function() if _setDelayDDGlobal then _setDelayDDGlobal(delayIdx) end end)
+   task.delay(2, function()
+    pcall(function() if maOn and _setMaToggleGlobal then _setMaToggleGlobal(true) end end)
+   end)
+  end
+
+  -- ── Player ───────────────────────────────────────────────────────
+  local playerBlock = content:match('"player":%s*(%b{})') or ""
+  if playerBlock ~= "" then
+   local noClip  = playerBlock:match('"noClip":(%a+)') == "true"
+   local antiAfk = playerBlock:match('"antiAfk":(%a+)') == "true"
+   local spd     = tonumber(playerBlock:match('"walkSpeed":(%d+)')) or 16
+   task.delay(1.5, function()
+    pcall(function() if noClip  and _setNoClipToggle  then _setNoClipToggle(true)  end end)
+    pcall(function() if antiAfk and _setAntiAfkToggle then _setAntiAfkToggle(true) end end)
+    pcall(function()
+     _walkSpeedState = spd
+     local char = LP.Character
+     if char then
+      local hum = char:FindFirstChildOfClass("Humanoid")
+      if hum then hum.WalkSpeed = spd end
+     end
+    end)
+   end)
+  end
+
+  -- ── Automation ───────────────────────────────────────────────────
+  local autoBlock = content:match('"automation":%s*(%b{})') or ""
+  if autoBlock ~= "" then
+   -- Raid
+   local raidBlock = autoBlock:match('"raid":%s*(%b{})') or ""
+   if raidBlock ~= "" and _RAID_LoadConfig then
+    pcall(function() _RAID_LoadConfig(raidBlock) end)
+   end
+   -- Siege
+   local siegeBlock = autoBlock:match('"siege":%s*(%b{})') or ""
+   if siegeBlock ~= "" then
+    local exStr  = siegeBlock:match('"excludeMaps":"([^"]*)"') or ""
+    local siegeOn = siegeBlock:match('"siegeOn":(%a+)') == "true"
+    if SIEGE.excludeMaps then
+     for _, mn in ipairs(SIEGE_MAP_NUMS) do SIEGE.excludeMaps[mn] = false end
+     if exStr ~= "" then
+      for mn in exStr:gmatch("(%d+)") do
+       local n = tonumber(mn)
+       if n and SIEGE.excludeMaps then SIEGE.excludeMaps[n] = true end
+      end
+     end
+    end
+    pcall(function()
+     if _siegeItemRefs then
+      for _, mn in ipairs(SIEGE_MAP_NUMS) do
+       local excl = SIEGE.excludeMaps and SIEGE.excludeMaps[mn]
+       local r = _siegeItemRefs[mn]; if not r then continue end
+       r.chkMark.Text = excl and "x" or ""
+       r.badge.BackgroundColor3 = excl and Color3.fromRGB(60,20,20) or Color3.fromRGB(20,60,30)
+       r.badgeLbl.Text = excl and "SKIP" or "ENTER"
+       r.badgeLbl.TextColor3 = excl and Color3.fromRGB(255,120,60) or C.GRN
+       r.rowLbl.TextColor3 = excl and C.DIM or C.TXT
+       TweenService:Create(r.row, TweenInfo.new(0.12), {BackgroundColor3 = excl and Color3.fromRGB(50,20,20) or C.SURFACE}):Play()
+      end
+     end
+    end)
+    pcall(function() if _updateSiegeDdLabel then _updateSiegeDdLabel() end end)
+    if siegeOn then
+     task.delay(3, function()
+      pcall(function() if _setSiegeToggle then _setSiegeToggle(true) end end)
+     end)
+    end
+   end
+   -- Dungeon
+   local dungeonBlock = autoBlock:match('"dungeon":%s*(%b{})') or ""
+   if dungeonBlock ~= "" then
+    local dungeonOn = dungeonBlock:match('"dungeonOn":(%a+)') == "true"
+    if dungeonOn then
+     task.delay(3, function()
+      pcall(function() if _setDungeonToggle then _setDungeonToggle(true) end end)
+     end)
+    end
+   end
+   -- ST2
+   local st2On = autoBlock:match('"st2On":(%a+)') == "true"
+   if st2On then
+    task.delay(3, function()
+     pcall(function() if _setST2Toggle then _setST2Toggle(true) end end)
+    end)
+   end
+  end
+
+  -- ── Settings ─────────────────────────────────────────────────────
+  local settingsBlock = content:match('"settings":%s*(%b{})') or ""
+  if settingsBlock ~= "" then
+   local potatoOn  = settingsBlock:match('"potatoMode":(%a+)') == "true"
+   local whEnabled = settingsBlock:match('"webhookEnabled":(%a+)') == "true"
+   local whUrl     = settingsBlock:match('"webhookUrl":"([^"]*)"') or ""
+   local whModeIdx = tonumber(settingsBlock:match('"webhookModeIdx":(%d+)')) or 3
+   _webhookUrl = whUrl
+   pcall(function() if _webhookUrlBox then _webhookUrlBox.Text = whUrl end end)
+   pcall(function() if _webhookModeSetIdx then _webhookModeSetIdx(whModeIdx) end end)
+   _webhookEnabled = whEnabled
+   if potatoOn then
+    task.delay(2, function()
+     pcall(function() if _setPotatoToggle then _setPotatoToggle(true) end end)
+    end)
+   end
+  end
+
+  -- ── Theme ─────────────────────────────────────────────────────────
+  local themeBlock = content:match('"theme":%s*(%b{})') or ""
+  if themeBlock ~= "" then
+   local themeName   = themeBlock:match('"name":"([^"]*)"') or "Solo Leveling"
+   local transpPct   = tonumber(themeBlock:match('"transparency":(%d+)')) or 43
+   _G.ThemeTransparency = (transpPct - 1) / 99
+   pcall(function() ApplyTheme(themeName) end)
+  end
  end
 
  -- ── UI: Tombol SAVE CONFIG & RESET CONFIG (Global, paling atas Settings) ──
@@ -12105,7 +11986,7 @@ do
  SectionHeader(p,"UI & Performance",1)
  
  do
-  local _r, _s, _v = ToggleRow(p, "Potato Mode (Anti-Lag)", "Disable all VFX for performance", 2, function(v)
+  local _r, _s = ToggleRow(p, "Potato Mode (Anti-Lag)", "Disable all VFX for performance", 2, function(v)
      _G.PotatoMode = v
      if v then
          CleanupVFX()
@@ -12124,7 +12005,6 @@ do
      end
   end)
   _setPotatoToggle = _s
-  _visPotato = _v
  end
 
  SectionHeader(p,"Raid Notif/Webhook",10)
@@ -12289,31 +12169,10 @@ do
  wRow.BackgroundColor3=on and C.BG2 or C.BG3
  UpdatePlatformLbl()
  if on then
+ -- [v129] Flush pending: reset cooldown + kirim semua data cache yang ada
  if FlushWebhookPending then task.spawn(FlushWebhookPending) end
  end
  end)
- -- Visual-only setter untuk webhook toggle (update pill tanpa trigger logic)
- _visWebhookToggle = function(v)
-  TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=v and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
-  TweenService:Create(wKnob,TweenInfo.new(0.16),{
-   Position=v and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
-  }):Play()
-  wRow.BackgroundColor3=v and C.BG2 or C.BG3
- end
- -- Logic setter untuk webhook toggle
- _setWebhookToggle = function(v)
-  if v == _webhookEnabled then return end
-  _webhookEnabled = v
-  TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=v and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
-  TweenService:Create(wKnob,TweenInfo.new(0.16),{
-   Position=v and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
-  }):Play()
-  wRow.BackgroundColor3=v and C.BG2 or C.BG3
-  pcall(UpdatePlatformLbl)
-  if v and FlushWebhookPending then task.spawn(FlushWebhookPending) end
- end
 
  --  Row: Test Webhook + Verify Link 
  local btnRow = Frame(p, C.BLACK, UDim2.new(1,0,0,36))
@@ -13077,13 +12936,12 @@ do
     local p = NewPanel("theme")
     SectionHeader(p, "Theme Selection", 1)
     
-    local _, _setTransSliderLocal = SliderRow(p, "UI Transparency", 1, 100, 42, function(v)
+    SliderRow(p, "UI Transparency", 1, 100, 42, function(v)
         _G.ThemeTransparency = (v - 1) / 99
         if not _G.PotatoMode then
             TweenService:Create(Window, TweenInfo.new(0.3), {BackgroundTransparency = _G.ThemeTransparency}):Play()
         end
     end)
-    _setTransSlider = _setTransSliderLocal
     
     SectionHeader(p, "Color Palettes (30 Themes)", 10)
     
@@ -13160,153 +13018,4 @@ task.spawn(function()
             end
         end) 
     end 
-end)
-
--- ============================================================
--- TIER LOCK SYSTEM v1.0
--- Dipanggil setelah UI selesai dibuat
--- Overlay gembok di fitur Free-locked
--- TIDAK mengubah logika yang sudah ada
--- ============================================================
-task.defer(function()
-    task.wait(1) -- tunggu UI selesai render
-
-    local tier = tostring(_G.FLa_Tier or "free"):lower()
-    if tier == "premium" then return end -- premium = semua terbuka
-
-    -- ── Helper: buat overlay gembok di atas sebuah frame ──────
-    local function LockFrame(frame, tooltip)
-        if not frame or not frame.Parent then return end
-        pcall(function()
-            -- Overlay transparan yang block klik
-            local overlay = Instance.new("TextButton")
-            overlay.Name = "FLa_LockOverlay"
-            overlay.Size = UDim2.new(1, 0, 1, 0)
-            overlay.Position = UDim2.new(0, 0, 0, 0)
-            overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-            overlay.BackgroundTransparency = 0.45
-            overlay.BorderSizePixel = 0
-            overlay.ZIndex = frame.ZIndex + 10
-            overlay.Text = ""
-            overlay.AutoButtonColor = false
-            overlay.Parent = frame
-            Instance.new("UICorner", overlay).CornerRadius = UDim.new(0, 10)
-
-            -- Icon gembok
-            local lockLbl = Instance.new("TextLabel")
-            lockLbl.Size = UDim2.new(1, 0, 1, 0)
-            lockLbl.BackgroundTransparency = 1
-            lockLbl.Text = "🔒 Premium"
-            lockLbl.TextColor3 = Color3.fromRGB(255, 200, 50)
-            lockLbl.TextSize = 12
-            lockLbl.Font = Enum.Font.GothamBold
-            lockLbl.ZIndex = overlay.ZIndex + 1
-            lockLbl.Parent = overlay
-
-            -- Tooltip saat klik
-            overlay.MouseButton1Click:Connect(function()
-                pcall(function()
-                    local SystemNotify = _G.FLa_SystemNotify
-                    if SystemNotify then
-                        SystemNotify("🔒 Fitur Premium — Get key Premium di Discord!", 3)
-                    end
-                end)
-            end)
-        end)
-    end
-
-    -- ── Helper: cari frame di panel berdasarkan nama label ────
-    local function FindRowByLabel(panel, labelText)
-        if not panel then return nil end
-        for _, child in ipairs(panel:GetDescendants()) do
-            if child:IsA("TextLabel") and child.Text == labelText then
-                -- Naik ke parent frame row
-                local row = child.Parent
-                while row and not row:IsA("Frame") and not row:IsA("TextButton") do
-                    row = row.Parent
-                end
-                if row and row ~= panel then return row end
-            end
-        end
-        return nil
-    end
-
-    local Panels = Panels -- sudah ada di script utama
-
-    -- ── TAB MAIN ──────────────────────────────────────────────
-    local mainPanel = Panels["main"]
-    if mainPanel then
-        -- Auto Sell Hero Equip
-        local r1 = FindRowByLabel(mainPanel, "AUTO SELL HERO EQUIP")
-        if r1 then LockFrame(r1, "Auto Sell Hero Equip") end
-
-        -- Auto Sell Weapon
-        local r2 = FindRowByLabel(mainPanel, "AUTO SELL WEAPON")
-        if r2 then LockFrame(r2, "Auto Sell Weapon") end
-
-        -- Auto Decompose Gems
-        local r3 = FindRowByLabel(mainPanel, "AUTO DECOMPOSE GEMS")
-        if r3 then LockFrame(r3, "Auto Decompose Gems") end
-
-        -- Auto Merge Potion
-        local r4 = FindRowByLabel(mainPanel, "AUTO MERGE POTION")
-        if r4 then LockFrame(r4, "Auto Merge Potion") end
-    end
-
-    -- ── TAB ATTACK ────────────────────────────────────────────
-    local attackPanel = Panels["attack"]
-    if attackPanel then
-        -- Lock semua children di attack panel yang berkaitan Mass Attack
-        -- Cari SectionHeader "MASS ATTACK" dan lock semua frame setelahnya
-        local r5 = FindRowByLabel(attackPanel, "Mass Attack")
-        if r5 then LockFrame(r5, "Mass Attack") end
-        -- Juga lock maCard (status card Mass Attack)
-        for _, child in ipairs(attackPanel:GetChildren()) do
-            if child:IsA("Frame") or child:IsA("TextButton") then
-                local hasMA = false
-                for _, desc in ipairs(child:GetDescendants()) do
-                    if desc:IsA("TextLabel") and (desc.Text == "Mass Attack" or desc.Text == "MASS ATTACK" or desc.Text == "Status") then
-                        hasMA = true; break
-                    end
-                end
-                if hasMA then LockFrame(child, "Mass Attack") end
-            end
-        end
-    end
-
-    -- ── TAB AUTOMATION (autoraid) ─────────────────────────────
-    local raidPanel = Panels["autoraid"]
-    if raidPanel then
-        -- Auto Raid header
-        local r6 = FindRowByLabel(raidPanel, "Auto Raid")
-        if r6 then LockFrame(r6, "Auto Raid") end
-
-        -- Auto Siege
-        local r7 = FindRowByLabel(raidPanel, "Auto Siege")
-        if r7 then LockFrame(r7, "Auto Siege") end
-
-        -- Auto Dungeon
-        local r8 = FindRowByLabel(raidPanel, "Auto Dungeon")
-        if r8 then LockFrame(r8, "Auto Dungeon") end
-
-        -- Auto Single Tower Map 2
-        local r9 = FindRowByLabel(raidPanel, "Auto Single Tower Map 2")
-        if r9 then LockFrame(r9, "Auto Single Tower Map 2") end
-    end
-
-    -- ── TAB AUTOROLL ──────────────────────────────────────────
-    local autorollPanel = Panels["autoroll"]
-    if autorollPanel then
-        -- Hero Fastroll
-        local r10 = FindRowByLabel(autorollPanel, "Hero Fastroll")
-        if r10 then LockFrame(r10, "Hero Fastroll") end
-
-        -- Weapon Fastroll
-        local r11 = FindRowByLabel(autorollPanel, "Weapon Fastroll")
-        if r11 then LockFrame(r11, "Weapon Fastroll") end
-
-        -- Pet Gear Fastroll
-        local r12 = FindRowByLabel(autorollPanel, "Pet Gear Fastroll")
-        if r12 then LockFrame(r12, "Pet Gear Fastroll") end
-    end
 end)

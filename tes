@@ -13147,7 +13147,7 @@ end)
 -- ============================================================
 
 task.defer(function()
-    task.wait(1) -- tunggu UI selesai render
+    task.wait()
 
     -- ── Helper: buat overlay gembok di atas sebuah frame ──────
     local function LockFrame(frame, tooltip)

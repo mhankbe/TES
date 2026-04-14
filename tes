@@ -12592,9 +12592,10 @@ do
  end
  local ok, res = pcall(function()
  _ourCall = true
- -- [FIX v38] Server expects 2 separate args (string, number), NOT a table
- -- Game's QuirkNewPanel:Reroll() calls InvokeServer(heroGuid, drawId)
- local r = RE.RandomHeroQuirk:InvokeServer(_HR_RPT.guid, drawId[si])
+ local r = RE.RandomHeroQuirk:InvokeServer({
+ heroGuid = _HR_RPT.guid,
+ drawId = drawId[si],
+ })
  _ourCall = false
  return r
  end)
@@ -12678,10 +12679,12 @@ do
  local LOOPS_WR = {}
 
  local function StopWeaponLoop(si)
- if LOOPS_WR[si] then
- task.cancel(LOOPS_WR[si])
- LOOPS_WR[si] = nil
- end
+     if LOOPS_WR[si] then
+         if type(LOOPS_WR[si]) == "thread" and coroutine.status(LOOPS_WR[si]) ~= "dead" then
+             pcall(function() task.cancel(LOOPS_WR[si]) end)
+         end
+         LOOPS_WR[si] = nil
+     end
  end
 
  local function StartWeaponSlot(si)
@@ -13138,3 +13141,27 @@ task.spawn(function()
         end) 
     end 
 end)
+-- ============================================================
+-- FIX: HERO FASTROLL PROTOCOL MANAGER BYPASS
+-- ============================================================
+local function GetValidUidString(target)
+    if type(target) == "table" then
+        return target.uid or target.Id or target.id or tostring(target[1])
+    end
+    return tostring(target)
+end
+
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    if not checkcaller() and (method == "InvokeServer" or method == "FireServer") and tostring(self) == "Protocol Manager" then
+        if args[1] == "Reroll" and type(args[2]) == "table" then
+            args[2] = GetValidUidString(args[2])
+            return oldNamecall(self, unpack(args))
+        end
+    end
+    
+    return oldNamecall(self, ...)
+end))

@@ -1799,71 +1799,57 @@ function TpToEnemy(tgt)
 end
 
 function AttackLoop_Goyang(onStatus)
- -- [v186-FIX] SaveOrigin hanya jika Target Musuh (tbnThread) tidak sedang aktif
- -- Jika tbnThread aktif, origin sudah disimpan olehnya -> jangan overwrite
- if not _tgtThread then
- SaveOrigin()
- end
- local currentTgt = nil
- local _tpTimer = 0 -- [v186-FIX] timer untuk TP periodik tiap 0.5s
+    if not _tgtThread then
+        SaveOrigin()
+    end
+    local currentTgt = nil
+    local _tpTimer = 0
 
- -- Mulai: gunakan AG.currentTarget jika Target Musuh sudah set, 
- -- jika tidak pakai musuh terdekat
- -- [v186-FIX] Prioritaskan AG.currentTarget agar sinkron dengan Target Musuh
- local first = AG.currentTarget or GetRandomEnemy()
- if first and not IsDead(first) and first.model.Parent then
- currentTgt = first
- TpToEnemy(currentTgt)
- task.wait(0)
- FireAttack(currentTgt.guid, currentTgt.hrp.Position)
- if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] (random) Kill: "..AG.killed) end
- end
+    local first = AG.currentTarget or GetRandomEnemy()
+    if first and not IsDead(first) and first.model.Parent then
+        currentTgt = first
+        TpToEnemy(currentTgt)
+        task.wait(0)
+        FireAttack(currentTgt.guid, currentTgt.hrp.Position)
+        if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] (random) Kill: "..AG.killed) end
+    end
 
- while AG.running do
- -- [v186-FIX] Jika Target Musuh aktif, selalu ikuti AG.currentTarget
- -- AG.currentTarget di-update oleh tbnThread secara real-time
- if _tgtThread and AG.currentTarget and not IsDead(AG.currentTarget) and AG.currentTarget.model.Parent then
- currentTgt = AG.currentTarget
- end
-end
+    while AG.running do
+        if _tgtThread and AG.currentTarget and not IsDead(AG.currentTarget) and AG.currentTarget.model.Parent then
+            currentTgt = AG.currentTarget
+        end
 
+        if not currentTgt or IsDead(currentTgt) or not currentTgt.model.Parent then
+            local waited = false
+            while AG.running do
+                local nextTgt = (AG.currentTarget and not IsDead(AG.currentTarget) and AG.currentTarget.model.Parent and AG.currentTarget) or GetRandomEnemy()
+                if nextTgt then
+                    currentTgt = nextTgt
+                    TpToEnemy(currentTgt)
+                    task.wait()
+                    FireAttack(currentTgt.guid, currentTgt.hrp.Position)
+                    _tpTimer = 0
+                    if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] Kill: "..AG.killed) end
+                    break
+                else
+                    if onStatus then onStatus("Waiting Enemy Spawn...") end
+                    waited = true
+                    task.wait(0.3)
+                end
+            end
+            if not AG.running then break end
+        end
 
- -- Target mati / habis -> cari berikutnya
- if not currentTgt or IsDead(currentTgt) or not currentTgt.model.Parent then
- local waited = false
- while AG.running do
- -- [v186-FIX] Cek AG.currentTarget dulu sebelum random
- local next = (AG.currentTarget and not IsDead(AG.currentTarget) and AG.currentTarget.model.Parent and AG.currentTarget) or GetRandomEnemy()
- if next then
- currentTgt = next
- TpToEnemy(currentTgt)
- task.wait()
- FireAttack(currentTgt.guid, currentTgt.hrp.Position)
- _tpTimer = 0
- if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] Kill: "..AG.killed) end
- break
- else
- if onStatus then onStatus("Waiting Enemy Spawn...") end
- waited = false
- task.wait(0.3)
- end
- end
- if not AG.running then end
- end
-end
+        if currentTgt and not IsDead(currentTgt) and currentTgt.model.Parent then
+            local pos = currentTgt.hrp and currentTgt.hrp.Position or Vector3.new(1,1,1)
+            FireAttack(currentTgt.guid, pos)
 
-
- -- Serang musuh saat ini
- if currentTgt and not IsDead(currentTgt) and currentTgt.model.Parent then
- local pos = currentTgt.hrp and currentTgt.hrp.Position or Vector3.new(1,1,1)
- FireAttack(currentTgt.guid, pos)
-
- -- [v186-FIX] Hanya ReturnHRPToOrigin jika tbtThread tidak aktif
- -- Jika tbnThread masih jalan, biarkan tbnThread yang urus return origin
- if not _tgtThread then
- ReturnHRPToOrigin()
- end
- return false
+            if not _tgtThread then
+                ReturnHRPToOrigin()
+            end
+        end
+        task.wait(0.05)
+    end
 end
 
 function RunAG(onStatus, onDone)
@@ -3487,12 +3473,12 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
   {180047, "WinterEdge", 4, Color3.fromRGB(255,160,40)},
   {180048, "IcedTomahawk", 5, Color3.fromRGB(255,80,80)},
   {180049, "TheFlute", 5, Color3.fromRGB(255,80,80)},
-  {180050, "Wailing Eye\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180051, "GlareHammer\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180052, "Wailing Eye\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180053, "GlareHammer\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180054, "Wailing Eye\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180055, "GlareHammer\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
+  {180050, "Wailing Eye [1]", 5, Color3.fromRGB(255,80,80)},
+  {180051, "GlareHammer [1]", 5, Color3.fromRGB(255,80,80)},
+  {180052, "Wailing Eye [2]", 5, Color3.fromRGB(255,80,80)},
+  {180053, "GlareHammer [2]", 5, Color3.fromRGB(255,80,80)},
+  {180054, "Wailing Eye [3]", 5, Color3.fromRGB(255,80,80)},
+  {180055, "GlareHammer [3]", 5, Color3.fromRGB(255,80,80)},
   {180056, "InfiniteSword", 1, Color3.fromRGB(200,200,200)},
   {180057, "PeerlessSword", 2, Color3.fromRGB(100,200,255)},
   {180058, "SandSword", 3, Color3.fromRGB(200,100,255)},
@@ -3555,54 +3541,54 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
   {180127, "GoldenLegendary", 5, Color3.fromRGB(255,80,80)},
   {180128, "Glowbone", 5, Color3.fromRGB(255,80,80)},
   {180129, "Divine Purge Claymore", 5, Color3.fromRGB(255,80,80)},
-  {180130, "Ember Blade\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180131, "Ember Blade\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180132, "Ember Blade\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180133, "Ember Blade+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180134, "Ember Blade+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180135, "Ember Blade+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180136, "Skullhorn Staff\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180137, "Skullhorn Staff\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180138, "Skullhorn Staff\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180139, "Skullhorn Staff+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180140, "Skullhorn Staff+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180141, "Skullhorn Staff+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180142, "Violet Briar Dagger\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180143, "Violet Briar Dagger\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180144, "Violet Briar Dagger\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180145, "Violet Briar Dagger+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180146, "Violet Briar Dagger+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180147, "Violet Briar Dagger+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180148, "GlareHammer+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180149, "GlareHammer+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180150, "GlareHammer+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180154, "Wailing Eye+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180155, "Wailing Eye+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180156, "Wailing Eye+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180160, "Stellarmoon Staff\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180161, "Stellarmoon Staff\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180162, "Stellarmoon Staff\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180163, "Stellarmoon Staff+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180164, "Stellarmoon Staff+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180165, "Stellarmoon Staff+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180166, "Crystalcrown Blade\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180167, "Crystalcrown Blade\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180168, "Crystalcrown Blade\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180169, "Crystalcrown Blade+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180170, "Crystalcrown Blade+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180171, "Crystalcrown Blade+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180172, "Redspine Claw\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180173, "Redspine Claw\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180174, "Redspine Claw\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180175, "Redspine Claw+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180176, "Redspine Claw+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180177, "Redspine Claw+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180178, "Purplecrack Blade\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180179, "Purplecrack Blade\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180180, "Purplecrack Blade\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180181, "Purplecrack Blade+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180182, "Purplecrack Blade+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180183, "Purplecrack Blade+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
+  {180130, "Ember Blade [1]", 5, Color3.fromRGB(255,80,80)},
+  {180131, "Ember Blade [2]", 5, Color3.fromRGB(255,80,80)},
+  {180132, "Ember Blade [3]", 5, Color3.fromRGB(255,80,80)},
+  {180133, "Ember Blade+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180134, "Ember Blade+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180135, "Ember Blade+1 [3]", 5, Color3.fromRGB(255,80,80)},
+  {180136, "Skullhorn Staff [1]", 5, Color3.fromRGB(255,80,80)},
+  {180137, "Skullhorn Staff [2]", 5, Color3.fromRGB(255,80,80)},
+  {180138, "Skullhorn Staff [3]", 5, Color3.fromRGB(255,80,80)},
+  {180139, "Skullhorn Staff+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180140, "Skullhorn Staff+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180141, "Skullhorn Staff+1 [3]", 5, Color3.fromRGB(255,80,80)},
+  {180142, "Violet Briar Dagger [1]", 5, Color3.fromRGB(255,80,80)},
+  {180143, "Violet Briar Dagger [2]", 5, Color3.fromRGB(255,80,80)},
+  {180144, "Violet Briar Dagger [3]", 5, Color3.fromRGB(255,80,80)},
+  {180145, "Violet Briar Dagger+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180146, "Violet Briar Dagger+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180147, "Violet Briar Dagger+1 [3]", 5, Color3.fromRGB(255,80,80)},
+  {180148, "GlareHammer+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180149, "GlareHammer+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180150, "GlareHammer+1 [3]", 5, Color3.fromRGB(255,80,80)},
+  {180154, "Wailing Eye+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180155, "Wailing Eye+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180156, "Wailing Eye+1 [3]", 5, Color3.fromRGB(255,80,80)},
+  {180160, "Stellarmoon Staff [1]", 5, Color3.fromRGB(255,80,80)},
+  {180161, "Stellarmoon Staff [2]", 5, Color3.fromRGB(255,80,80)},
+  {180162, "Stellarmoon Staff [3]", 5, Color3.fromRGB(255,80,80)},
+  {180163, "Stellarmoon Staff+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180164, "Stellarmoon Staff+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180165, "Stellarmoon Staff+1 [3]", 5, Color3.fromRGB(255,80,80)},
+  {180166, "Crystalcrown Blade [1]", 5, Color3.fromRGB(255,80,80)},
+  {180167, "Crystalcrown Blade [2]", 5, Color3.fromRGB(255,80,80)},
+  {180168, "Crystalcrown Blade [3]", 5, Color3.fromRGB(255,80,80)},
+  {180169, "Crystalcrown Blade+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180170, "Crystalcrown Blade+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180171, "Crystalcrown Blade+1 [3]", 5, Color3.fromRGB(255,80,80)},
+  {180172, "Redspine Claw [1]", 5, Color3.fromRGB(255,80,80)},
+  {180173, "Redspine Claw [2]", 5, Color3.fromRGB(255,80,80)},
+  {180174, "Redspine Claw [3]", 5, Color3.fromRGB(255,80,80)},
+  {180175, "Redspine Claw+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180176, "Redspine Claw+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180177, "Redspine Claw+1 [3]", 5, Color3.fromRGB(255,80,80)},
+  {180178, "Purplecrack Blade [1]", 5, Color3.fromRGB(255,80,80)},
+  {180179, "Purplecrack Blade [2]", 5, Color3.fromRGB(255,80,80)},
+  {180180, "Purplecrack Blade [3]", 5, Color3.fromRGB(255,80,80)},
+  {180181, "Purplecrack Blade+1 [1]", 5, Color3.fromRGB(255,80,80)},
+  {180182, "Purplecrack Blade+1 [2]", 5, Color3.fromRGB(255,80,80)},
+  {180183, "Purplecrack Blade+1 [3]", 5, Color3.fromRGB(255,80,80)},
   {180184, "Holly Cane Sword", 5, Color3.fromRGB(255,80,80)},
   {180185, "CandyCanes2025", 5, Color3.fromRGB(255,80,80)},
   {180186, "Crimson Heart Katana", 5, Color3.fromRGB(255,80,80)},
@@ -3639,7 +3625,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local swKnob = Frame(swPill, C.KNOB_OFF, UDim2.new(0,24,0,24))
  swKnob.AnchorPoint = Vector2.new(0,0.5); swKnob.Position = UDim2.new(0,3,0.5,0); Corner(swKnob,10)
 
- -- ── Dropdown filter card (LayoutOrder 6) ────────────────────
+-- ── Dropdown filter card (LayoutOrder 6) ────────────────────
  local swDropCard = Frame(p, C.BG3, UDim2.new(1,0,0,0))
  swDropCard.LayoutOrder = 6
  swDropCard.AutomaticSize = Enum.AutomaticSize.Y
@@ -3661,7 +3647,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  swDBtnLbl.Size=UDim2.new(1,-30,1,0); swDBtnLbl.Position=UDim2.new(0,10,0,0)
  swDBtnLbl.TextXAlignment=Enum.TextXAlignment.Left
  swDBtnLbl.TextTruncate=Enum.TextTruncate.AtEnd
- local swDArrow = Label(swDBtn,"▾",13,C.ACC,Enum.Font.GothamBold)
+ local swDArrow = Label(swDBtn,"v",13,C.ACC,Enum.Font.GothamBold)
  swDArrow.Size=UDim2.new(0,22,1,0); swDArrow.Position=UDim2.new(1,-26,0,0)
  swDArrow.TextXAlignment=Enum.TextXAlignment.Center
 
@@ -3903,31 +3889,29 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
   end
 
   local function GetSellableWeapons()
-   local guids = {}
-   pcall(function()
-    local weapons = _pm.localPlayerData and _pm.localPlayerData.weapons
-    if not weapons then return end
-    for guid, data in pairs(weapons) do
-     if data.isLock then continue end
-     if data.isEquip then continue end
-     if data.isBuffer then continue end
-     if data.isFavourite then continue end
-     -- Filter item spesifik kalau bukan Select All
-     if not _swSelectAll and next(_swSelectedIds) then
-      -- itemId dari data vs WEAPON_LIST equipId
-      -- Coba match langsung, atau via offset (Item vs Equip config)
-      local matched = false
-      if data.itemId and _swSelectedIds[data.itemId] then
-       matched = true
-      end
-      -- Fallback: cari di WEAPON_LIST berdasarkan itemId proximity
-      if not matched then continue end
-     end
-     table.insert(guids, guid)
-    end
-   end)
-   return guids
-  end
+    local guids = {}
+    pcall(function()
+        local weapons = _pm.localPlayerData and _pm.localPlayerData.weapons
+        if not weapons then return end
+        for guid, data in pairs(weapons) do
+            local canSell = true
+            if data.isLock or data.isEquip or data.isBuffer or data.isFavourite then 
+                canSell = false 
+            end
+            
+            if canSell and not _swSelectAll and next(_swSelectedIds) then
+                if not (data.itemId and _swSelectedIds[data.itemId]) then
+                    canSell = false
+                end
+            end
+            
+            if canSell then
+                table.insert(guids, guid)
+            end
+        end
+    end)
+    return guids
+end
 
   _swConn = task.spawn(function()
    while _autoSellWeaponOn do
@@ -12535,107 +12519,118 @@ do
  end
 
  local function StartHeroSlot(si)
- StopHeroLoop(si)
- local list = QUIRK_LIST_PER_SLOT[si]
- local targets = _HR_RPT and _HR_RPT.slotTarget and _HR_RPT.slotTarget[si] or {}
- local drawId = {920001, 920002, 920003}
+    StopHeroLoop(si)
 
- -- Update nama hero saat slot 1 mulai
- if si == 1 and _HR_RPT then _HR_RPT.Refresh() end
+    local list = QUIRK_LIST_PER_SLOT[si]
+    local targets = _HR_RPT and _HR_RPT.slotTarget and _HR_RPT.slotTarget[si] or {}
+    local drawId = {920001, 920002, 920003}
 
- local function setSlot(txt, col)
- if _HR_RPT then _HR_RPT.SetSlot(si, txt, col) end
- end
+    -- Update nama hero saat slot 1 mulai
+    if si == 1 and _HR_RPT then _HR_RPT.Refresh() end
 
- setSlot("Memulai...", Color3.fromRGB(255,200,60))
+    local function setSlot(txt, col)
+        if _HR_RPT then _HR_RPT.SetSlot(si, txt, col) end
+    end
 
- LOOPS_HR[si] = task.spawn(function()
- local attempt = 0
- while true do
- -- Cek GUID tersedia
- if not (_HR_RPT and _HR_RPT.guid and _HR_RPT.guid ~= "") then
- setSlot("[..] Klik 1x di Mesin Reroll dulu", Color3.fromRGB(255,150,50))
- task.wait(1); continue
- end
- -- Cek target dipilih - wajib ada sebelum roll
- local hasTarget = false
- for _ in pairs(targets) do hasTarget = true; break end
- if not hasTarget then
- setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- task.wait(1); continue
- end
+    setSlot("Memulai...", Color3.fromRGB(255,200,60))
 
- attempt = attempt + 1
- local tStr = ""
- if hasTarget then
- local names = {}
- for _, q in ipairs(list) do
- if targets[q.id] then table.insert(names, q.name) end
- end
- tStr = table.concat(names, " / ")
- end
- setSlot("Rolling #"..attempt..(tStr~="" and " | "..tStr or ""), Color3.fromRGB(255,200,60))
+    LOOPS_HR[si] = task.spawn(function()
+        local attempt = 0
+        while true do
+            -- Cek GUID tersedia
+            if not (_HR_RPT and _HR_RPT.guid and _HR_RPT.guid ~= "") then
+                setSlot("[..] Klik 1x di Mesin Reroll dulu", Color3.fromRGB(255,150,50))
+                task.wait(1); continue
+            end
 
- -- [v231] FIX: guard heroGuid & drawId sebelum InvokeServer
- -- mencegah server crash "attempt to index nil with drawHeroid"
- if not _HR_RPT or not _HR_RPT.guid or _HR_RPT.guid == "" then
- setSlot("[!] HERO NOT FOUND - WAITING", Color3.fromRGB(255,150,50))
- task.wait(1); continue
- end
- if not drawId[si] or type(drawId[si]) ~= "number" then
- setSlot("[!] invalid"..si, Color3.fromRGB(255,100,60))
- task.wait(1); continue
- end
- if not RE.RandomHeroQuirk then
- setSlot("[!] Remote RandomHeroQuirk nil", Color3.fromRGB(255,80,80))
- task.wait(2); continue
- end
- local ok, res = pcall(function()
- _ourCall = true
- local r = RE.RandomHeroQuirk:InvokeServer({
- heroGuid = _HR_RPT.guid,
- drawId = drawId[si],
- })
- _ourCall = false
- return r
- end)
- if not ok then
- task.wait(1); continue
- end
+            -- Cek target dipilih - wajib ada sebelum roll
+            local hasTarget = false
+            for _ in pairs(targets) do hasTarget = true; break end
+            if not hasTarget then
+                setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
+                task.wait(1); continue
+            end
 
- -- Tangkap hasil quirk
- local gotId = nil
- if type(res) == "table" then
- local PRIO = {"finalResultId","quirkId","resultId","id","Id","result","Result"}
- for _, key in ipairs(PRIO) do
- local v = res[key]
- if type(v) == "number" and QUIRK_MAP[v] then gotId = v; break end
- end
- if not gotId then
- for _, v in pairs(res) do
- if type(v) == "number" and QUIRK_MAP[v] then gotId = v; break end
- end
- end
- end
+            attempt = attempt + 1
+            local tStr = ""
+            if hasTarget then
+                local names = {}
+                for _, q in ipairs(list) do
+                    if targets[q.id] then table.insert(names, q.name) end
+                end
+                tStr = table.concat(names, " / ")
+            end
 
- local gotName = QUIRK_MAP[gotId] or (gotId and "ID:"..gotId or "")
- -- [v103] Hanya stop kalau target dipilih DAN hasil cocok
- local hit = gotId and hasTarget and targets[gotId] == true
+            setSlot("Rolling #"..attempt..(tStr~="" and " | "..tStr or ""), Color3.fromRGB(255,200,60))
 
- if hit then
- setSlot("DONE: "..gotName.." (#"..attempt..")", Color3.fromRGB(80,220,80))
- StopHeroLoop(si)
- -- Cek apakah semua slot sudah selesai
- local allDone = true
- for i = 1, 3 do if LOOPS_HR[i] then allDone = false; break end end
- if allDone and _HR_RPT then _HR_RPT.SetToggleOff() end
- return
- end
+            if not _HR_RPT or not _HR_RPT.guid or _HR_RPT.guid == "" then
+                setSlot("[!] HERO NOT FOUND - WAITING", Color3.fromRGB(255,150,50))
+                task.wait(1); continue
+            end
 
- task.wait(0.05)
- end
- end)
- end
+            if not drawId[si] or type(drawId[si]) ~= "number" then
+                setSlot("[!] invalid"..si, Color3.fromRGB(255,100,60))
+                task.wait(1); continue
+            end
+
+            if not RE.RandomHeroQuirk then
+                setSlot("[!] Remote RandomHeroQuirk nil", Color3.fromRGB(255,80,80))
+                task.wait(2); continue
+            end
+
+            local ok, res = pcall(function()
+                _ourCall = true
+                -- [PERBAIKAN 1] Kirim parameter terpisah (string), BUKAN dalam tabel
+                local r = RE.RandomHeroQuirk:InvokeServer(_HR_RPT.guid, drawId[si])
+                _ourCall = false
+                return r
+            end)
+
+            if not ok then
+                task.wait(1); continue
+            end
+
+            -- Tangkap hasil quirk
+            local gotId = nil
+            if type(res) == "table" then
+                local PRIO = {"finalResultId","quirkId","resultId","id","Id","result","Result"}
+                for _, key in ipairs(PRIO) do
+                    local v = res[key]
+                    if type(v) == "number" and QUIRK_MAP[v] then
+                        gotId = v; break
+                    end
+                end
+                if not gotId then
+                    for _, v in pairs(res) do
+                        if type(v) == "number" and QUIRK_MAP[v] then
+                            gotId = v; break
+                        end
+                    end
+                end
+            end
+            local gotName = QUIRK_MAP[gotId] or (gotId and "ID:"..gotId or "")
+
+            local hit = gotId and hasTarget and targets[gotId] == true
+            if hit then
+                setSlot("DONE: "..gotName.." (#"..attempt..")", Color3.fromRGB(80,220,80))
+                
+                -- [PERBAIKAN 2] Hapus pemanggilan StopHeroLoop(si) agar tidak suicide thread
+                LOOPS_HR[si] = nil
+
+                -- Cek apakah semua slot sudah selesai
+                local allDone = true
+                for i = 1, 3 do
+                    if LOOPS_HR[i] then allDone = false; break end
+                end
+                -- Matikan toggle otomatis
+                if allDone and _HR_RPT then _HR_RPT.SetToggleOff() end
+                return
+            end
+
+            task.wait(0.05)
+        end
+    end)
+end
 
  DoAutoRollHero = function(on)
  for i = 1, 3 do StopHeroLoop(i) end
@@ -12678,96 +12673,100 @@ end
 do
  local LOOPS_WR = {}
 
- local function StopWeaponLoop(si)
- if LOOPS_WR[si] then
- task.cancel(LOOPS_WR[si])
- LOOPS_WR[si] = nil
- end
- end
-
  local function StartWeaponSlot(si)
- StopWeaponLoop(si)
- local list = W_QUIRK_LIST_PER_SLOT[si]
- local targets = _WR_RPT and _WR_RPT.slotTarget and _WR_RPT.slotTarget[si] or {}
- local drawId = {960001, 960002, 960003}
+    StopWeaponLoop(si)
 
- -- Update nama weapon saat slot 1 mulai (cukup sekali)
- if si == 1 and _WR_RPT then _WR_RPT.Refresh() end
+    local list = W_QUIRK_LIST_PER_SLOT[si]
+    local targets = _WR_RPT and _WR_RPT.slotTarget and _WR_RPT.slotTarget[si] or {}
+    local drawId = {960001, 960002, 960003}
 
- local function setSlot(txt, col)
- if _WR_RPT then _WR_RPT.SetSlot(si, txt, col) end
- end
+    -- Update nama weapon saat slot 1 mulai (cukup sekali)
+    if si == 1 and _WR_RPT then _WR_RPT.Refresh() end
 
- setSlot("Memulai...", Color3.fromRGB(255,200,60))
+    local function setSlot(txt, col)
+        if _WR_RPT then _WR_RPT.SetSlot(si, txt, col) end
+    end
 
- LOOPS_WR[si] = task.spawn(function()
- local attempt = 0
- while true do
- if not (_WR_RPT and _WR_RPT.guid and _WR_RPT.guid ~= "") then
- setSlot("[..] Click 1x on Reroll Machine", Color3.fromRGB(255,150,50))
- task.wait(1); continue
- end
- local hasTarget = false
- for _ in pairs(targets) do hasTarget = true; break end
- -- Wajib ada target sebelum roll
- if not hasTarget then
- setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- task.wait(1); continue
- end
+    setSlot("Memulai...", Color3.fromRGB(255,200,60))
 
- attempt = attempt + 1
- local tStr = ""
- if hasTarget then
- local names = {}
- for _, q in ipairs(list) do
- if targets[q.id] then table.insert(names, q.name) end
- end
- tStr = table.concat(names, " / ")
- end
- setSlot("Rolling #"..attempt..(tStr~="" and " | "..tStr or ""), Color3.fromRGB(255,200,60))
+    LOOPS_WR[si] = task.spawn(function()
+        local attempt = 0
+        while true do
+            if not (_WR_RPT and _WR_RPT.guid and _WR_RPT.guid ~= "") then
+                setSlot("[..] Click 1x on Reroll Machine", Color3.fromRGB(255,150,50))
+                task.wait(1); continue
+            end
 
- local ok, res = pcall(function()
- _ourCall = true
- local r = RE.RandomWeaponQuirk:InvokeServer({
- guid = _WR_RPT.guid,
- drawId = drawId[si],
- })
- _ourCall = false
- return r
- end)
- if not ok then task.wait(0.5); continue end
+            local hasTarget = false
+            for _ in pairs(targets) do hasTarget = true; break end
+            -- Wajib ada target sebelum roll
+            if not hasTarget then
+                setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
+                task.wait(1); continue
+            end
 
- local gotId = nil
- if type(res) == "table" then
- local PRIO = {"finalResultId","quirkId","resultId","id","Id","result","Result"}
- for _, key in ipairs(PRIO) do
- local v = res[key]
- if type(v) == "number" and W_QUIRK_MAP[v] then gotId = v; break end
- end
- if not gotId then
- for _, v in pairs(res) do
- if type(v) == "number" and W_QUIRK_MAP[v] then gotId = v; break end
- end
- end
- end
+            attempt = attempt + 1
+            local tStr = ""
+            if hasTarget then
+                local names = {}
+                for _, q in ipairs(list) do
+                    if targets[q.id] then table.insert(names, q.name) end
+                end
+                tStr = table.concat(names, " / ")
+            end
 
- local gotName = W_QUIRK_MAP[gotId] or (gotId and "ID:"..gotId or "")
- -- [v103] Hanya stop kalau target dipilih DAN hasil cocok
- local hit = gotId and hasTarget and targets[gotId] == true
+            setSlot("Rolling #"..attempt..(tStr~="" and " | "..tStr or ""), Color3.fromRGB(255,200,60))
 
- if hit then
- setSlot("DONE: "..gotName.." (#"..attempt..")", Color3.fromRGB(80,220,80))
- StopWeaponLoop(si)
- local allDone = true
- for i = 1, 3 do if LOOPS_WR[i] then allDone = false; break end end
- if allDone and _WR_RPT then _WR_RPT.SetToggleOff() end
- return
- end
+            local ok, res = pcall(function()
+                _ourCall = true
+                -- [PERBAIKAN 1] Kirim parameter terpisah, BUKAN dalam tabel
+                local r = RE.RandomWeaponQuirk:InvokeServer(_WR_RPT.guid, drawId[si])
+                _ourCall = false
+                return r
+            end)
 
- task.wait(0.05)
- end
- end)
- end
+            if not ok then
+                task.wait(0.5); continue
+            end
+
+            local gotId = nil
+            if type(res) == "table" then
+                local PRIO = {"finalResultId","quirkId","resultId","id","Id","result","Result"}
+                for _, key in ipairs(PRIO) do
+                    local v = res[key]
+                    if type(v) == "number" and W_QUIRK_MAP[v] then
+                        gotId = v; break
+                    end
+                end
+                if not gotId then
+                    for _, v in pairs(res) do
+                        if type(v) == "number" and W_QUIRK_MAP[v] then
+                            gotId = v; break
+                        end
+                    end
+                end
+            end
+            local gotName = W_QUIRK_MAP[gotId] or (gotId and "ID:"..gotId or "")
+
+            local hit = gotId and hasTarget and targets[gotId] == true
+            if hit then
+                setSlot("DONE: "..gotName.." (#"..attempt..")", Color3.fromRGB(80,220,80))
+                
+                -- [PERBAIKAN 2] Hapus StopWeaponLoop(si) untuk menghindari suicide thread
+                LOOPS_WR[si] = nil
+
+                local allDone = true
+                for i = 1, 3 do
+                    if LOOPS_WR[i] then allDone = false; break end
+                end
+                if allDone and _WR_RPT then _WR_RPT.SetToggleOff() end
+                return
+            end
+
+            task.wait(0.05)
+        end
+    end)
+end
 
  DoAutoRollWeapon = function(on)
  for i = 1, 3 do StopWeaponLoop(i) end

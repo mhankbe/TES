@@ -57,6 +57,10 @@ end
 -- REMOTES
 -- ============================================================
 Remotes = RS:WaitForChild("Remotes", 10)
+if not Remotes then
+ repeat task.wait(0.5) until RS:FindFirstChild("Remotes")
+ Remotes = RS:FindFirstChild("Remotes")
+end
 RE = {
  CollectItem = Remotes:WaitForChild("CollectItem", 10),
  ExtraReward = Remotes:WaitForChild("ExtraReward", 10), -- [v112-FIX] WaitForChild agar tidak nil
@@ -3198,14 +3202,13 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
          -- Scan UI dulu biar nama item tersedia
          scanGuidNames()
          local name = _guidNames[tostring(guid)] or ""
-         local prefix = getType(name) -- R/Y/B dari huruf pertama nama
+         local prefix = getType(name)
 
          task.wait(0.15)
          local remote = Remotes:FindFirstChild("DelectHeroEquips")
          if remote then
              local ok = pcall(function() remote:FireServer({tostring(guid)}) end)
              if ok then
-                 -- Counter naik di luar pcall, berdasarkan tipe nama
                  _cnt[prefix] = (_cnt[prefix] or 0) + 1
                  RefreshCounters()
                  local total = _cnt.R + _cnt.Y + _cnt.B + _cnt.other
@@ -12590,11 +12593,9 @@ do
  end
  -- Cek target dipilih - wajib ada sebelum roll
  local hasTarget = false
- repeat
  for _ in pairs(targets) do hasTarget = true; break end
  if not hasTarget then
  setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- until true
  task.wait(1); break
  end
 
@@ -12954,11 +12955,9 @@ do
  end
  -- Cek target - wajib ada sebelum roll
  local hasTarget = false
- repeat
  for _ in pairs(PGR.targets[si]) do hasTarget = true; break end
  if not hasTarget then
  setStatus("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- until true
  task.wait(1); break
  end
 

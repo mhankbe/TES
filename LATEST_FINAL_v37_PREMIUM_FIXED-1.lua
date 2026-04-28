@@ -3251,7 +3251,8 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  -- Keyword yang mau disembunyikan (lowercase, match partial)
  local HIDE_KEYWORDS = {
  "Congratulations", -- weapon quirk reroll
- "just reroll a", -- hero quirk reroll
+ "just reroll a super quirk", -- hero quirk reroll
+ "just reroll a weapon's super quirk", -- hero quirk reroll
  "mythic hero", -- fallback semua jenis reroll
  "just pulled", -- tangkap notif quirk langka
  }

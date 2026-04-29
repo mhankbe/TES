@@ -3252,7 +3252,6 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local HIDE_KEYWORDS = {
  "Congratulations", -- weapon quirk reroll
  "just reroll a super quirk", -- hero quirk reroll
- "just reroll a weapon's super quirk", -- hero quirk reroll
  "mythic hero", -- fallback semua jenis reroll
  "just pulled", -- tangkap notif quirk langka
  }
@@ -9704,9 +9703,12 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     while SIEGE.running and SIEGE.inMap do
         totalTime = totalTime + 0.08
 
-        -- Auto hide UI reward
+-- [FIX v38] JANGAN hide RewardsFrame/ResultFrame di Siege
+        -- Server kirim countdown timer dan nama map di sana
+        -- Cuma hide popup reward hasil boss saja setelah keluar
+        -- Auto hide UI reward (kecuali Siege UI penting)
         pcall(function()
-            for _, name in ipairs({"RewardsFrame", "ResultFrame"}) do
+            for _, name in ipairs({"ChallengeGarrisonBossSuccess"}) do
                 local ui = LP.PlayerGui:FindFirstChild(name)
                 if ui then ui.Enabled = false end
             end
@@ -10252,6 +10254,11 @@ local function IsInDungeonMap()
  return mf and mf:FindFirstChild("MessageBoard") ~= nil
  end)
  if ok2 and hasMap then return true, nil end
+ -- [FIX v38] Fallback tambahan: cek ada enemy di workspace.Enemys
+ local ok3, enemies = pcall(function()
+ return #workspace:FindFirstChild("Enemys"):GetChildren() > 3
+ end)
+ if ok3 and enemies then return true, nil end
  if DUNGEON and DUNGEON.inMap then return true, nil end
  return false, nil
 end

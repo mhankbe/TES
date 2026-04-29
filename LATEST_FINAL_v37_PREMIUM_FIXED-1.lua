@@ -171,7 +171,7 @@ end
 -- WARNA
 -- ============================================================
 -- ============================================================
--- TEMA : Solo Leveling (1.lua T) — Dark Navy & Bright Accent + Glass
+-- TEMA : Solo Leveling (1.lua T) - Dark Navy & Bright Accent + Glass
 -- ============================================================
 C = {
  -- Background & panel (maps to T.BgMain / BgContent / BgSidebar / TabHover)
@@ -1188,7 +1188,7 @@ _setUseToggle       = nil  -- AutoRoll: Use Potion
 _setPotatoToggle    = nil  -- Settings: Potato Mode
 _webhookModeSetIdx  = nil  -- Settings: webhook mode setter
 _webhookUrlBox      = nil  -- Settings: urlBox reference untuk restore text
--- Visual-only setters (update pill tanpa trigger logic — untuk restore UI saat load config)
+-- Visual-only setters (update pill tanpa trigger logic - untuk restore UI saat load config)
 _visAutoHide    = nil  -- Main: Auto Hide Reward visual
 _visDisableAnim = nil  -- Main: Disable Anim visual
 _visSellHero    = nil  -- Main: Sell Hero visual
@@ -1207,11 +1207,8 @@ _visDecompGem   = nil  -- Main: Auto Decomp Gem visual (manual pill)
 _setTransSlider = nil  -- Theme: UI Transparency slider setter
 _visWebhookToggle = nil  -- Settings: Webhook toggle visual
 _setWebhookToggle = nil  -- Settings: Webhook toggle logic
-_visHideReroll  = nil  -- Main: Hide Reroll Chat visual (manual pill)
-_hideRerollState= false -- tracking _hideRerollChat state
 _setSpeedSlider = nil  -- Player: WalkSpeed slider setter
 _setGemLevelSlider = nil -- Main: Gem Level slider setter
-_setHideRerollToggle = nil -- Main: Hide Reroll Chat setter
 
 -- ============================================================
 -- [v252] MODE DISPATCHER - Single source of truth
@@ -1713,14 +1710,14 @@ function AttackLoop_Mass(onStatus)
  -- ============================================================
  -- FASE 2: Attack loop
  -- Keluar jika:
- --   A) alive == 0  → langsung sukses (tanpa timer tambahan)
+ --   A) alive == 0  -> langsung sukses (tanpa timer tambahan)
  --   B) killTarget terpenuhi (non-Kill-All mode)
- --   C) Tidak bisa bunuh 1 musuh dalam 5 detik → anggap stuck, skip
+ --   C) Tidak bisa bunuh 1 musuh dalam 5 detik -> anggap stuck, skip
  -- ============================================================
  local start    = MA.killed
  local lastKill = MA.killed
  local stuckT   = 0
- local STUCK_LIMIT = 5.0 -- detik tanpa kill baru → skip map
+ local STUCK_LIMIT = 5.0 -- detik tanpa kill baru -> skip map
 
  while MA.running do
   -- Cek interrupt prioritas lebih tinggi
@@ -1753,26 +1750,26 @@ function AttackLoop_Mass(onStatus)
    if not IsDead(e) then alive = alive + 1 end
   end
 
-  -- ── Kondisi keluar A: tidak ada musuh sama sekali → langsung sukses ──
+  -- -- Kondisi keluar A: tidak ada musuh sama sekali -> langsung sukses --
   if alive == 0 then
    if onStatus then onStatus("[OK] Semua musuh habis!") end
    return true
   end
 
-  -- ── Kondisi keluar B: kill target terpenuhi (non-Kill-All) ──
+  -- -- Kondisi keluar B: kill target terpenuhi (non-Kill-All) --
   if not isAll and here >= MA.killTarget then
    if onStatus then onStatus("[OK] Target "..MA.killTarget.." tercapai!") end
    return true
   end
 
-  -- ── Update status ──
+  -- -- Update status --
   if isAll then
    if onStatus then onStatus("Kill All: "..alive.." sisa") end
   else
    if onStatus then onStatus(alive.." hidup | "..here.."/"..MA.killTarget) end
   end
 
-  -- ── Cek stuck: jika tidak ada kill baru dalam STUCK_LIMIT detik → skip ──
+  -- -- Cek stuck: jika tidak ada kill baru dalam STUCK_LIMIT detik -> skip --
   if MA.killed > lastKill then
    lastKill = MA.killed
    stuckT   = 0
@@ -1784,7 +1781,7 @@ function AttackLoop_Mass(onStatus)
    end
   end
 
-  -- ── Serang semua musuh hidup ──
+  -- -- Serang semua musuh hidup --
   for _, e in ipairs(GetEnemies()) do
    if not IsDead(e) then
     local hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
@@ -2587,7 +2584,7 @@ ORN = _ASH_ORN.STATE
 -- Perbedaan dari Fastroll biasa:
 --   - Kirim remote AutoRandomHeroEquipGrade (100x dalam 1 invoke) dengan stopGradeIds dari dropdown
 --   - Server akan berhenti sendiri kalau target ditemukan
---   - Setelah selesai, parse hasil → tampilkan notifikasi sama seperti Fastroll
+--   - Setelah selesai, parse hasil -> tampilkan notifikasi sama seperti Fastroll
 PGR100.Loop = function(msi)
   local thread = PGR100.threads[msi]
   if thread then pcall(task.cancel, thread) end
@@ -2700,7 +2697,7 @@ PGR100.Loop = function(msi)
         local hit = gotId and PGR.targets[msi][gotId] == true
 
         if hit then
-          -- TARGET FOUND — notifikasi sama seperti Fastroll
+          -- TARGET FOUND - notifikasi sama seperti Fastroll
           setStatus100("[!] Target SUCCES! (100x #"..attempt..")", Color3.fromRGB(80,255,120))
           if PGR100.lastLbls[msi] then
             local gradeName = PG_GRADE_MAP[gotId] or "?"
@@ -3446,191 +3443,6 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local divMain = Frame(p, C.BORD, UDim2.new(1,0,0,1))
  divMain.LayoutOrder=5; divMain.BackgroundTransparency=0.42
 
- -- 
- -- HIDE REROLL CHAT
- -- Sembunyikan pesan reroll dari chat history
- -- Format server: "Congratulations, [player] just reroll a weapon's super quirk [NamaQuirk]"
- -- Remote trigger: AutoRandomWeaponQuirk / AutoRandomHeroQuirk
- -- 
- local _hideRerollChat = false
- local _hideRerollConn = nil
-
- -- Keyword yang mau disembunyikan (lowercase, match partial)
- local HIDE_KEYWORDS = {
- "Congratulations", -- weapon quirk reroll
- "just reroll a super quirk", -- hero quirk reroll
- "mythic hero", -- fallback semua jenis reroll
- "just pulled", -- tangkap notif quirk langka
- }
-
- local function _matchHideKeyword(txt)
- local lower = txt:lower()
- for _, kw in ipairs(HIDE_KEYWORDS) do
- if lower:find(kw, 1, true) then return true end
- end
- return false
- end
-
- -- Sembunyikan satu TextLabel (BodyText) dan parent frame-nya
- local function _hideRerollLabel(lbl)
- pcall(function()
- if not lbl or not lbl.Parent then return end
- local txt = (lbl.Text or ""):gsub("<[^>]+>","")
- if not _matchHideKeyword(txt) then return end
- -- Sembunyikan parent frame (biasanya TextMessage container)
- local target = lbl.Parent
- -- Naik sampai ketemu Frame/ImageLabel yang bisa di-hide
- for _ = 1, 4 do
- if not target or not target.Parent then break end
- if target:IsA("Frame") or target:IsA("ImageLabel") then
- target.Visible = false
- return
- end
- target = target.Parent
- end
- -- Fallback: hide label langsung
- lbl.Visible = false
- end)
- end
-
- local function _startHideRerollChat()
- pcall(function()
- local CG = game:GetService("CoreGui")
- local expChat = CG:FindFirstChild("ExperienceChat")
- if not expChat then
- -- Coba tunggu sebentar
- task.spawn(function()
- local ec = CG:WaitForChild("ExperienceChat", 10)
- if ec and _hideRerollChat then
- -- Scan yang sudah ada
- for _, v in ipairs(ec:GetDescendants()) do
- if v:IsA("TextLabel") and v.Name == "BodyText" then
- _hideRerollLabel(v)
- end
- end
- -- Watch baru
- _hideRerollConn = ec.ChildAdded:Connect(function(v)
- if v:IsA("TextLabel") and v.Name == "BodyText" then
- task.wait(0.15)
- if _hideRerollChat then _hideRerollLabel(v) end
- end
- end)
- end
- end)
- return
- end
- -- Scan semua BodyText yang sudah ada di history
- for _, v in ipairs(expChat:GetDescendants()) do
- if v:IsA("TextLabel") and v.Name == "BodyText" then
- _hideRerollLabel(v)
- end
- end
- -- Watch BodyText baru yang muncul
- _hideRerollConn = expChat.ChildAdded:Connect(function(v)
- if v:IsA("TextLabel") and v.Name == "BodyText" then
- task.wait(0.15)
- if _hideRerollChat then _hideRerollLabel(v) end
- end
- end)
- end)
- end
-
- local function _stopHideRerollChat()
- if _hideRerollConn then
- pcall(function() _hideRerollConn:Disconnect() end)
- _hideRerollConn = nil
- end
- end
-
- -- [v264] Metode 2: Hook via remote fire timing
- -- AutoRandomWeaponQuirk / AutoRandomHeroQuirk di-fire -> 
- -- schedule hide chat message berikutnya dalam 3 detik
- local _rerollHideNames = {
- AutoRandomWeaponQuirk = true,
- AutoRandomHeroQuirk = true,
- AutoHeroQuirk = true,
- }
- _G._rerollHideNames = _rerollHideNames
- local _rerollHidePending = false
-
- local function _scheduleHideNextRerollMsg()
- if _rerollHidePending then return end
- _rerollHidePending = true
- task.delay(0.5, function()
- -- Scan ExperienceChat untuk pesan baru dalam window 3 detik
- local deadline = tick() + 3
- task.spawn(function()
- pcall(function()
- local CG = game:GetService("CoreGui")
- local ec = CG:FindFirstChild("ExperienceChat")
- if not ec then _rerollHidePending = false; return end
- while tick() < deadline do
- for _, v in ipairs(ec:GetDescendants()) do
- if v:IsA("TextLabel") and v.Name == "BodyText" and v.Visible then
- local txt = (v.Text or ""):gsub("<[^>]+>",""):lower()
- if txt:find("just reroll",1,true) or txt:find("super quirk",1,true) then
- _hideRerollLabel(v)
- end
- end
- end
- task.wait(0.2)
- end
- _rerollHidePending = false
- end)
- end)
- end)
- end
- _G._scheduleHideNextRerollMsg = _scheduleHideNextRerollMsg
- _G._hideRerollChatRef = function() return _hideRerollChat end
-
- -- [v38 FIX] Hook ke-2 dihapus — deteksi AutoRandomHeroQuirk/AutoRandomWeaponQuirk
- -- dipindah ke dalam hook utama (Capture System) agar tidak ada double-hook __namecall
- -- Double hook adalah penyebab "argument #1 expects string" saat Hero Reroll
-
- -- UI Toggle Row
- local hrRow = Frame(p, C.SURFACE, UDim2.new(1,0,0,44))
- hrRow.LayoutOrder = 3; Corner(hrRow,10); Stroke(hrRow, C.BORD, 1.5, 0.3)
- local hrLbl = Label(hrRow, "HIDE REROLL CHAT", 13, C.TXT, Enum.Font.GothamBold)
- hrLbl.Size = UDim2.new(1,-68,0,20); hrLbl.Position = UDim2.new(0,14,0.5,-10)
- local hrPill = Btn(hrRow, C.PILL_OFF, UDim2.new(0,52,0,30))
- hrPill.AnchorPoint = Vector2.new(1,0.5); hrPill.Position = UDim2.new(1,-12,0.5,0); Corner(hrPill,13)
- local hrKnob = Frame(hrPill, C.KNOB_OFF, UDim2.new(0,24,0,24))
- hrKnob.AnchorPoint = Vector2.new(0,0.5); hrKnob.Position = UDim2.new(0,3,0.5,0); Corner(hrKnob,10)
-
- hrPill.MouseButton1Click:Connect(function()
- _hideRerollChat = not _hideRerollChat
- _hideRerollState = _hideRerollChat
- local on = _hideRerollChat
- TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
- TweenService:Create(hrKnob, TweenInfo.new(0.16), {
- Position = on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
- BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
- }):Play()
- if on then _startHideRerollChat() else _stopHideRerollChat() end
- end)
- -- Visual-only setter untuk Hide Reroll Chat
- _visHideReroll = function(v)
-  _hideRerollState = v
-  TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = v and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(hrKnob, TweenInfo.new(0.16), {
-   Position = v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3 = v and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
- end
- -- Logic setter untuk Hide Reroll Chat
- _setHideRerollToggle = function(v)
-  if v == _hideRerollChat then return end
-  _hideRerollChat = v; _hideRerollState = v
-  TweenService:Create(hrPill, TweenInfo.new(0.16), {BackgroundColor3 = v and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(hrKnob, TweenInfo.new(0.16), {
-   Position = v and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3 = v and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
-  if v then _startHideRerollChat() else _stopHideRerollChat() end
- end
-
- -- 
- -- 
  -- ============================================================
  -- AUTO SELL WEAPON [v56b FIX] + WEAPON FILTER DROPDOWN
  -- Persistent listener di UpdateWeapon.OnClientEvent
@@ -3830,7 +3642,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local _swSelectedIds    = {}              -- {[equipId]=true}
  local _swSelNames       = {}              -- {[equipId]=name}
 
- -- ── Toggle row ──────────────────────────────────────────────
+ -- -- Toggle row ----------------------------------------------
  local swRow = Frame(p, C.SURFACE, UDim2.new(1,0,0,44))
  swRow.LayoutOrder = 5; Corner(swRow,10); Stroke(swRow, C.BORD, 1.5, 0.3)
  local swLbl = Label(swRow, "AUTO SELL WEAPON", 13, C.TXT, Enum.Font.GothamBold)
@@ -3840,7 +3652,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  local swKnob = Frame(swPill, C.KNOB_OFF, UDim2.new(0,24,0,24))
  swKnob.AnchorPoint = Vector2.new(0,0.5); swKnob.Position = UDim2.new(0,3,0.5,0); Corner(swKnob,10)
 
- -- ── Dropdown filter card (LayoutOrder 6) ────────────────────
+ -- -- Dropdown filter card (LayoutOrder 6) --------------------
  local swDropCard = Frame(p, C.BG3, UDim2.new(1,0,0,0))
  swDropCard.LayoutOrder = 6
  swDropCard.AutomaticSize = Enum.AutomaticSize.Y
@@ -3862,11 +3674,11 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  swDBtnLbl.Size=UDim2.new(1,-30,1,0); swDBtnLbl.Position=UDim2.new(0,10,0,0)
  swDBtnLbl.TextXAlignment=Enum.TextXAlignment.Left
  swDBtnLbl.TextTruncate=Enum.TextTruncate.AtEnd
- local swDArrow = Label(swDBtn,"▾",13,C.ACC,Enum.Font.GothamBold)
+ local swDArrow = Label(swDBtn,"v",13,C.ACC,Enum.Font.GothamBold)
  swDArrow.Size=UDim2.new(0,22,1,0); swDArrow.Position=UDim2.new(1,-26,0,0)
  swDArrow.TextXAlignment=Enum.TextXAlignment.Center
 
- -- ── Status bar (LayoutOrder 7) ───────────────────────────────
+ -- -- Status bar (LayoutOrder 7) -------------------------------
  local swStatusCard = Frame(p, C.BG3, UDim2.new(1,0,0,26))
  swStatusCard.LayoutOrder = 7; Corner(swStatusCard,6); Stroke(swStatusCard,C.BORD, 1.5,0.4)
  local swDot = Frame(swStatusCard, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
@@ -3883,7 +3695,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
   end)
  end
 
- -- ── Update tampilan tombol dropdown ─────────────────────────
+ -- -- Update tampilan tombol dropdown -------------------------
  local function UpdateSwDropUI()
   if _swSelectAll then
    swDBtnLbl.Text   = "Select All"
@@ -3908,7 +3720,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
   end
  end
 
- -- ── Quality color map ────────────────────────────────────────
+ -- -- Quality color map ----------------------------------------
  local SW_QCOL = {
   [1]=Color3.fromRGB(200,200,200),
   [2]=Color3.fromRGB(100,200,255),
@@ -3917,7 +3729,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
   [5]=Color3.fromRGB(255,80,80),
  }
 
- -- ── Dropdown popup (pakai DDLayer existing) ──────────────────
+ -- -- Dropdown popup (pakai DDLayer existing) ------------------
  swDBtn.MouseButton1Click:Connect(function()
   CloseActiveDD()
 
@@ -3952,7 +3764,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
 
   local selAllBtn = Btn(hdr, Color3.fromRGB(30,100,60), UDim2.new(1,-16,0,26))
   selAllBtn.Position=UDim2.new(0,8,0,34); Corner(selAllBtn,6); selAllBtn.ZIndex=9999
-  local selAllLbl = Label(selAllBtn,"✓  Select All  (jual semua unlocked)",11,C.TXT,Enum.Font.GothamBold)
+  local selAllLbl = Label(selAllBtn,"*  Select All  (jual semua unlocked)",11,C.TXT,Enum.Font.GothamBold)
   selAllLbl.Size=UDim2.new(1,0,1,0); selAllLbl.ZIndex=9999
 
   -- ScrollingFrame list
@@ -3981,13 +3793,13 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
    if tempSelAll then
     hdrCountLbl.Text       = "Select All aktif"
     hdrCountLbl.TextColor3 = C.ACC2
-    selAllLbl.Text         = "✓  Select All  (aktif)"
+    selAllLbl.Text         = "*  Select All  (aktif)"
     selAllLbl.TextColor3   = Color3.fromRGB(80,255,150)
    else
     local n=0; for _ in pairs(tempSel) do n=n+1 end
     hdrCountLbl.Text       = n.." item dipilih"
     hdrCountLbl.TextColor3 = n>0 and C.ACC or C.TXT3
-    selAllLbl.Text         = "✓  Select All  (jual semua unlocked)"
+    selAllLbl.Text         = "*  Select All  (jual semua unlocked)"
     selAllLbl.TextColor3   = C.TXT
    end
   end
@@ -4004,7 +3816,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
    local tick = Frame(row, isSel and C.PILL_ON or C.PILL_OFF, UDim2.new(0,14,0,14))
    tick.AnchorPoint=Vector2.new(0,0.5); tick.Position=UDim2.new(0,5,0.5,0)
    Corner(tick,3); tick.ZIndex=9999
-   local tickMark = Label(tick,"✓",9,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+   local tickMark = Label(tick,"*",9,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
    tickMark.Size=UDim2.new(1,0,1,0); tickMark.ZIndex=9999; tickMark.Visible=isSel
 
    local nmLbl = Label(row, wname, 11, wcol or C.TXT, Enum.Font.GothamBold)
@@ -4082,7 +3894,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
   _activeDDClose  = ApplyClose
  end)
 
- -- ── StartAutoSellWeapon ──────────────────────────────────────
+ -- -- StartAutoSellWeapon --------------------------------------
  -- Source data: PlayerManager.localPlayerData.weapons (confirmed accessible)
  -- Struktur: {guid, isLock, isEquip, isBuffer, isFavourite, itemId, ...}
  function StartAutoSellWeapon()
@@ -9318,7 +9130,7 @@ do
  if not RAID.updownDir then RAID.updownDir = "up" end
  local dirDDBtn = Btn(udRowBot, C.BG3, UDim2.new(0.45, -4, 1, -4))
  dirDDBtn.Position = UDim2.new(0,0,0,2); Corner(dirDDBtn,6); Stroke(dirDDBtn,C.BORD, 1.5,0.2)
- local dirDDLbl = Label(dirDDBtn, RAID.updownDir=="up" and " UP ↑" or " DOWN ↓", 11, C.ACC, Enum.Font.GothamBold)
+ local dirDDLbl = Label(dirDDBtn, RAID.updownDir=="up" and " UP (UP)" or " DOWN (DN)", 11, C.ACC, Enum.Font.GothamBold)
  dirDDLbl.Size = UDim2.new(1,-16,1,0)
  local dirArr = Label(dirDDBtn,"v",10,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
  dirArr.Size = UDim2.new(0,16,1,0); dirArr.Position = UDim2.new(1,-16,0,0)
@@ -9362,8 +9174,8 @@ do
     Instance.new("UIPadding",popup).PaddingTop = UDim.new(0,4)
     
     local opts = {
-        {dir="up", label=" UP ↑", col=Color3.fromRGB(100,220,100)},
-        {dir="down", label=" DOWN ↓", col=Color3.fromRGB(255,140,80)},
+        {dir="up", label=" UP (UP)", col=Color3.fromRGB(100,220,100)},
+        {dir="down", label=" DOWN (DN)", col=Color3.fromRGB(255,140,80)},
     }
     for i, opt in ipairs(opts) do
         local row = Instance.new("TextButton",popup)
@@ -9606,7 +9418,7 @@ do
   pcall(function() runeDDVal.Text = " -- NOT SELECTED --"; runeDDVal.TextColor3 = C.TXT3 end)
   RAID.updownEnabled = false; RAID.updownDir = "up"; RAID.updownTargetGrade = nil
   pcall(updateUpDownToggle)
-  pcall(function() dirDDLbl.Text = " UP ↑"; dirDDLbl.TextColor3 = Color3.fromRGB(100,220,100) end)
+  pcall(function() dirDDLbl.Text = " UP (UP)"; dirDDLbl.TextColor3 = Color3.fromRGB(100,220,100) end)
   pcall(function() gradeDDLbl.Text = " -- SELECT TARGET --"; gradeDDLbl.TextColor3 = C.TXT3 end)
   RAID.autoKillBoss = false
   TweenService:Create(bPill, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundColor3=C.PILL_OFF}):Play()
@@ -9655,7 +9467,7 @@ do
   RAID.updownEnabled = udOn; RAID.updownDir = udDir; RAID.updownTargetGrade = udGrade ~= "" and udGrade or nil
   pcall(updateUpDownToggle)
   pcall(function()
-   dirDDLbl.Text = udDir == "up" and " UP ↑" or " DOWN ↓"
+   dirDDLbl.Text = udDir == "up" and " UP (UP)" or " DOWN (DN)"
    dirDDLbl.TextColor3 = udDir == "up" and Color3.fromRGB(100,220,100) or Color3.fromRGB(255,140,80)
   end)
   if RAID.updownTargetGrade then
@@ -9686,7 +9498,7 @@ end
 
 
 -- ============================================================
--- AUTO SIEGE - v97 [v54 FIX: dead code removed, _exitConfirmCount reset on alive>0, threshold 3→5]
+-- AUTO SIEGE - v97 [v54 FIX: dead code removed, _exitConfirmCount reset on alive>0, threshold 3->5]
 -- Flow: EnterCityRaidMap -> GetRaidTeamInfos -> StartLocalPlayerTeleport -> LocalTpSuccess -> GetRaidTeamInfos
 -- -> MA V2 serang semua enemy sampai habis -> GainRaidsRewards(1)
 -- -> TipsPanel hide/restore -> MA biasa resume setelah 3 detik
@@ -9945,7 +9757,7 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
         cleanup(); return "loop_ended"
     end
 
-    -- Cek setelah tunggu: kalau tetap kosong → anggap selesai langsung
+    -- Cek setelah tunggu: kalau tetap kosong -> anggap selesai langsung
     do
         local enemies = GetSiegeEnemies()
         local liveNow = 0
@@ -9959,10 +9771,10 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     end
 
     -- ============================================================
-    -- FASE 2: Attack loop — logika identik Mass Attack (Kill All)
+    -- FASE 2: Attack loop - logika identik Mass Attack (Kill All)
     -- Keluar jika:
-    --   A) alive == 0  → langsung sukses (tanpa timer tambahan)
-    --   B) Tidak ada kill baru dalam STUCK_LIMIT detik → skip
+    --   A) alive == 0  -> langsung sukses (tanpa timer tambahan)
+    --   B) Tidak ada kill baru dalam STUCK_LIMIT detik -> skip
     --   C) Timeout MAX_TIME
     -- ============================================================
     while SIEGE.running and SIEGE.inMap do
@@ -9996,7 +9808,7 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             end
         end
 
-        -- ── Kondisi UTAMA: Server sudah TP player keluar ke baseMapId ──
+        -- -- Kondisi UTAMA: Server sudah TP player keluar ke baseMapId --
         if isBackAtBase() then
             if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
             -- [FIX] Panggil GainRaidsRewards untuk trigger reward dari server
@@ -10006,7 +9818,7 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             cleanup(); return "exited_clean"
         end
 
-        -- ── Kondisi A: musuh habis tapi belum di-TP server (fallback) ──
+        -- -- Kondisi A: musuh habis tapi belum di-TP server (fallback) --
         if alive == 0 and _everSawEnemy then
             if onStatus then onStatus("[..] Musuh habis, tunggu server TP keluar...") end
             -- Tunggu server TP max 2 detik
@@ -10018,12 +9830,12 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
                     cleanup(); return "exited_clean"
                 end
             end
-            -- Timeout tunggu TP → anggap selesai juga
+            -- Timeout tunggu TP -> anggap selesai juga
             if onStatus then onStatus("[OK] Siege DONE (timeout tunggu TP)") end
             cleanup(); return "exited_clean"
         end
 
-        -- Ada musuh → serang semua
+        -- Ada musuh -> serang semua
         _everSawEnemy = true
         stuckT = 0  -- reset stuck karena masih ada musuh (berarti belum habis)
 
@@ -10033,7 +9845,7 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             stuckT   = 0
         else
             stuckT = stuckT + 0.08
-            -- ── Kondisi B: tidak bisa bunuh 1 musuh dalam STUCK_LIMIT detik → skip ──
+            -- -- Kondisi B: tidak bisa bunuh 1 musuh dalam STUCK_LIMIT detik -> skip --
             if stuckT >= STUCK_LIMIT then
                 if onStatus then onStatus("[!] Stuck "..STUCK_LIMIT.."s - Force exit Siege") end
                 cleanup(); return "stuck_exit"
@@ -10648,7 +10460,7 @@ local function DungeonAttackLoop(onStatus)
         MODE:Release("dungeon")
     end
 
-    -- ── FASE 1: Tunggu musuh muncul (maks 30 detik) ──────────────
+    -- -- FASE 1: Tunggu musuh muncul (maks 30 detik) --------------
     local wt = 0
     while wt < 30 and DUNGEON.running and DUNGEON.inMap do
         local inDungeon = IsInDungeonMap()
@@ -10661,7 +10473,7 @@ local function DungeonAttackLoop(onStatus)
         task.wait(0.4); wt = wt + 0.4
     end
 
-    -- ── FASE 2: Attack loop (identik Mass Attack) ─────────────────
+    -- -- FASE 2: Attack loop (identik Mass Attack) -----------------
     while DUNGEON.running and DUNGEON.inMap do
 
         -- Hukum: wajib stop jika keluar dari MapId 50303
@@ -10686,9 +10498,9 @@ local function DungeonAttackLoop(onStatus)
             end
         end
 
-        -- ── Cek apakah jumlah musuh di workspace BERKURANG ──────────
-        -- Jika berkurang = ada kill = workspace update → reset timer
-        -- Jika tidak berkurang (musuh tetap/tidak mati) → naikkan timer
+        -- -- Cek apakah jumlah musuh di workspace BERKURANG ----------
+        -- Jika berkurang = ada kill = workspace update -> reset timer
+        -- Jika tidak berkurang (musuh tetap/tidak mati) -> naikkan timer
         if lastAliveCount < 0 then
             -- Iterasi pertama, set baseline
             lastAliveCount = alive
@@ -10696,18 +10508,18 @@ local function DungeonAttackLoop(onStatus)
             -- Musuh berkurang = ada kill = reset timer
             noUpdateT = 0
         else
-            -- Musuh tidak berkurang → naikkan timer
+            -- Musuh tidak berkurang -> naikkan timer
             noUpdateT = noUpdateT + 0.08
         end
         lastAliveCount = alive
 
-        -- ── Cek timeout 5 menit ──────────────────────────────────────
+        -- -- Cek timeout 5 menit --------------------------------------
         if noUpdateT >= NO_UPDATE_LIMIT then
             if onStatus then onStatus("[!] 5 menit musuh tidak berkurang - TP keluar Dungeon") end
             cleanup(); return "no_enemy_timeout"
         end
 
-        -- ── Serang atau tunggu ────────────────────────────────────────
+        -- -- Serang atau tunggu ----------------------------------------
         if alive > 0 then
             if onStatus then
                 local sisa = math.floor(NO_UPDATE_LIMIT - noUpdateT)
@@ -11229,7 +11041,7 @@ function StartST2Loop()
         pcall(function()
             while ST2.running do
                 repeat
-                -- ── STEP 0: Delay 2 detik sebelum masuk ──────────────────
+                -- -- STEP 0: Delay 2 detik sebelum masuk ------------------
                 ST2Status("[..] Delay 2s Before Enter Single Tower...", Color3.fromRGB(160,148,135))
                 for _i = 1, 20 do
                     if not ST2.running then return end
@@ -11237,11 +11049,11 @@ function StartST2Loop()
                 end
                 if not ST2.running then return end
 
-                -- ── STEP 1: TP ke Single Tower Map 2 ────────────────────────────
+                -- -- STEP 1: TP ke Single Tower Map 2 ----------------------------
                 ST2Status("[>>] TP to Single Tower...", Color3.fromRGB(180,120,255))
                 ST2TpIn()
 
-                -- ── STEP 1b: Konfirmasi masuk map ──
+                -- -- STEP 1b: Konfirmasi masuk map --
                 pcall(function()
                     local reTpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
                     if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
@@ -11259,7 +11071,7 @@ function StartST2Loop()
                 task.wait(1)
                 if not ST2.running then return end
 
-                -- ── STEP 2: Cek toggle Attack ────────────────────────────────────
+                -- -- STEP 2: Cek toggle Attack ------------------------------------
                 if not ST2.attackEnabled then
                     ST2Status("[||] Attack OFF - Waiting...", Color3.fromRGB(255,140,0))
                     while ST2.running and not ST2.attackEnabled do
@@ -11268,7 +11080,7 @@ function StartST2Loop()
                     if not ST2.running then return end
                 end
 
-                -- ── STEP 3: SCAN HERO_GUIDS ──
+                -- -- STEP 3: SCAN HERO_GUIDS --
                 if #HERO_GUIDS == 0 then
                     ST2Status("[~] Scan HERO_GUIDS...", Color3.fromRGB(255,200,60))
                     local function addHero(g)
@@ -11347,9 +11159,9 @@ function StartST2Loop()
                 end
 
                 _lastEnemySet = ST2GetCurrentEnemyGuids()
-                ST2Status("[S] START Attack! Wave: 0/"..(targetWaves>0 and tostring(targetWaves) or "∞"), Color3.fromRGB(80,220,80))
+                ST2Status("[S] START Attack! Wave: 0/"..(targetWaves>0 and tostring(targetWaves) or "inf"), Color3.fromRGB(80,220,80))
 
-                -- ── STEP 4: ATTACK LOOP ───────────────────────────────────────────
+                -- -- STEP 4: ATTACK LOOP -------------------------------------------
                 while ST2.running and ST2.inMap and ST2.attacking do
                     if not ST2.attackEnabled then
                         ST2Status("[||] PAUSE Attack...", Color3.fromRGB(255,140,0))
@@ -11401,7 +11213,7 @@ function StartST2Loop()
 
                 if not ST2.running then return end
 
-                -- ── STEP 5: EXIT MAP ───────────────────────────────────────────────
+                -- -- STEP 5: EXIT MAP -----------------------------------------------
                 ST2.attacking = false
                 ST2.inMap     = false
                 ST2Status("[<] DONE - Go to Lobby...", Color3.fromRGB(100,200,255))
@@ -11561,7 +11373,7 @@ do
         task.defer(ResizeST2Body)
     end)
 
-    -- ── Toggle Attack ─────────────────────────────────────────────────────────
+    -- -- Toggle Attack ---------------------------------------------------------
     -- [v285] Toggle ON/OFF untuk fungsi Attack (Mass Attack Kill All)
     -- Jika OFF: loop tetap jalan (masuk map, tunggu), tapi tidak menyerang
     -- Sinkronisasi balik: ST2.setAttackToggle di-set agar logic bisa sync UI
@@ -11581,7 +11393,7 @@ do
     infoCard.LayoutOrder = 4; infoCard.AutomaticSize = Enum.AutomaticSize.Y
     Corner(infoCard, 10)
     New("UIPadding",{Parent=infoCard,PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0, 10),PaddingRight=UDim.new(0, 10)})
-    local infoLbl = Label(infoCard,"Delay 2s → TP Map 2 → LocalPlayerTeleportSuccess → Delay 1s → Attack (jika ON) → Exit → Delay 2s → Loop. Attack OFF: loop tetap masuk map tapi tidak menyerang.",10,C.TXT3,Enum.Font.Gotham)
+    local infoLbl = Label(infoCard,"Delay 2s -> TP Map 2 -> LocalPlayerTeleportSuccess -> Delay 1s -> Attack (jika ON) -> Exit -> Delay 2s -> Loop. Attack OFF: loop tetap masuk map tapi tidak menyerang.",10,C.TXT3,Enum.Font.Gotham)
     infoLbl.Size = UDim2.new(1,0,0,0); infoLbl.AutomaticSize = Enum.AutomaticSize.Y
     infoLbl.TextWrapped = true
 
@@ -12028,7 +11840,7 @@ do
   end
   local jsonStr = string.format(
    '{'..
-   '"main":{"autoHide":%s,"disableAnim":%s,"hideReroll":%s,"sellHero":%s,"sellWeapon":%s,"swSelectAll":%s,"decompGem":%s,"gemMaxLevel":%d,"mergePotion":%s,"usePotion":%s},'..
+   '"main":{"autoHide":%s,"disableAnim":%s,"sellHero":%s,"sellWeapon":%s,"swSelectAll":%s,"decompGem":%s,"gemMaxLevel":%d,"mergePotion":%s,"usePotion":%s},'..
    '"farm":{"randomAttack":%s},'..
    '"attack":{"massAttack":%s,"killTargetIdx":%d,"delayIdx":%d,"maMaps":"%s"},'..
    '"player":{"noClip":%s,"antiAfk":%s,"walkSpeed":%d},'..
@@ -12039,7 +11851,6 @@ do
    -- main
    STATE.autoHideReward and "true" or "false",
    STATE.disableAnim and "true" or "false",
-   _hideRerollState and "true" or "false",
    _autoSellOnState and "true" or "false",
    _autoSellWeaponState and "true" or "false",
    _swSelectAllState and "true" or "false",
@@ -12096,7 +11907,6 @@ do
   -- Main
   pcall(function() if _setAutoHideToggle then _setAutoHideToggle(false) end end)
   pcall(function() if _setAnimToggle then _setAnimToggle(false) end end)
-  pcall(function() if _setHideRerollToggle then _setHideRerollToggle(false) end end)
   pcall(function() if _setSellHeroToggle then _setSellHeroToggle(false) end end)
   pcall(function() if _autoSellWeaponSet then _autoSellWeaponSet(false) end end)
   pcall(function() if _autoDecompGemSet then _autoDecompGemSet(false) end end)
@@ -12180,12 +11990,11 @@ do
   local themeBlock    = content:match('"theme":%s*(%b{})') or ""
 
   -- Parse main
-  local autoHide, disAnim, hideReroll, sellHero, sellWeapon, swSelAll, decompGem, gemLv, mergeOn, useOn =
-   false, false, false, false, false, true, false, 9, false, false
+  local autoHide, disAnim, sellHero, sellWeapon, swSelAll, decompGem, gemLv, mergeOn, useOn =
+   false, false, false, false, true, false, 9, false, false
   if mainBlock ~= "" then
    autoHide   = mainBlock:match('"autoHide":(%a+)') == "true"
    disAnim    = mainBlock:match('"disableAnim":(%a+)') == "true"
-   hideReroll = mainBlock:match('"hideReroll":(%a+)') == "true"
    sellHero   = mainBlock:match('"sellHero":(%a+)') == "true"
    sellWeapon = mainBlock:match('"sellWeapon":(%a+)') == "true"
    swSelAll   = mainBlock:match('"swSelectAll":(%a+)') ~= "false"
@@ -12255,7 +12064,6 @@ do
   -- Main toggles
   pcall(function() if _visAutoHide    then _visAutoHide(autoHide)     end end)
   pcall(function() if _visDisableAnim then _visDisableAnim(disAnim)   end end)
-  pcall(function() if _visHideReroll  then _visHideReroll(hideReroll); _hideRerollState = hideReroll end end)
   pcall(function() if _visSellHero    then _visSellHero(sellHero);    _autoSellOnState = sellHero     end end)
   pcall(function() if _visWeaponSell  then _visWeaponSell(sellWeapon); _autoSellWeaponState = sellWeapon end end)
   pcall(function() if _visDecompGem   then _visDecompGem(decompGem);  _autoDecompGemState = decompGem  end end)
@@ -12278,7 +12086,7 @@ do
   -- Player
   pcall(function() if _visNoClip  then _visNoClip(noClip)   end end)
   pcall(function() if _visAntiAfk then _visAntiAfk(antiAfk) end end)
-  -- WalkSpeed slider — restore visual langsung
+  -- WalkSpeed slider - restore visual langsung
   pcall(function() if _setSpeedSlider then _setSpeedSlider(spd) end end)
   -- Automation
   pcall(function() if _visSiege   then _visSiege(siegeOn);   _siegeToggleState = siegeOn   end end)
@@ -12334,7 +12142,6 @@ do
    -- Main logic
    pcall(function() if autoHide  and STATE then STATE.autoHideReward = true; DoAutoHideReward(true) end end)
    pcall(function() if disAnim   and STATE then STATE.disableAnim = true; DoDisableAllAnimations(true) end end)
-   pcall(function() if hideReroll and _setHideRerollToggle then _setHideRerollToggle(true) end end)
    pcall(function() if sellHero  and _setSellHeroToggle  then _setSellHeroToggle(true)  end end)
    pcall(function() if sellWeapon and _autoSellWeaponSet then _autoSellWeaponSet(true)  end end)
    pcall(function() if decompGem and _autoDecompGemSet   then _autoDecompGemSet(true)   end end)
@@ -12367,7 +12174,7 @@ do
   end)
  end
 
- -- ── UI: Tombol SAVE CONFIG & RESET CONFIG (Global, paling atas Settings) ──
+ -- -- UI: Tombol SAVE CONFIG & RESET CONFIG (Global, paling atas Settings) --
  local globalCfgRow = Frame(p, C.BG2, UDim2.new(1,0,0,40))
  globalCfgRow.LayoutOrder = 0
  globalCfgRow.BackgroundTransparency = 1
@@ -12377,26 +12184,26 @@ do
  local gSaveBtn = Btn(globalCfgRow, Color3.fromRGB(34,197,94), UDim2.new(0.5,-3,1,-4))
  gSaveBtn.Position = UDim2.new(0,0,0,2); gSaveBtn.LayoutOrder = 1
  Corner(gSaveBtn, 8); Stroke(gSaveBtn, Color3.fromRGB(74,222,128), 1.5, 0)
- local gSaveLbl = Label(gSaveBtn, "💾 SAVE CONFIG", 12, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+ local gSaveLbl = Label(gSaveBtn, " SAVE CONFIG", 12, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  gSaveLbl.Size = UDim2.new(1,0,1,0); gSaveLbl.TextYAlignment = Enum.TextYAlignment.Center
 
  local gResetBtn = Btn(globalCfgRow, Color3.fromRGB(239,68,68), UDim2.new(0.5,-3,1,-4))
  gResetBtn.Position = UDim2.new(0.5,3,0,2); gResetBtn.LayoutOrder = 2
  Corner(gResetBtn, 8); Stroke(gResetBtn, Color3.fromRGB(248,113,113), 1.5, 0)
- local gResetLbl = Label(gResetBtn, "🗑 RESET CONFIG", 12, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+ local gResetLbl = Label(gResetBtn, " RESET CONFIG", 12, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  gResetLbl.Size = UDim2.new(1,0,1,0); gResetLbl.TextYAlignment = Enum.TextYAlignment.Center
 
  gSaveBtn.MouseButton1Click:Connect(function()
   GlobalSaveConfig()
   local orig = gSaveLbl.Text
-  gSaveLbl.Text = "✅ TERSIMPAN!"
+  gSaveLbl.Text = "TERSIMPAN!"
   task.delay(1.5, function() pcall(function() gSaveLbl.Text = orig end) end)
  end)
 
  gResetBtn.MouseButton1Click:Connect(function()
   GlobalResetConfig()
   local orig = gResetLbl.Text
-  gResetLbl.Text = "✅ DIRESET!"
+  gResetLbl.Text = "DIRESET!"
   task.delay(1.5, function() pcall(function() gResetLbl.Text = orig end) end)
  end)
 
@@ -12420,7 +12227,7 @@ do
              end
              Window.BackgroundTransparency = 0
          end)
-         SystemNotify("[SYSTEM]: Potato Mode Activated! 🔥", 3)
+         SystemNotify("[SYSTEM]: Potato Mode Activated!", 3)
      else
          Window.BackgroundTransparency = _G.ThemeTransparency
          ApplyTheme(_G.CurrentTheme)
@@ -13414,14 +13221,10 @@ local function SetupUniversalSpy()
                 mt.__namecall = newcclosure(function(self, ...)
                     local _m = getnamecallmethod()
                     if _m ~= "FireServer" and _m ~= "InvokeServer" then
-                        return _old(self, ...)
-                    end
-                    -- Hide Reroll Chat
-                    if _G._hideRerollChatRef and _G._hideRerollChatRef() and _G._rerollHideNames then
-                        local _ok, _sn = pcall(function() return self.Name end)
-                        if _ok and _G._rerollHideNames[_sn] and _G._scheduleHideNextRerollMsg then
-                            _G._scheduleHideNextRerollMsg()
-                        end
+                        -- Langsung return tanpa capture - bukan remote call
+                        local _r1, _r2, _r3, _r4, _r5 = pcall(_old, self, ...)
+                        if _r1 then return _r2, _r3, _r4, _r5 end
+                        return
                     end
                     -- Capture GUID via nama remote
                     local _arg1 = select(1, ...)
@@ -13437,7 +13240,10 @@ local function SetupUniversalSpy()
                             end
                         end
                     end
-                    return _old(self, ...)
+                    -- Panggil original dengan pcall agar error game tidak bocor ke output Delta
+                    local _ok3, _v1, _v2, _v3, _v4 = pcall(_old, self, ...)
+                    if _ok3 then return _v1, _v2, _v3, _v4 end
+                    return
                 end)
                 setreadonly(mt, true)
             end

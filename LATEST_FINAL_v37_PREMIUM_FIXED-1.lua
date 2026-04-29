@@ -3589,12 +3589,14 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  setreadonly(mt, false)
  mt.__namecall = newcclosure(function(self, ...)
  local method = getnamecallmethod()
+ -- [v38 FIX] Guard ketat: hanya proses kalau toggle ON, method cocok, dan self adalah RemoteEvent/Function
  if _hideRerollChat and (method == "FireServer" or method == "InvokeServer") then
- pcall(function()
- if _rerollHideNames[self.Name] then
+ -- [v38 FIX] Wrap SEMUA akses ke self.Name dalam pcall terpisah agar tidak crash
+ -- jika self bukan instance yang valid atau sudah destroyed
+ local ok2, selfName = pcall(function() return self.Name end)
+ if ok2 and type(selfName) == "string" and _rerollHideNames[selfName] then
  _scheduleHideNextRerollMsg()
  end
- end)
  end
  return old_nc(self, ...)
  end)
@@ -13398,17 +13400,22 @@ do
                         return _old(self, ...) 
                     end
 
-                    -- [SAFE CAPTURE] Tanpa pcall di dalam hook agar tidak merusak C-Stack / Memori
-                    local args = {...}
-                    local arg1 = args[1]
+                    -- [SAFE CAPTURE] Tangkap args tanpa modifikasi apapun
+                    -- [v38 FIX] Gunakan pcall untuk SELURUH logic capture
+                    -- sehingga apapun yang terjadi, return _old(self, ...) tetap terpanggil dengan args asli
+                    pcall(function()
+                        local args = {...}
+                        local arg1 = args[1]
 
-                    if type(arg1) == "table" then
+                        -- Guard ketat: hanya proses kalau arg1 adalah TABLE
+                        -- (game QuirkNewPanel kirim string ke RandomHeroQuirk — jangan disentuh)
+                        if type(arg1) ~= "table" then return end
+
                         -- 1. Hero Reroll
                         if self == _rHero or self == _rAuto then
                             local g = arg1.heroGuid or arg1.HeroGuid or arg1.guid
                             if type(g) == "string" and #g > 20 then
                                 if _HR_RPT then _HR_RPT.guid = g; _HR_RPT.Refresh() end
-                                -- Simpan ke list global untuk Mass Attack / Siege
                                 local dup = false
                                 for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
                                 if not dup then table.insert(HERO_GUIDS, g) end
@@ -13437,8 +13444,9 @@ do
                                 end
                             end
                         end
-                    end
+                    end)
 
+                    -- [v38 FIX] Selalu forward args ASLI ke _old tanpa modifikasi apapun
                     return _old(self, ...)
                 end)
                 setreadonly(mt, true)

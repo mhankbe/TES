@@ -94,8 +94,62 @@ RE = {
  UnEquipHero = Remotes:FindFirstChild("UnequipAllHero"),
  EquipBestHero = Remotes:FindFirstChild("AutoEquipBestHero"),
  DeleteWeapons = Remotes:FindFirstChild("DeleteWeapons"),
- DecomposeItems = Remotes:FindFirstChild("DecomposeItems"),
+DecomposeItems = Remotes:FindFirstChild("DecomposeItems"),
 }
+
+-- [GODMODE] Global Instant Gold/Item Collector
+-- Auto-collects ALL drops instantly on spawn, no distance/delay
+local _instantCollectConn = nil
+local _instantCollected = {}
+
+function StartInstantGoldCollector(on)
+    if _instantCollectConn then
+        pcall(function() _instantCollectConn:Disconnect() end)
+        _instantCollectConn = nil
+        _instantCollected = {}
+    end
+    
+    if not on then return end
+    
+    local DROP_FOLDERS = {"Golds", "Items", "Drops", "Rewards", "Loot", "DropItems", "RewardItems"}
+    
+    _instantCollectConn = workspace.ChildAdded:Connect(function(obj)
+        task.wait(0.01) -- Micro-delay for GUID attribute
+        local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
+        if guid and not _instantCollected[guid] then
+            _instantCollected[guid] = true
+            
+            -- Instant collect
+            pcall(function()
+                RE.CollectItem:InvokeServer(guid)
+            end)
+            
+            -- Auto-sell for gold efficiency
+            if RE.ExtraReward then
+                pcall(function()
+                    RE.ExtraReward:FireServer({isSell=true, guid=guid})
+                end)
+            end
+        end
+    end)
+    
+    -- Also scan existing drops immediately
+    for _, folderName in ipairs(DROP_FOLDERS) do
+        local folder = workspace:FindFirstChild(folderName)
+        if folder then
+            for _, obj in ipairs(folder:GetChildren()) do
+                local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
+                if guid and not _instantCollected[guid] then
+                    _instantCollected[guid] = true
+                    pcall(function() RE.CollectItem:InvokeServer(guid) end)
+                    if RE.ExtraReward then
+                        pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                    end
+                end
+            end
+        end
+    end
+end
 
 MY_USER_ID = LP.UserId
 HERO_GUIDS, HERO_DATA = {}, {} -- hero data
@@ -1592,47 +1646,47 @@ end
 -- Fungsi ini TP semua item di folder Golds/Items/Drops ke posisi player
 -- Dipanggil periodik selama MA/AG/Raid aktif
 -- ============================================================
+-- [GODMODE ENHANCED] Super Gold Magnet - Instant TP + Collect (0.05s loop, always aggressive)
 local _goldMagnetRunning = false
 function StartGoldMagnet(checkFn)
  if _goldMagnetRunning then return end
  _goldMagnetRunning = true
  task.spawn(function()
  local GOLD_FOLDERS = {"Golds","Items","Drops","Rewards","Loot","DropItems","RewardItems"}
- while checkFn() do
+ while true do  -- Godmode: ignore checkFn, always run until stopped
  pcall(function()
  local char = LP.Character
  local hrp = char and char:FindFirstChild("HumanoidRootPart")
- if not hrp then return end
+ if not hrp then task.wait(0.1); return end
  local playerPos = hrp.Position
  for _, folderName in ipairs(GOLD_FOLDERS) do
  local folder = workspace:FindFirstChild(folderName)
  if folder then
  for _, obj in ipairs(folder:GetChildren()) do
  pcall(function()
- -- TP item ke dekat player
+ -- Instant TP to player (precise)
+ local offset = Vector3.new(math.random(-2,2), 2, math.random(-2,2))
  if obj:IsA("BasePart") then
- obj.CFrame = CFrame.new(playerPos + Vector3.new(
- math.random(-3,3), 0, math.random(-3,3)))
+ obj.CFrame = CFrame.new(playerPos + offset)
  elseif obj:IsA("Model") then
  local part = obj:FindFirstChildWhichIsA("BasePart") or obj.PrimaryPart
- if part then
- part.CFrame = CFrame.new(playerPos + Vector3.new(
- math.random(-3,3), 0, math.random(-3,3)))
+ if part then part.CFrame = CFrame.new(playerPos + offset) end
  end
- end
- -- Juga coba collect via remote (double layer)
+ -- Double remote fire for max reliability
  local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
  if guid then
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
+ if RE.ExtraReward then
+ pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
+ end
  end
  end)
  end
  end
  end
  end)
- task.wait(0.5)
+ task.wait(0.05)  -- Godmode: Ultra-fast 50ms loop
  end
- _goldMagnetRunning = false
  end)
 end
 
@@ -1872,8 +1926,9 @@ end
 
 function RunAG(onStatus, onDone)
  AG.running = true; AG.killed = 0; AG.collected = 0
+ StartInstantGoldCollector(true)  -- [GODMODE] Instant collect on
  StartDestroyWorker(function() return AG.running end)
- StartGoldMagnet(function() return AG.running end) -- [v257] Gold magnet
+ StartGoldMagnet(function() return AG.running end) -- [GODMODE ENHANCED] Super magnet
  AG.thread = task.spawn(function()
  AttackLoop_Goyang(onStatus)
  AG.running = false

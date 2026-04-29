@@ -1103,7 +1103,7 @@ end
 -- ============================================================
 -- STATE & LOOPS
 -- ============================================================
-STATE = {autoCollect=false, autoDestroyer=false, autoArise=false, noClip=false, antiAfk=false, autoConfirm=false, autoClose=false, spyKillswitch=true}
+STATE = {autoCollect=false, autoDestroyer=false, autoArise=false, noClip=false, antiAfk=false, autoConfirm=false, autoClose=false}
 LOOPS, COLLECTED = {}, {}
 
 function StopLoop(key)
@@ -13360,7 +13360,6 @@ end
 do
 local function SetupUniversalSpy()
           if _layer0Active then return end
-          if STATE.spyKillswitch then return end
           _layer0Active = true
 
         local _rHero = RE.RandomHeroQuirk

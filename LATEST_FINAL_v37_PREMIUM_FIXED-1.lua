@@ -28,7 +28,7 @@ PG = LP.PlayerGui
 -- (lihat ConnectUpdateCityRaidListener di bawah SwitchTab)
 -- Variabel buffer tetap dideklarasi di sini agar tersedia global
 -- ============================================================
-CITY_TO_MAP_CONN = {[1000001]=3,[1000002]=7,[1000003]=10,[1000004]=13}
+CITY_TO_MAP_CONN = {[1000001]=3,[1000002]=7,[1000003]=10,[1000004]=13,[1000005]=18}
 
 -- Forward declare siege snapshot functions (definisi ada di bawah setelah SIEGE table siap)
 
@@ -6897,7 +6897,7 @@ SendWebhookRaid = function(url) _WH.SendRaid(url) end -- alias internal
 _WH.SendSiege = function(url)
  local SIEGE_NAMES = {
  [3]="Shadow Castle", [7]="Demon Castle Tier 2",
- [10]="Plagueheart", [13]="Lava Hell"
+ [10]="Plagueheart", [13]="Lava Hell", [18]="Golden Throne"
  }
  local lines = { "**SIEGE OPEN**" }
  local found = false
@@ -9568,18 +9568,19 @@ local SIEGE_DATA = {
  [7] = {name="Map 7 - Demon Castle Tier 2", cityRaidId=1000002, tpMapId=50202, baseMapId=50007},
  [10] = {name="Map 10 - Plagueheart", cityRaidId=1000003, tpMapId=50203, baseMapId=50010},
  [13] = {name="Map 13 - Lava Hell", cityRaidId=1000004, tpMapId=50204, baseMapId=50013},
+ [18] = {name="Map 18 - Golden Throne", cityRaidId=1000005, tpMapId=50205, baseMapId=50018},
 }
-local SIEGE_MAP_NUMS = {3, 7, 10, 13}
+local SIEGE_MAP_NUMS = {3, 7, 10, 13, 18}
 
 SIEGE = {
  running = false,
  thread = nil,
  inMap = false,
- excludeMaps = {[3]=false,[7]=false,[10]=false,[13]=false},
+ excludeMaps = {[3]=false,[7]=false,[10]=false,[13]=false,[18]=false},
  statusLbl = nil,
  dot = nil,
  countLbls = {},
- count = {[3]=0,[7]=0,[10]=0,[13]=0},
+ count = {[3]=0,[7]=0,[10]=0,[13]=0,[18]=0},
  killed = 0, -- [v150] FIX: inisialisasi killed agar tidak nil saat EnemyDeath event
  live = {}, -- {[cityRaidId] = mapNum} - diisi notif server
 }
@@ -9655,7 +9656,7 @@ local function IsInSiegeMap()
         return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
     end)
     if ok and type(wm) == "number" then
-        if wm >= 50201 and wm <= 50204 then return true, wm end
+        if wm >= 50201 and wm <= 50205 then return true, wm end
     end
     local ok2, hasCRE = pcall(function()
         local mapFolder = workspace:FindFirstChild("Map")
@@ -10265,6 +10266,7 @@ do
         [7]  = "Map 7  - Demon Castle Tier 2",
         [10] = "Map 10 - Plagueheart",
         [13] = "Map 13 - Lava Hell",
+        [18] = "Map 18 - Golden Throne",
     }
 
     -- Helper: update label ringkasan di button

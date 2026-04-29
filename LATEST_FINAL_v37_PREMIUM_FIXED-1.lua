@@ -13394,36 +13394,42 @@ local function SetupUniversalSpy()
                         end
                     end
 
-                    -- [BUG FIX] GUID capture TIDAK bergantung pada _ourCall
-                    -- Sehingga manual click 1x user di mesin reroll juga ter-capture
+                    -- [BUG FIX v2] GUID capture:
+                    -- 1. Tidak bergantung pada _ourCall (tangkap manual click user juga)
+                    -- 2. Bandingkan via self.Name bukan referensi objek (self == _rHero)
+                    --    karena di banyak executor __namecall self adalah userdata berbeda
+                    --    sehingga perbandingan referensi selalu false meski remote sama
                     if type(_arg1) == "table" then
-                        -- 1. Hero Reroll
-                        if self == _rHero or self == _rAuto then
-                            local g = _arg1.heroGuid or _arg1.HeroGuid or _arg1.guid
-                            if type(g) == "string" and #g > 20 then
-                                if _HR_RPT then _HR_RPT.guid = g; _HR_RPT.Refresh() end
-                                local dup = false
-                                for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
-                                if not dup then table.insert(HERO_GUIDS, g) end
-                            end
-                        -- 2. Weapon Reroll
-                        elseif self == _rWeapon then
-                            local wg = _arg1.guid or _arg1.weaponGuid or _arg1.id
-                            if type(wg) == "string" and #wg > 20 then
-                                if _WR_RPT then _WR_RPT.guid = wg; _WR_RPT.Refresh() end
-                            end
-                        -- 3. Pet Gear Reroll
-                        elseif self == _rPetG then
-                            local pg = _arg1.guid
-                            local dId = _arg1.drawId
-                            if type(pg) == "string" and #pg > 20 and type(dId) == "number" then
-                                local si = ({[980001]=1,[980002]=2,[980003]=3})[dId]
-                                if si and PGR then
-                                    PGR.guids[si] = pg
-                                    PGR.captured[si] = true
-                                    if PGR.statLbls[si] then
-                                        PGR.statLbls[si].Text = "START NOW"
-                                        PGR.statLbls[si].TextColor3 = Color3.fromRGB(80,220,80)
+                        local _ok_sn, _sn = pcall(function() return self.Name end)
+                        if _ok_sn and type(_sn) == "string" then
+                            -- 1. Hero Reroll
+                            if _sn == "RandomHeroQuirk" or _sn == "AutoRandomHeroQuirk" then
+                                local g = _arg1.heroGuid or _arg1.HeroGuid or _arg1.guid
+                                if type(g) == "string" and #g > 20 then
+                                    if _HR_RPT then _HR_RPT.guid = g; _HR_RPT.Refresh() end
+                                    local dup = false
+                                    for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
+                                    if not dup then table.insert(HERO_GUIDS, g) end
+                                end
+                            -- 2. Weapon Reroll
+                            elseif _sn == "RandomWeaponQuirk" or _sn == "AutoRandomWeaponQuirk" then
+                                local wg = _arg1.guid or _arg1.weaponGuid or _arg1.id
+                                if type(wg) == "string" and #wg > 20 then
+                                    if _WR_RPT then _WR_RPT.guid = wg; _WR_RPT.Refresh() end
+                                end
+                            -- 3. Pet Gear Reroll
+                            elseif _sn == "RandomHeroEquipGrade" or _sn == "AutoRandomHeroEquipGrade" then
+                                local pg = _arg1.guid
+                                local dId = _arg1.drawId
+                                if type(pg) == "string" and #pg > 20 and type(dId) == "number" then
+                                    local si = ({[980001]=1,[980002]=2,[980003]=3})[dId]
+                                    if si and PGR then
+                                        PGR.guids[si] = pg
+                                        PGR.captured[si] = true
+                                        if PGR.statLbls[si] then
+                                            PGR.statLbls[si].Text = "START NOW"
+                                            PGR.statLbls[si].TextColor3 = Color3.fromRGB(80,220,80)
+                                        end
                                     end
                                 end
                             end

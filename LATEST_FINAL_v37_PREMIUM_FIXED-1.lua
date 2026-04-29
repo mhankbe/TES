@@ -13259,10 +13259,10 @@ do
  end
  setStatus("[~] Roll #"..attempt, Color3.fromRGB(255,160,30))
 
- _ourCall = true
+_ourCall = true
 local autoRemote = Remotes:FindFirstChild("AutoRandomHeroEquipGrade") or RE.RandomHeroEquipGrade
 local ok, res = pcall(function()
- return autoRemote:InvokeServer(PGR.guids[si], PG_DRAW_IDS[si])
+ return autoRemote:InvokeServer({guid = PGR.guids[si], drawId = PG_DRAW_IDS[si]})
 end)
  _ourCall = false
 

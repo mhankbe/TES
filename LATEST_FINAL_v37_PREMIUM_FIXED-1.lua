@@ -5721,38 +5721,40 @@ do
  PGR.toggleBtns[msi] = enToggle
     PGR.toggleKnobs[msi] = enKnob
 
-    -- [BLACKBOXAI] 100x Roll Toggle (below Fastroll)
-    local hRow = Frame(enRow, C.ROW, UDim2.new(1,0,0,28))
-    local hLbl = Label(hRow,"100x Roll",12,C.TXT,Enum.Font.GothamBold)
-    hLbl.Size = UDim2.new(0.55,0,1,0); hLbl.Position = UDim2.new(0,10,0,0)
-    local hToggle = Btn(hRow, C.PILL_OFF, UDim2.new(0,40,0,22))
-    hToggle.Position = UDim2.new(1,-50,0.5,-4); Corner(hToggle,11)
-    local hKnob = Frame(hToggle, C.KNOB_OFF, UDim2.new(0,18,0,18))
-    hKnob.Position = UDim2.new(0,2,0.5,-9); Corner(hKnob,9)
 
-    PGR100.toggleBtns[msi] = hToggle
-    PGR100.toggleKnobs[msi] = hKnob
+  enToggle.MouseButton1Click:Connect(function()
+  PGR.enOnFlags[msi_l] = not PGR.enOnFlags[msi_l]
+  local enOn = PGR.enOnFlags[msi_l]
+  enToggle.BackgroundColor3 = enOn and C.ACC or C.BG3
 
-    hToggle.MouseButton1Click:Connect(function()
-        local hOn = not PGR100.enOnFlags[msi]
-        PGR100.enOnFlags[msi] = hOn
-        hToggle.BackgroundColor3 = hOn and C.PILL_ON or C.PILL_OFF
-        hKnob.Position = hOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
-        hKnob.BackgroundColor3 = hOn and C.KNOB_ON or C.KNOB_OFF
-        hRow.BackgroundColor3 = hOn and C.SURFACE or C.ROW
-        
-        if hOn then
-            PGR100.Loop(msi)
-        else
-            PGR100.running[msi] = false
-        end
-    end)
+  -- [BLACKBOXAI] 100x Roll Toggle (below Fastroll toggle)
+  local hRow = Frame(mCard, C.ROW, UDim2.new(1,0,0,34))
+  local hLbl = Label(hRow,"100x Roll",12,C.TXT,Enum.Font.GothamBold)
+  hLbl.Size = UDim2.new(0.55,0,1,0); hLbl.Position = UDim2.new(0,10,0,0)
+  local hToggle = Btn(hRow, C.PILL_OFF, UDim2.new(0,52,0,30))
+  hToggle.Position = UDim2.new(1,-14,0.5,0); Corner(hToggle,15)
+  local hKnob = Frame(hToggle, C.KNOB_OFF, UDim2.new(0,24,0,24))
+  hKnob.Position = UDim2.new(0,3,0.5,0); Corner(hKnob,12)
 
+  PGR100.toggleBtns[msi] = hToggle
+  PGR100.toggleKnobs[msi] = hKnob
 
- enToggle.MouseButton1Click:Connect(function()
- PGR.enOnFlags[msi_l] = not PGR.enOnFlags[msi_l]
- local enOn = PGR.enOnFlags[msi_l]
- enToggle.BackgroundColor3 = enOn and C.ACC or C.BG3
+  hToggle.MouseButton1Click:Connect(function()
+      local hOn = not PGR100.enOnFlags[msi]
+      PGR100.enOnFlags[msi] = hOn
+      TweenService:Create(hToggle, TweenInfo.new(0.18), {BackgroundColor3 = hOn and C.PILL_ON or C.PILL_OFF}):Play()
+      TweenService:Create(hKnob, TweenInfo.new(0.18), {
+        Position = hOn and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
+        BackgroundColor3 = hOn and C.KNOB_ON or C.KNOB_OFF
+      }):Play()
+      hRow.BackgroundColor3 = hOn and C.SURFACE or C.ROW
+      
+      if hOn and PGR.guids[msi] then
+          PGR100.Loop(msi)
+      else
+          PGR100.running[msi] = false
+      end
+  end)
  enKnob.Position = enOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
  enRow.BackgroundColor3 = enOn and C.SURFACE or C.BG2
  Stroke(enRow, enOn and Color3.fromRGB(255,140,0) or C.ACC, 1, enOn and 0.3 or 0.7)

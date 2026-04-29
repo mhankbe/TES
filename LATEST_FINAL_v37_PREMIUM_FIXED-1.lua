@@ -3589,12 +3589,9 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  setreadonly(mt, false)
  mt.__namecall = newcclosure(function(self, ...)
  local method = getnamecallmethod()
- -- [v38 FIX] Guard ketat: hanya proses kalau toggle ON, method cocok, dan self adalah RemoteEvent/Function
  if _hideRerollChat and (method == "FireServer" or method == "InvokeServer") then
- -- [v38 FIX] Wrap SEMUA akses ke self.Name dalam pcall terpisah agar tidak crash
- -- jika self bukan instance yang valid atau sudah destroyed
- local ok2, selfName = pcall(function() return self.Name end)
- if ok2 and type(selfName) == "string" and _rerollHideNames[selfName] then
+ local ok2, selfName = pcall(function() return rawget(self, "Name") or self.Name end)
+ if ok2 and _rerollHideNames[selfName] then
  _scheduleHideNextRerollMsg()
  end
  end
@@ -13400,38 +13397,30 @@ do
                         return _old(self, ...) 
                     end
 
-                    -- [SAFE CAPTURE] Tangkap args tanpa modifikasi apapun
-                    -- [v38 FIX] Gunakan pcall untuk SELURUH logic capture
-                    -- sehingga apapun yang terjadi, return _old(self, ...) tetap terpanggil dengan args asli
-                    pcall(function()
-                        local args = {...}
-                        local arg1 = args[1]
+                    -- Pack varargs ke lokal SEBELUM masuk closure apapun
+                    -- (Lua 5.1 / Delta tidak bisa capture varargs di inner closure)
+                    local _arg1 = select(1, ...)
 
-                        -- Guard ketat: hanya proses kalau arg1 adalah TABLE
-                        -- (game QuirkNewPanel kirim string ke RandomHeroQuirk — jangan disentuh)
-                        if type(arg1) ~= "table" then return end
-
+                    if type(_arg1) == "table" then
                         -- 1. Hero Reroll
                         if self == _rHero or self == _rAuto then
-                            local g = arg1.heroGuid or arg1.HeroGuid or arg1.guid
+                            local g = _arg1.heroGuid or _arg1.HeroGuid or _arg1.guid
                             if type(g) == "string" and #g > 20 then
                                 if _HR_RPT then _HR_RPT.guid = g; _HR_RPT.Refresh() end
                                 local dup = false
                                 for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
                                 if not dup then table.insert(HERO_GUIDS, g) end
                             end
-                        
                         -- 2. Weapon Reroll
                         elseif self == _rWeapon then
-                            local wg = arg1.guid or arg1.weaponGuid or arg1.id
+                            local wg = _arg1.guid or _arg1.weaponGuid or _arg1.id
                             if type(wg) == "string" and #wg > 20 then
                                 if _WR_RPT then _WR_RPT.guid = wg; _WR_RPT.Refresh() end
                             end
-                        
                         -- 3. Pet Gear Reroll
                         elseif self == _rPetG then
-                            local pg = arg1.guid
-                            local dId = arg1.drawId
+                            local pg = _arg1.guid
+                            local dId = _arg1.drawId
                             if type(pg) == "string" and #pg > 20 and type(dId) == "number" then
                                 local si = ({[980001]=1,[980002]=2,[980003]=3})[dId]
                                 if si and PGR then
@@ -13444,9 +13433,8 @@ do
                                 end
                             end
                         end
-                    end)
+                    end
 
-                    -- [v38 FIX] Selalu forward args ASLI ke _old tanpa modifikasi apapun
                     return _old(self, ...)
                 end)
                 setreadonly(mt, true)

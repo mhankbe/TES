@@ -2469,6 +2469,14 @@ PGR = {
  enOnFlags = {false,false,false},
 }
 
+PGR100 = {
+ running = {false,false,false},
+ threads = {nil,nil,nil},
+ toggleBtns = {nil,nil,nil},
+ toggleKnobs = {nil,nil,nil},
+ enOnFlags = {false,false,false},
+}
+
 local HALO_NAMES = {"Bronze Halo", "Gold Halo", "Diamond Halo"}
 local HALO_DRAW_ID = {1, 2, 3}
 HALO = {
@@ -2570,6 +2578,37 @@ _ASH_ORN.STATE = {
  enOnFlags = {false,false,false,false,false,false},
 }
 ORN = _ASH_ORN.STATE
+
+-- [BLACKBOXAI v37] PGR100 100x Roll Loop Function (Step 5)
+PGR100.Loop = function(msi)
+  local thread = PGR100.threads[msi]
+  if thread then pcall(task.cancel, thread) end
+  PGR100.running[msi] = true
+  PGR100.enOnFlags[msi] = true
+  PGR100.threads[msi] = task.spawn(function()
+    for i = 1, 100 do
+      if not PGR100.running[msi] or not PGR.guids[msi] then break end
+      pcall(function()
+        RE.RandomHeroEquipGrade:InvokeServer({
+          drawId = PG_DRAW_IDS[msi + 1],
+          stopGradeIds = {990006, 990031, 990010}, -- S, M, M+ stop grades
+          guid = PGR.guids[msi]
+        })
+      end)
+      task.wait(0.05)
+    end
+    PGR100.running[msi] = false
+    PGR100.enOnFlags[msi] = false
+    -- Auto-off toggle visual
+    if PGR100.toggleBtns[msi] then 
+      PGR100.toggleBtns[msi].BackgroundColor3 = C.PILL_OFF
+    end
+    if PGR100.toggleKnobs[msi] then 
+      PGR100.toggleKnobs[msi].Position = UDim2.new(0, 3, 0.5, 0)
+      PGR100.toggleKnobs[msi].BackgroundColor3 = C.KNOB_OFF
+    end
+  end)
+end
 
 function _ASH_ORN.AddQuirk(machineIdx, quirkId, quirkName)
  if not machineIdx or not quirkId then return end
@@ -9933,6 +9972,22 @@ StartSiegeLoop = function()
             end
             task.wait(0.3)
             if not SIEGE.running then _siegeInterrupt = false; MODE:Release("siege"); break end
+
+            -- [BLACKBOXAI v37 SIEGE FIX Step 7] TP baseMapId FIRST
+            if CITY_TO_MAP_CONN[d.cityRaidId] then
+                local baseMapId = 50000 + CITY_TO_MAP_CONN[d.cityRaidId]
+                pcall(function() 
+                    RE.LocalTp:FireServer({mapId = baseMapId}) 
+                end)
+                -- Wait TP confirm (max 10s)
+                local tpWait = 0
+                repeat
+                    local mapIdAttr = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId")
+                    if mapIdAttr == baseMapId then break end
+                    task.wait(0.5); tpWait = tpWait + 0.5
+                until tpWait >= 10 or not SIEGE.running
+                if SIEGE.status then SIEGE.status.TextColor3 = Color3.fromRGB(80,220,80) end
+            end
 
             SiegeStatus("[>>] Masuk "..d.name.."...", Color3.fromRGB(180,120,255))
             if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(180,120,255) end

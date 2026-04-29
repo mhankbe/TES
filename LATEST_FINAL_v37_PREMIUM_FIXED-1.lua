@@ -13394,7 +13394,9 @@ local function SetupUniversalSpy()
                         end
                     end
 
-                    if type(_arg1) == "table" and _ourCall then
+                    -- [BUG FIX] GUID capture TIDAK bergantung pada _ourCall
+                    -- Sehingga manual click 1x user di mesin reroll juga ter-capture
+                    if type(_arg1) == "table" then
                         -- 1. Hero Reroll
                         if self == _rHero or self == _rAuto then
                             local g = _arg1.heroGuid or _arg1.HeroGuid or _arg1.guid

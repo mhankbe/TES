@@ -5719,7 +5719,35 @@ do
  enKnob.Position = UDim2.new(0,2,0.5,-9); Corner(enKnob,9)
 
  PGR.toggleBtns[msi] = enToggle
- PGR.toggleKnobs[msi] = enKnob
+    PGR.toggleKnobs[msi] = enKnob
+
+    -- [BLACKBOXAI] 100x Roll Toggle (below Fastroll)
+    local hRow = Frame(enRow, C.ROW, UDim2.new(1,0,0,28))
+    local hLbl = Label(hRow,"100x Roll",12,C.TXT,Enum.Font.GothamBold)
+    hLbl.Size = UDim2.new(0.55,0,1,0); hLbl.Position = UDim2.new(0,10,0,0)
+    local hToggle = Btn(hRow, C.PILL_OFF, UDim2.new(0,40,0,22))
+    hToggle.Position = UDim2.new(1,-50,0.5,-4); Corner(hToggle,11)
+    local hKnob = Frame(hToggle, C.KNOB_OFF, UDim2.new(0,18,0,18))
+    hKnob.Position = UDim2.new(0,2,0.5,-9); Corner(hKnob,9)
+
+    PGR100.toggleBtns[msi] = hToggle
+    PGR100.toggleKnobs[msi] = hKnob
+
+    hToggle.MouseButton1Click:Connect(function()
+        local hOn = not PGR100.enOnFlags[msi]
+        PGR100.enOnFlags[msi] = hOn
+        hToggle.BackgroundColor3 = hOn and C.PILL_ON or C.PILL_OFF
+        hKnob.Position = hOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+        hKnob.BackgroundColor3 = hOn and C.KNOB_ON or C.KNOB_OFF
+        hRow.BackgroundColor3 = hOn and C.SURFACE or C.ROW
+        
+        if hOn then
+            PGR100.Loop(msi)
+        else
+            PGR100.running[msi] = false
+        end
+    end)
+
 
  enToggle.MouseButton1Click:Connect(function()
  PGR.enOnFlags[msi_l] = not PGR.enOnFlags[msi_l]
@@ -9970,24 +9998,27 @@ StartSiegeLoop = function()
                 _siegeInterrupt = false
                 task.wait(2); break
             end
-            task.wait(0.3)
+                -- [BLACKBOXAI v37] AUTO SIEGE FIX: TP BaseMapId First
+                local mapNum = CITY_TO_MAP_CONN[d.cityRaidId]
+                if mapNum then
+                    local baseMapId = 50000 + mapNum
+                    SiegeStatus(("[TP] BaseMap %d (for %s siege map...)"):format(baseMapId, d.name), Color3.fromRGB(255,200,100))
+                    pcall(function() RE.LocalTp:FireServer({mapId = baseMapId}) end)
+                    
+                    -- Wait confirm TP
+                    local tpWait = 0
+                    while tpWait < 8 and workspace:GetAttribute("MapId") ~= baseMapId and SIEGE.running do
+                        task.wait(0.5); tpWait = tpWait + 0.5
+                    end
+                    if workspace:GetAttribute("MapId") == baseMapId then
+                        SiegeStatus(("[OK] TP %d success"):format(baseMapId), Color3.fromRGB(80,220,80))
+                    else
+                        SiegeStatus(("[!] TP %d failed, retry..."):format(baseMapId), Color3.fromRGB(255,140,0))
+                    end
+                end
+                
+                task.wait(0.3)
             if not SIEGE.running then _siegeInterrupt = false; MODE:Release("siege"); break end
-
-            -- [BLACKBOXAI v37 SIEGE FIX Step 7] TP baseMapId FIRST
-            if CITY_TO_MAP_CONN[d.cityRaidId] then
-                local baseMapId = 50000 + CITY_TO_MAP_CONN[d.cityRaidId]
-                pcall(function() 
-                    RE.LocalTp:FireServer({mapId = baseMapId}) 
-                end)
-                -- Wait TP confirm (max 10s)
-                local tpWait = 0
-                repeat
-                    local mapIdAttr = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId")
-                    if mapIdAttr == baseMapId then break end
-                    task.wait(0.5); tpWait = tpWait + 0.5
-                until tpWait >= 10 or not SIEGE.running
-                if SIEGE.status then SIEGE.status.TextColor3 = Color3.fromRGB(80,220,80) end
-            end
 
             SiegeStatus("[>>] Masuk "..d.name.."...", Color3.fromRGB(180,120,255))
             if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(180,120,255) end

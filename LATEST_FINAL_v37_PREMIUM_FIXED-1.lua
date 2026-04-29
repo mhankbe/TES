@@ -13397,38 +13397,10 @@ local function SetupUniversalSpy()
     _layer0Active = true
 
     -- ============================================================
-    -- METHOD 1: hookfunction langsung pada InvokeServer tiap remote
-    -- Ini paling reliable - tidak bergantung pada getrawmetatable
+    -- METHOD 1: hookfunction - DINONAKTIFKAN
+    -- Menyebabkan infinite loop dan argument error pada beberapa executor
+    -- METHOD 2 (__namecall) dan METHOD 3 (PlayerManager polling) sudah cukup
     -- ============================================================
-    if type(hookfunction) == "function" then
-        pcall(function()
-            local _origHeroInvoke = RE.RandomHeroQuirk.InvokeServer
-            hookfunction(_origHeroInvoke, function(self, args)
-                if type(args) == "table" then
-                    OnHeroGUIDCaptured(args.heroGuid or args.HeroGuid or args.guid)
-                end
-                return _origHeroInvoke(self, args)
-            end)
-        end)
-        pcall(function()
-            local _origWeaponInvoke = RE.RandomWeaponQuirk.InvokeServer
-            hookfunction(_origWeaponInvoke, function(self, args)
-                if type(args) == "table" then
-                    OnWeaponGUIDCaptured(args.guid or args.weaponGuid or args.id)
-                end
-                return _origWeaponInvoke(self, args)
-            end)
-        end)
-        pcall(function()
-            local _origPetGInvoke = RE.RandomHeroEquipGrade.InvokeServer
-            hookfunction(_origPetGInvoke, function(self, args)
-                if type(args) == "table" then
-                    OnPetGearGUIDCaptured(args.guid, args.drawId)
-                end
-                return _origPetGInvoke(self, args)
-            end)
-        end)
-    end
 
     -- ============================================================
     -- METHOD 2: __namecall hook (fallback jika hookfunction tidak ada)
@@ -13490,16 +13462,10 @@ local function SetupUniversalSpy()
                 local pd = _pm.localPlayerData
                 if not pd then return end
 
-                -- Scan hero equipped
-                if type(pd.heroes) == "table" then
-                    for guid, data in pairs(pd.heroes) do
-                        if data.isEquip and IsValidGUID(guid) then
-                            if _HR_RPT and (_HR_RPT.guid == nil or _HR_RPT.guid == "") then
-                                OnHeroGUIDCaptured(guid)
-                            end
-                        end
-                    end
-                end
+                -- Scan hero equipped - DINONAKTIFKAN di METHOD 3
+                -- Hero GUID harus di-capture manual via reroll 1x di mesin
+                -- karena localPlayerData.heroes key-nya bisa berbeda dari heroGuid reroll
+                -- METHOD 2 (__namecall) sudah handle capture saat user manual reroll
 
                 -- Scan weapon equipped
                 if type(pd.weapons) == "table" then

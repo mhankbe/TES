@@ -97,58 +97,89 @@ RE = {
 DecomposeItems = Remotes:FindFirstChild("DecomposeItems"),
 }
 
--- [GODMODE] Global Instant Gold/Item Collector
--- Auto-collects ALL drops instantly on spawn, no distance/delay
-local _instantCollectConn = nil
+-- [GODMODE v2] Global Instant Gold/Item Collector
+-- FIX: Listen ke masing-masing folder (bukan workspace), karena gold/item jatuh ke dalam folder
+-- FIX: Collect semua sekaligus (batch), tidak satu per satu
+local _instantCollectConns = {}
 local _instantCollected = {}
 
-function StartInstantGoldCollector(on)
-    if _instantCollectConn then
-        pcall(function() _instantCollectConn:Disconnect() end)
-        _instantCollectConn = nil
-        _instantCollected = {}
-    end
-    
-    if not on then return end
-    
-    local DROP_FOLDERS = {"Golds", "Items", "Drops", "Rewards", "Loot", "DropItems", "RewardItems"}
-    
-    _instantCollectConn = workspace.ChildAdded:Connect(function(obj)
-task.wait() -- Instant collect, no delay
-        local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
-        if guid and not _instantCollected[guid] then
-            _instantCollected[guid] = true
-            
-            -- Instant collect
-            pcall(function()
-                RE.CollectItem:InvokeServer(guid)
-            end)
-            
-            -- Auto-sell for gold efficiency
-            if RE.ExtraReward then
-                pcall(function()
-                    RE.ExtraReward:FireServer({isSell=true, guid=guid})
-                end)
+local function _collectObj(obj)
+    local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
+    if not guid or _instantCollected[guid] then return end
+    _instantCollected[guid] = true
+    -- Teleport langsung ke player sebelum collect
+    pcall(function()
+        local char = LP.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local pos = hrp.Position
+            if obj:IsA("BasePart") then
+                obj.CFrame = CFrame.new(pos)
+            elseif obj:IsA("Model") then
+                local part = obj:FindFirstChildWhichIsA("BasePart") or obj.PrimaryPart
+                if part then part.CFrame = CFrame.new(pos) end
             end
         end
     end)
-    
-    -- Also scan existing drops immediately
+    -- Fire collect remote
+    pcall(function() RE.CollectItem:InvokeServer(guid) end)
+    if RE.ExtraReward then
+        pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
+    end
+end
+
+function StartInstantGoldCollector(on)
+    -- Putuskan semua koneksi lama
+    for _, c in ipairs(_instantCollectConns) do pcall(function() c:Disconnect() end) end
+    _instantCollectConns = {}
+    _instantCollected = {}
+
+    if not on then return end
+
+    local DROP_FOLDERS = {"Golds", "Items", "Drops", "Rewards", "Loot", "DropItems", "RewardItems"}
+
     for _, folderName in ipairs(DROP_FOLDERS) do
-        local folder = workspace:FindFirstChild(folderName)
-        if folder then
+        -- Tunggu folder muncul atau sudah ada
+        task.spawn(function()
+            local folder = workspace:FindFirstChild(folderName)
+                        or workspace:WaitForChild(folderName, 5)
+            if not folder then return end
+
+            -- Collect semua yang sudah ada di folder (batch, tanpa delay)
             for _, obj in ipairs(folder:GetChildren()) do
-                local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
-                if guid and not _instantCollected[guid] then
-                    _instantCollected[guid] = true
-                    pcall(function() RE.CollectItem:InvokeServer(guid) end)
-                    if RE.ExtraReward then
-                        pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                _collectObj(obj)
+            end
+
+            -- Listen ChildAdded di folder (BUKAN di workspace)
+            local conn = folder.ChildAdded:Connect(function(obj)
+                -- Tidak ada task.wait / task.delay - langsung collect
+                _collectObj(obj)
+            end)
+            table.insert(_instantCollectConns, conn)
+        end)
+    end
+
+    -- Juga pantau folder baru yang mungkin muncul nanti di workspace
+    local wsConn = workspace.ChildAdded:Connect(function(obj)
+        for _, fn in ipairs(DROP_FOLDERS) do
+            if obj.Name == fn then
+                task.spawn(function()
+                    task.wait(0.05)
+                    -- Batch collect isi folder baru
+                    for _, child in ipairs(obj:GetChildren()) do
+                        _collectObj(child)
                     end
-                end
+                    -- Connect ChildAdded ke folder baru
+                    local c2 = obj.ChildAdded:Connect(function(item)
+                        _collectObj(item)
+                    end)
+                    table.insert(_instantCollectConns, c2)
+                end)
+                break
             end
         end
-    end
+    end)
+    table.insert(_instantCollectConns, wsConn)
 end
 
 MY_USER_ID = LP.UserId
@@ -1576,65 +1607,70 @@ end
 -- DESTROY WORKER
 -- ============================================================
 function StartDestroyWorker(checkFn)
- local DROP_FOLDERS = {"Golds","Items","Drops","Rewards","Loot","DropItems","RewardItems"}
- task.spawn(function()
- task.wait(4) -- [v112-FIX] Tunggu PlayerEntity server ready sebelum FireServer pertama
- local collected = {}
- while checkFn() do
- for _, folderName in ipairs(DROP_FOLDERS) do
- if not checkFn() then break end
- local folder = workspace:FindFirstChild(folderName)
- if folder then
- for _, obj in ipairs(folder:GetChildren()) do
- if not checkFn() then break end
- local guid = obj:GetAttribute("GUID")
- if guid and not collected[guid] then
- collected[guid] = true
- pcall(function() RE.CollectItem:InvokeServer(guid) end)
- -- [v112-FIX] Nil guard: skip FireServer jika remote belum ada
- if RE.ExtraReward then
-  pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
- end
- if AG.running then AG.collected = AG.collected + 1 end
- if MA.running then MA.collected = (MA.collected or 0) + 1 end
- task.wait(0.03)
- end
- end
- end
- end
- task.wait(0.2)
- end
- end)
- task.spawn(function()
- task.wait(4) -- [v112-FIX] Delay awal juga di ChildAdded worker
- local collected2 = {}
- local DROP_FOLDERS2 = {"Golds","Items","Drops","Rewards","Loot","DropItems","RewardItems"}
- local conn = workspace.ChildAdded:Connect(function(obj)
- if not checkFn() then return end
- task.delay(0.1, function()
- if not checkFn() then return end
- local guid = obj:GetAttribute("GUID")
- if not guid or collected2[guid] then return end
- local parent = obj.Parent
- if not parent then return end
- for _, fn in ipairs(DROP_FOLDERS2) do
- if parent.Name == fn and parent.Parent == workspace then
- collected2[guid] = true
- pcall(function() RE.CollectItem:InvokeServer(guid) end)
- -- [v112-FIX] Nil guard
- if RE.ExtraReward then
-  pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
- end
- break
- end
- end
- end)
- end)
- while checkFn() do
-     task.wait(0.5)
- end
- pcall(function() conn:Disconnect() end)
- end)
+    local DROP_FOLDERS = {"Golds","Items","Drops","Rewards","Loot","DropItems","RewardItems"}
+    local collected = {}
+    local folderConns = {}
+
+    local function collectObj(obj)
+        local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
+        if not guid or collected[guid] then return end
+        collected[guid] = true
+        -- TP ke player dulu
+        pcall(function()
+            local char = LP.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                local pos = hrp.Position
+                if obj:IsA("BasePart") then
+                    obj.CFrame = CFrame.new(pos)
+                elseif obj:IsA("Model") then
+                    local part = obj:FindFirstChildWhichIsA("BasePart") or obj.PrimaryPart
+                    if part then part.CFrame = CFrame.new(pos) end
+                end
+            end
+        end)
+        pcall(function() RE.CollectItem:InvokeServer(guid) end)
+        if RE.ExtraReward then
+            pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
+        end
+        if AG.running then AG.collected = AG.collected + 1 end
+        if MA.running then MA.collected = (MA.collected or 0) + 1 end
+    end
+
+    -- [FIX] Connect ChildAdded langsung ke folder (bukan workspace), no delay
+    task.spawn(function()
+        task.wait(1) -- Tunggu server siap
+        for _, folderName in ipairs(DROP_FOLDERS) do
+            local folder = workspace:FindFirstChild(folderName)
+            if folder then
+                -- Batch collect yang sudah ada
+                for _, obj in ipairs(folder:GetChildren()) do
+                    if not checkFn() then break end
+                    collectObj(obj)
+                end
+                -- Listen new drops masuk folder
+                local c = folder.ChildAdded:Connect(function(obj)
+                    if checkFn() then collectObj(obj) end
+                end)
+                table.insert(folderConns, c)
+            end
+        end
+        -- Polling fallback setiap 0.15s (batch semua sekaligus)
+        while checkFn() do
+            for _, folderName in ipairs(DROP_FOLDERS) do
+                if not checkFn() then break end
+                local folder = workspace:FindFirstChild(folderName)
+                if folder then
+                    for _, obj in ipairs(folder:GetChildren()) do
+                        collectObj(obj)
+                    end
+                end
+            end
+            task.wait(0.15)
+        end
+        -- Cleanup connections
+        for _, c in ipairs(folderConns) do pcall(function() c:Disconnect() end) end
+    end)
 end
 
 -- ============================================================
@@ -1643,48 +1679,60 @@ end
 -- Fungsi ini TP semua item di folder Golds/Items/Drops ke posisi player
 -- Dipanggil periodik selama MA/AG/Raid aktif
 -- ============================================================
--- [GODMODE ENHANCED] Super Gold Magnet - Instant TP + Collect (0.05s loop, always aggressive)
+-- ============================================================
+-- [v258 FIXED] SUPER GOLD MAGNET - Batch TP + Collect, no delay, always aggressive
+-- FIX: _goldMagnetRunning direset saat checkFn false (tidak stuck)
+-- FIX: Semua item di-TP sekaligus ke posisi player, tidak satu per satu
 local _goldMagnetRunning = false
 function StartGoldMagnet(checkFn)
- if _goldMagnetRunning then return end
- _goldMagnetRunning = true
- task.spawn(function()
- local GOLD_FOLDERS = {"Golds","Items","Drops","Rewards","Loot","DropItems","RewardItems"}
- while true do  -- Godmode: ignore checkFn, always run until stopped
- pcall(function()
- local char = LP.Character
- local hrp = char and char:FindFirstChild("HumanoidRootPart")
- if not hrp then task.wait(0.1); return end
- local playerPos = hrp.Position
- for _, folderName in ipairs(GOLD_FOLDERS) do
- local folder = workspace:FindFirstChild(folderName)
- if folder then
- for _, obj in ipairs(folder:GetChildren()) do
- pcall(function()
- -- Instant TP to player (precise)
- local offset = Vector3.new(math.random(-2,2), 2, math.random(-2,2))
- if obj:IsA("BasePart") then
- obj.CFrame = CFrame.new(playerPos + offset)
- elseif obj:IsA("Model") then
- local part = obj:FindFirstChildWhichIsA("BasePart") or obj.PrimaryPart
- if part then part.CFrame = CFrame.new(playerPos + offset) end
- end
- -- Double remote fire for max reliability
- local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
- if guid then
- pcall(function() RE.CollectItem:InvokeServer(guid) end)
- if RE.ExtraReward then
- pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
- end
- end
- end)
- end
- end
- end
- end)
-task.wait()  -- Godmode: Instant batch collection
- end
- end)
+    if _goldMagnetRunning then return end
+    _goldMagnetRunning = true
+    task.spawn(function()
+        local GOLD_FOLDERS = {"Golds","Items","Drops","Rewards","Loot","DropItems","RewardItems"}
+        while _goldMagnetRunning do
+            local shouldRun = (checkFn == nil) or checkFn()
+            if not shouldRun then
+                _goldMagnetRunning = false
+                break
+            end
+            pcall(function()
+                local char = LP.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if not hrp then return end
+                local playerPos = hrp.Position
+                for _, folderName in ipairs(GOLD_FOLDERS) do
+                    local folder = workspace:FindFirstChild(folderName)
+                    if folder then
+                        for _, obj in ipairs(folder:GetChildren()) do
+                            pcall(function()
+                                -- TP langsung ke player (no random offset agar pasti ke-collect)
+                                if obj:IsA("BasePart") then
+                                    obj.CFrame = CFrame.new(playerPos)
+                                elseif obj:IsA("Model") then
+                                    local part = obj:FindFirstChildWhichIsA("BasePart") or obj.PrimaryPart
+                                    if part then part.CFrame = CFrame.new(playerPos) end
+                                end
+                                -- Fire collect
+                                local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
+                                if guid then
+                                    pcall(function() RE.CollectItem:InvokeServer(guid) end)
+                                    if RE.ExtraReward then
+                                        pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
+                                    end
+                                end
+                            end)
+                        end
+                    end
+                end
+            end)
+            task.wait(0.05) -- 20x per detik, batch semua item sekaligus
+        end
+        _goldMagnetRunning = false
+    end)
+end
+
+function StopGoldMagnet()
+    _goldMagnetRunning = false
 end
 
 -- ============================================================
@@ -1922,16 +1970,19 @@ end
 end
 
 function RunAG(onStatus, onDone)
- AG.running = true; AG.killed = 0; AG.collected = 0
- StartInstantGoldCollector(true)  -- [GODMODE] Instant collect on
- StartDestroyWorker(function() return AG.running end)
- StartGoldMagnet(function() return AG.running end) -- [GODMODE ENHANCED] Super magnet
- AG.thread = task.spawn(function()
- AttackLoop_Goyang(onStatus)
- AG.running = false
- ReturnHRPToOrigin()
- if onDone then onDone() end
- end)
+    StopGoldMagnet() -- Reset dulu agar tidak stuck
+    AG.running = true; AG.killed = 0; AG.collected = 0
+    StartInstantGoldCollector(true)  -- [v258] Instant collect on (fix: listen ke folder)
+    StartDestroyWorker(function() return AG.running end)
+    StartGoldMagnet(function() return AG.running end) -- [v258] Super magnet
+    AG.thread = task.spawn(function()
+        AttackLoop_Goyang(onStatus)
+        AG.running = false
+        StopGoldMagnet()
+        StartInstantGoldCollector(false)
+        ReturnHRPToOrigin()
+        if onDone then onDone() end
+    end)
 end
 
 
@@ -2100,8 +2151,10 @@ function DoMassAttack(on)
  MA.running = true
  MA.killed = 0
  MA.collected = 0
+ StopGoldMagnet() -- [v258] Reset magnet sebelum start
+ StartInstantGoldCollector(true) -- [v258] Instant collect (fix: listen ke folder)
  StartDestroyWorker(function() return MA.running end)
- StartGoldMagnet(function() return MA.running end) -- [v257] Gold magnet
+ StartGoldMagnet(function() return MA.running end) -- [v258] Super magnet
  MA.thread = task.spawn(function()
  local _maStart = os.time()
  local function maStatus(msg, col)
@@ -2223,8 +2276,10 @@ function DoMassAttack(on)
  MA.running = true
  MA.killed = 0
  MA.collected = 0
+ StopGoldMagnet() -- [v258] Reset magnet sebelum start
+ StartInstantGoldCollector(true) -- [v258] Instant collect (fix: listen ke folder)
  StartDestroyWorker(function() return MA.running end)
- StartGoldMagnet(function() return MA.running end) -- [v257] Gold magnet
+ StartGoldMagnet(function() return MA.running end) -- [v258] Super magnet
  MA.thread = task.spawn(function()
  local _maStart = os.time()
  local function maStatus(msg, col)
@@ -9887,6 +9942,8 @@ StartSiegeLoop = function()
     SiegeCounterUpdate()
     -- [FIX] Gold Magnet + Drop Collector
     StartDestroyWorker(function() return SIEGE.running end)
+    StopGoldMagnet()
+    StartInstantGoldCollector(true)
     StartGoldMagnet(function() return SIEGE.running end)
 
     if _siegeWakeup then pcall(function() _siegeWakeup:Destroy() end) end
@@ -10592,6 +10649,8 @@ StartDungeonLoop = function()
  DUNGEON.interrupt = false
     -- [FIX] Gold Magnet + Drop Collector
     StartDestroyWorker(function() return DUNGEON.running end)
+    StopGoldMagnet()
+    StartInstantGoldCollector(true)
     StartGoldMagnet(function() return DUNGEON.running end)
 
  if _dungeonWakeup then pcall(function() _dungeonWakeup:Destroy() end) end
@@ -11034,6 +11093,8 @@ function StartST2Loop()
     ST2Status("[..] START Auto Single Tower...", Color3.fromRGB(255,200,60))
     -- [FIX] Gold Magnet + Drop Collector saat ST2 berjalan
     StartDestroyWorker(function() return ST2.running end)
+    StopGoldMagnet()
+    StartInstantGoldCollector(true)
     StartGoldMagnet(function() return ST2.running end)
 
     -- 3. Thread Utama

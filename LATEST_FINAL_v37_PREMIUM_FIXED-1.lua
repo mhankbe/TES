@@ -9581,6 +9581,7 @@ SIEGE = {
  dot = nil,
  countLbls = {},
  count = {[3]=0,[7]=0,[10]=0,[13]=0,[18]=0},
+ countSummaryLbl = nil, -- [v41] single summary label
  killed = 0, -- [v150] FIX: inisialisasi killed agar tidak nil saat EnemyDeath event
  live = {}, -- {[cityRaidId] = mapNum} - diisi notif server
 }
@@ -9604,10 +9605,12 @@ SiegeStatus = function(msg, color)
 end
 
 SiegeCounterUpdate = function()
- for _, mn in ipairs(SIEGE_MAP_NUMS) do
- if SIEGE.countLbls[mn] then
- SIEGE.countLbls[mn].Text = "SUCCES: "..(SIEGE.count[mn] or 0)
- end
+ if SIEGE.countSummaryLbl then
+  local parts = {}
+  for _, mn in ipairs(SIEGE_MAP_NUMS) do
+   table.insert(parts, "M"..mn..":".. (SIEGE.count[mn] or 0))
+  end
+  SIEGE.countSummaryLbl.Text = table.concat(parts, "  ")
  end
 end
 
@@ -10198,35 +10201,17 @@ do
   _visSiege = _vis
  end
 
- -- [v273] EXCLUDE MAP: Semua map masuk by default, user pilih map yg di-skip
- -- SIEGE.excludeMaps = {[3]=false,[7]=false,[10]=false,[13]=false}
- -- mapActive selalu true kecuali map di-exclude
- if not SIEGE.excludeMaps then
- SIEGE.excludeMaps = {[3]=false,[7]=false,[10]=false,[13]=false}
- end
- -- Sync mapActive: semua ON kecuali yang di-exclude
- -- Counter card (sukses per map)
- local cntCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
- cntCard.LayoutOrder = 2; cntCard.AutomaticSize = Enum.AutomaticSize.Y
- Corner(cntCard, 10); Stroke(cntCard,C.BORD, 1.5,0.5)
- New("UIPadding",{Parent=cntCard,PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0, 10),PaddingRight=UDim.new(0, 10)})
- local cntInner = Frame(cntCard, C.BLACK, UDim2.new(1,0,0,0))
- cntInner.BackgroundTransparency=1; cntInner.AutomaticSize=Enum.AutomaticSize.Y
- New("UIListLayout",{Parent=cntInner,FillDirection=Enum.FillDirection.Horizontal,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
- for _, mn in ipairs(SIEGE_MAP_NUMS) do
- local cntF = Frame(cntInner, C.BG3, UDim2.new(0.25,-4,0,28))
- cntF.LayoutOrder=mn; Corner(cntF,6)
- local cntLbl = Label(cntF,"M"..mn..": 0",9,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- cntLbl.Size=UDim2.new(1,0,1,0)
- SIEGE.countLbls[mn] = cntLbl
- end
+ -- [v41] Count ringkas: 1 baris teks "M3:0  M7:0  M10:0  M13:0  M18:0"
+ local cntCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,26))
+ cntCard.LayoutOrder = 2; Corner(cntCard, 8); Stroke(cntCard,C.BORD, 1.5,0.5)
+ New("UIPadding",{Parent=cntCard,PaddingLeft=UDim.new(0,10),PaddingRight=UDim.new(0,10)})
+ local cntSummary = Label(cntCard,"M3:0  M7:0  M10:0  M13:0  M18:0",9,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Left)
+ cntSummary.Size = UDim2.new(1,0,1,0)
+ SIEGE.countSummaryLbl = cntSummary
 
     -- ============================================================
     -- EXCLUDE MAP: Dropdown list pilih map yang di-skip
     -- ============================================================
-    if not SIEGE.excludeMaps then
-        SIEGE.excludeMaps = {[3]=false,[7]=false,[10]=false,[13]=false}
-    end
 
     -- Dropdown button + list
     local ddCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))

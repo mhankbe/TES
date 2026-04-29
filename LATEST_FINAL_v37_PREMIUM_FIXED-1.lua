@@ -13166,35 +13166,53 @@ end
 -- CAPTURE SYSTEM - TRIPLE METHOD (100% Reliable semua executor)
 -- ============================================================
 do
--- Helper: apakah string ini UUID valid (format xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+-- ============================================================
+-- CAPTURE SYSTEM - __namecall hook + flag _ourCall
+-- Struktur identik dengan v42.lua yang terbukti bekerja benar:
+--   1. Bandingkan self dengan remote OBJECT (bukan string name)
+--   2. _old(self,...) dipanggil LANGSUNG - JANGAN dibungkus pcall
+--      karena pcall memutus __namecall context di Roblox/Delta
+--   3. _ourCall guard: saat script kita InvokeServer, bypass capture
+-- ============================================================
+
+-- Helper: validasi GUID
 local function IsValidGUID(s)
-    return type(s) == "string" and #s > 20 and s:find("%-") ~= nil
+    return type(s) == "string" and #s > 20 and s:find("-") ~= nil
 end
 
--- Core: proses GUID yang ter-capture dari remote manapun
-local function OnHeroGUIDCaptured(g)
+-- Helper capture GUID hero dari arg
+local function _captureHeroGuid(arg1)
+    if type(arg1) ~= "table" then return end
+    local g = arg1.heroGuid or arg1.HeroGuid or arg1.guid
     if not IsValidGUID(g) then return end
-    if _HR_RPT then _HR_RPT.guid = g; _HR_RPT.Refresh() end
+    if _HR_RPT then _HR_RPT.guid = g; pcall(_HR_RPT.Refresh) end
     local dup = false
     for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
     if not dup then table.insert(HERO_GUIDS, g) end
 end
 
-local function OnWeaponGUIDCaptured(wg)
-    if not IsValidGUID(wg) then return end
-    if _WR_RPT then _WR_RPT.guid = wg; _WR_RPT.Refresh() end
+-- Helper capture GUID weapon dari arg
+local function _captureWeaponGuid(arg1)
+    if type(arg1) ~= "table" then return end
+    local g = arg1.guid or arg1.weaponGuid or arg1.id
+    if not IsValidGUID(g) then return end
+    if _WR_RPT then _WR_RPT.guid = g; pcall(_WR_RPT.Refresh) end
 end
 
-local function OnPetGearGUIDCaptured(pg, dId)
-    if not IsValidGUID(pg) then return end
+-- Helper capture GUID pet gear dari arg
+local function _capturePetGearGuid(arg1)
+    if type(arg1) ~= "table" then return end
+    local g   = arg1.guid
+    local dId = arg1.drawId
+    if not IsValidGUID(g) then return end
     if type(dId) ~= "number" then return end
     local si = ({[980001]=1,[980002]=2,[980003]=3})[dId]
     if si and PGR then
-        PGR.guids[si] = pg
+        PGR.guids[si]    = g
         PGR.captured[si] = true
         if PGR.statLbls[si] then
-            PGR.statLbls[si].Text = "START NOW"
-            PGR.statLbls[si].TextColor3 = Color3.fromRGB(80,220,80)
+            PGR.statLbls[si].Text       = "GUID captured - siap roll"
+            PGR.statLbls[si].TextColor3 = Color3.fromRGB(80, 220, 80)
         end
     end
 end
@@ -13203,102 +13221,118 @@ local function SetupUniversalSpy()
     if _layer0Active then return end
     _layer0Active = true
 
-    -- ============================================================
-    -- METHOD 1: hookfunction - DINONAKTIFKAN
-    -- Menyebabkan infinite loop dan argument error pada beberapa executor
-    -- METHOD 2 (__namecall) dan METHOD 3 (PlayerManager polling) sudah cukup
-    -- ============================================================
+    -- Cache remote objects saat setup (bukan string, bukan GetAttribute)
+    local _rHero      = RE.RandomHeroQuirk
+    local _rAuto      = RE.AutoHeroQuirk
+    local _rWeapon    = RE.RandomWeaponQuirk
+    local _rPetG      = RE.RandomHeroEquipGrade
+    local _rHeroSkill = RE.HeroUseSkill
 
-    -- ============================================================
-    -- METHOD 2: __namecall hook (fallback jika hookfunction tidak ada)
-    -- ============================================================
-    if type(getrawmetatable) == "function" then
-        pcall(function()
-            local mt = getrawmetatable(game)
-            local _old = mt.__namecall
-            if mt and _old then
-                setreadonly(mt, false)
-                mt.__namecall = newcclosure(function(self, ...)
-                    local _m = getnamecallmethod()
-                    if _m ~= "FireServer" and _m ~= "InvokeServer" then
-                        -- Langsung return tanpa capture - bukan remote call
-                        local _r1, _r2, _r3, _r4, _r5 = pcall(_old, self, ...)
-                        if _r1 then return _r2, _r3, _r4, _r5 end
-                        return
+    -- Coba pasang __namecall hook (Delta/Xeno support)
+    local hookOk = false
+    pcall(function()
+        if type(getrawmetatable)  ~= "function" then return end
+        if type(setreadonly)      ~= "function" then return end
+        if type(newcclosure)      ~= "function" then return end
+        if type(getnamecallmethod)~= "function" then return end
+
+        local mt = getrawmetatable(game)
+        if not mt then return end
+        local _old = mt.__namecall
+        if not _old then return end
+
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            -- [v254 FIX] Bypass semua method selain FireServer/InvokeServer
+            -- TANPA pcall agar tidak rusak context (require, dll langsung pass-through)
+            local _m = ""
+            pcall(function() _m = getnamecallmethod() end)
+            if _m ~= "FireServer" and _m ~= "InvokeServer" then
+                return _old(self, ...)
+            end
+
+            local arg1 = select(1, ...)
+
+            -- Capture HeroUseSkill -> HERO_GUIDS (untuk MA/Raid/Siege)
+            -- Hanya saat bukan panggilan kita sendiri
+            if self == _rHeroSkill and not _ourCall then
+                if type(arg1) == "table" and IsValidGUID(arg1.heroGuid) then
+                    local dup = false
+                    for _, g in ipairs(HERO_GUIDS) do
+                        if g == arg1.heroGuid then dup = true; break end
                     end
-                    -- Capture GUID via nama remote
-                    local _arg1 = select(1, ...)
-                    if type(_arg1) == "table" then
-                        local _ok2, _sn2 = pcall(function() return self.Name end)
-                        if _ok2 and type(_sn2) == "string" then
-                            if _sn2 == "RandomHeroQuirk" or _sn2 == "AutoRandomHeroQuirk" then
-                                OnHeroGUIDCaptured(_arg1.heroGuid or _arg1.HeroGuid or _arg1.guid)
-                            elseif _sn2 == "RandomWeaponQuirk" or _sn2 == "AutoRandomWeaponQuirk" then
-                                OnWeaponGUIDCaptured(_arg1.guid or _arg1.weaponGuid or _arg1.id)
-                            elseif _sn2 == "RandomHeroEquipGrade" or _sn2 == "AutoRandomHeroEquipGrade" then
-                                OnPetGearGUIDCaptured(_arg1.guid, _arg1.drawId)
+                    if not dup then table.insert(HERO_GUIDS, arg1.heroGuid) end
+                end
+                return _old(self, ...)
+            end
+
+            -- Bukan remote reroll target -> pass through langsung
+            if self ~= _rHero and self ~= _rAuto and self ~= _rWeapon and self ~= _rPetG then
+                return _old(self, ...)
+            end
+
+            -- Saat script kita sendiri yang call reroll remote -> skip capture, langsung teruskan
+            if _ourCall then
+                return _old(self, ...)
+            end
+
+            -- Jalankan remote asli DULU, baru capture GUID dari arg
+            -- PENTING: _old(self,...) TANPA pcall wrapper agar context namecall terjaga
+            local r1, r2, r3, r4, r5 = _old(self, ...)
+
+            -- Capture setelah remote sukses
+            if self == _rHero or self == _rAuto then
+                pcall(_captureHeroGuid, arg1)
+            elseif self == _rWeapon then
+                pcall(_captureWeaponGuid, arg1)
+            elseif self == _rPetG then
+                pcall(_capturePetGearGuid, arg1)
+            end
+
+            return r1, r2, r3, r4, r5
+        end)
+        setreadonly(mt, true)
+        hookOk = true
+    end)
+
+    if not hookOk then
+        -- Fallback: polling PlayerManager setiap 2 detik
+        task.spawn(function()
+            while ScreenGui and ScreenGui.Parent do
+                task.wait(2)
+                pcall(function()
+                    local _pm = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.PlayerManager)
+                    if not _pm or not _pm.localPlayerData then return end
+                    -- Hero GUID
+                    local heroes = _pm.localPlayerData.heros or _pm.localPlayerData.heroes
+                    if heroes then
+                        for guid, data in pairs(heroes) do
+                            if IsValidGUID(guid) and data.isEquip then
+                                local dup = false
+                                for _, ex in ipairs(HERO_GUIDS) do if ex == guid then dup = true; break end end
+                                if not dup then table.insert(HERO_GUIDS, guid) end
+                                if _HR_RPT and (_HR_RPT.guid == nil or _HR_RPT.guid == "") then
+                                    _HR_RPT.guid = guid
+                                    if _HR_RPT.Refresh then pcall(_HR_RPT.Refresh) end
+                                end
                             end
                         end
                     end
-                    -- Panggil original dengan pcall agar error game tidak bocor ke output Delta
-                    local _ok3, _v1, _v2, _v3, _v4 = pcall(_old, self, ...)
-                    if _ok3 then return _v1, _v2, _v3, _v4 end
-                    return
+                    -- Weapon GUID
+                    local weapons = _pm.localPlayerData.weapons
+                    if weapons and _WR_RPT and (_WR_RPT.guid == nil or _WR_RPT.guid == "") then
+                        for guid, data in pairs(weapons) do
+                            if IsValidGUID(guid) and data.isEquip then
+                                _WR_RPT.guid = guid
+                                if _WR_RPT.Refresh then pcall(_WR_RPT.Refresh) end
+                                break
+                            end
+                        end
+                    end
                 end)
-                setreadonly(mt, true)
             end
         end)
     end
-
-    -- ============================================================
-    -- METHOD 3: Polling PlayerManager (fallback universal - pure Lua)
-    -- Scan localPlayerData untuk hero/weapon/equip yang isEquip=true
-    -- Bekerja 100% tanpa executor hook apapun
-    -- ============================================================
-    task.spawn(function()
-        local _pm = nil
-        pcall(function()
-            _pm = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.PlayerManager)
-        end)
-        if not _pm then return end
-
-        while true do
-            task.wait(1)
-            pcall(function()
-                local pd = _pm.localPlayerData
-                if not pd then return end
-
-                -- Scan hero equipped - DINONAKTIFKAN di METHOD 3
-                -- Hero GUID harus di-capture manual via reroll 1x di mesin
-                -- karena localPlayerData.heroes key-nya bisa berbeda dari heroGuid reroll
-                -- METHOD 2 (__namecall) sudah handle capture saat user manual reroll
-
-                -- Scan weapon equipped
-                if type(pd.weapons) == "table" then
-                    for guid, data in pairs(pd.weapons) do
-                        if data.isEquip and IsValidGUID(guid) then
-                            if _WR_RPT and (_WR_RPT.guid == nil or _WR_RPT.guid == "") then
-                                OnWeaponGUIDCaptured(guid)
-                            end
-                        end
-                    end
-                end
-
-                -- Scan heroEquips (pet gear)
-                local equips = pd.heroEquips or pd.equips
-                if type(equips) == "table" then
-                    for guid, data in pairs(equips) do
-                        if data.isEquip and IsValidGUID(guid) then
-                            local dId = data.drawId or data.itemId
-                            if type(dId) == "number" then
-                                OnPetGearGUIDCaptured(guid, dId)
-                            end
-                        end
-                    end
-                end
-            end)
-        end
-    end)
 end
 
 InitAllCaptureLayers = function()

@@ -1103,7 +1103,7 @@ end
 -- ============================================================
 -- STATE & LOOPS
 -- ============================================================
-STATE = {autoCollect=false, autoDestroyer=false, autoArise=false, noClip=false, antiAfk=false, autoConfirm=false, autoClose=false}
+STATE = {autoCollect=false, autoDestroyer=false, autoArise=false, noClip=false, antiAfk=false, autoConfirm=false, autoClose=false, spyKillswitch=true}
 LOOPS, COLLECTED = {}, {}
 
 function StopLoop(key)
@@ -2891,6 +2891,7 @@ end
 
 _spyLog = {}
 _layer0Active = false
+spyStatusLbl = nil
 _HR_RPT = nil -- laporan hero fastroll
 _WR_RPT = nil -- laporan weapon fastroll
 _watcherConns = {}
@@ -13259,12 +13260,10 @@ do
  setStatus("[~] Roll #"..attempt, Color3.fromRGB(255,160,30))
 
  _ourCall = true
- local ok, res = pcall(function()
- return RE.RandomHeroEquipGrade:InvokeServer({
- guid = PGR.guids[si],
- drawId = PG_DRAW_IDS[si],
- })
- end)
+local autoRemote = Remotes:FindFirstChild("AutoRandomHeroEquipGrade") or RE.RandomHeroEquipGrade
+local ok, res = pcall(function()
+ return autoRemote:InvokeServer(PGR.guids[si], PG_DRAW_IDS[si])
+end)
  _ourCall = false
 
  if not ok then
@@ -13359,9 +13358,10 @@ end
 -- CAPTURE SYSTEM - PURE HOOK (No Crash, 100% Detect)
 -- ============================================================
 do
-    local function SetupUniversalSpy()
-        if _layer0Active then return end
-        _layer0Active = true
+local function SetupUniversalSpy()
+          if _layer0Active then return end
+          if STATE.spyKillswitch then return end
+          _layer0Active = true
 
         local _rHero = RE.RandomHeroQuirk
         local _rAuto = RE.AutoHeroQuirk
@@ -13394,7 +13394,7 @@ do
                         end
                     end
 
-                    if type(_arg1) == "table" then
+                    if type(_arg1) == "table" and _ourCall then
                         -- 1. Hero Reroll
                         if self == _rHero or self == _rAuto then
                             local g = _arg1.heroGuid or _arg1.HeroGuid or _arg1.guid

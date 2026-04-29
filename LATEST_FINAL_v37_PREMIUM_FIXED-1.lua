@@ -9953,74 +9953,67 @@ StartSiegeLoop = function()
                 _siegeInterrupt = false
                 task.wait(2); break
             end
-                -- [FIX] STEP 1: TP Player ke BaseMapId dulu (tempat SIEGE terbuka)
+                -- [FIX v11] STEP 1: TP ke BaseMapId tempat SIEGE terbuka
+                -- Hanya fire SEKALI, tunggu max 8 detik, tidak loop ulang
                 local baseMapId = d.baseMapId
-                SiegeStatus(("[TP] BaseMap %d..."):format(baseMapId), Color3.fromRGB(255,200,100))
-                pcall(function() RE.StartTp:FireServer({mapId = baseMapId}) end)
-                pcall(function() RE.LocalTp:FireServer({mapId = baseMapId}) end)
-
-                -- Tunggu konfirmasi benar-benar sudah di BaseMapId (max 10 detik)
-                local tpWait = 0
-                while tpWait < 10 and SIEGE.running do
-                    local wm = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
-                    if wm == baseMapId then break end
-                    task.wait(0.5); tpWait = tpWait + 0.5
-                end
-                local wmCheck = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
-                if wmCheck ~= baseMapId then
-                    -- Retry sekali lagi
+                local curMap = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
+                if curMap ~= baseMapId then
+                    SiegeStatus(("[TP] BaseMap %d..."):format(baseMapId), Color3.fromRGB(255,200,100))
                     pcall(function() RE.StartTp:FireServer({mapId = baseMapId}) end)
                     pcall(function() RE.LocalTp:FireServer({mapId = baseMapId}) end)
-                    task.wait(2)
+                    local tpWait = 0
+                    while tpWait < 8 and SIEGE.running do
+                        local wm = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
+                        if wm == baseMapId then break end
+                        task.wait(0.5); tpWait = tpWait + 0.5
+                    end
                 end
-                SiegeStatus(("[OK] Di BaseMap %d, tunggu 1s..."):format(baseMapId), Color3.fromRGB(80,220,80))
-                task.wait(1) -- 1 detik settle setelah di BaseMap, sesuai konfirmasi user
+                SiegeStatus(("[OK] BaseMap %d - tunggu 1s..."):format(baseMapId), Color3.fromRGB(80,220,80))
+                task.wait(1) -- 1 detik settle setelah di BaseMap
 
             if not SIEGE.running then _siegeInterrupt = false; MODE:Release("siege"); break end
 
-            -- [FIX] STEP 2: Masuk ke Siege Map dengan sequence EXACT dari SimpleSpy
+            -- [FIX v11] STEP 2: Masuk ke Siege Map
+            -- Sequence EXACT dari SimpleSpy user:
+            -- 1. EnterCityRaidMap:FireServer(cityRaidId)
+            -- 2. StartLocalPlayerTeleport:FireServer({mapId = tpMapId})
+            -- 3. EquipHeroWithData:FireServer()
+            -- 4. LocalPlayerTeleportSuccess:InvokeServer()
             SiegeStatus("[>>] Masuk "..d.name.."...", Color3.fromRGB(180,120,255))
             if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(180,120,255) end
 
-            local _remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-            if not _remotes then
+            local _rem = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+            if not _rem then
                 _siegeInterrupt = false; MODE:Release("siege")
                 SiegeStatus("[!] Remotes not found - retry 5s...", Color3.fromRGB(255,100,60))
                 task.wait(5); break
             end
 
-            local enterRe = _remotes:FindFirstChild("EnterCityRaidMap")
-            if not enterRe then
+            local _enterRe  = _rem:FindFirstChild("EnterCityRaidMap")
+            local _stpRe    = _rem:FindFirstChild("StartLocalPlayerTeleport")
+            local _eqRe     = _rem:FindFirstChild("EquipHeroWithData")
+            local _ltpRe    = _rem:FindFirstChild("LocalPlayerTeleportSuccess")
+
+            if not _enterRe then
                 _siegeInterrupt = false; MODE:Release("siege")
                 SiegeStatus("[!] EnterCityRaidMap not found - retry 5s...", Color3.fromRGB(255,100,60))
                 task.wait(5); break
             end
 
-            -- Sequence EXACT sesuai SimpleSpy capture (map 7 = cityRaidId 1000002, tpMapId 50202)
-            -- 1. EnterCityRaidMap:FireServer(cityRaidId)
-            pcall(function() enterRe:FireServer(d.cityRaidId) end)
+            -- Fire sequence masuk Siege
+            pcall(function() _enterRe:FireServer(d.cityRaidId) end)
             task.wait(0.3)
-            if not SIEGE.running then _siegeInterrupt = false; MODE:Release("siege"); break end
-
-            -- 2. StartLocalPlayerTeleport:FireServer({mapId = tpMapId})
-            local stpRe = _remotes:FindFirstChild("StartLocalPlayerTeleport")
-            if stpRe then pcall(function() stpRe:FireServer({mapId = d.tpMapId}) end) end
+            if _stpRe then pcall(function() _stpRe:FireServer({mapId = d.tpMapId}) end) end
             task.wait(0.3)
-
-            -- 3. EquipHeroWithData:FireServer()
-            local eqRe = _remotes:FindFirstChild("EquipHeroWithData")
-            if eqRe then pcall(function() eqRe:FireServer() end) end
+            if _eqRe then pcall(function() _eqRe:FireServer() end) end
             task.wait(0.3)
-
-            -- 4. LocalPlayerTeleportSuccess:InvokeServer()
-            local ltpRe = _remotes:FindFirstChild("LocalPlayerTeleportSuccess")
-            if ltpRe then task.spawn(function() pcall(function() ltpRe:InvokeServer() end) end) end
+            if _ltpRe then task.spawn(function() pcall(function() _ltpRe:InvokeServer() end) end) end
             task.wait(0.3)
 
             if not SIEGE.running then _siegeInterrupt = false; MODE:Release("siege"); break end
 
-            -- [FIX] STEP 3: Deteksi masuk Siege Map HANYA via MapId workspace (50201-50204)
-            -- JANGAN pakai GetSiegeEnemies() karena musuh BaseMap ikut terbaca -> false positive!
+            -- [FIX v11] STEP 3: Deteksi masuk Siege Map HANYA via workspace MapId == tpMapId
+            -- TIDAK pakai GetSiegeEnemies() -> false positive karena musuh BaseMap ikut terbaca
             SiegeStatus("[FLa] Waiting Enter Siege Map...", Color3.fromRGB(180,120,255))
             local _entered = false
             local _entWait = 0
@@ -10031,14 +10024,14 @@ StartSiegeLoop = function()
                     _entered = true; break
                 end
                 -- Retry fire sequence setiap 3 detik jika belum masuk
-                if _entWait > 0 and _entWait % 3 < 0.6 then
-                    pcall(function() enterRe:FireServer(d.cityRaidId) end)
-                    task.wait(0.2)
-                    if stpRe then pcall(function() stpRe:FireServer({mapId = d.tpMapId}) end) end
-                    task.wait(0.2)
-                    if eqRe then pcall(function() eqRe:FireServer() end) end
-                    task.wait(0.2)
-                    if ltpRe then task.spawn(function() pcall(function() ltpRe:InvokeServer() end) end) end
+                if _entWait % 3 < 0.6 then
+                    pcall(function() _enterRe:FireServer(d.cityRaidId) end)
+                    task.wait(0.15)
+                    if _stpRe then pcall(function() _stpRe:FireServer({mapId = d.tpMapId}) end) end
+                    task.wait(0.15)
+                    if _eqRe then pcall(function() _eqRe:FireServer() end) end
+                    task.wait(0.15)
+                    if _ltpRe then task.spawn(function() pcall(function() _ltpRe:InvokeServer() end) end) end
                 end
             end
 

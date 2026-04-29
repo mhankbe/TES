@@ -2475,6 +2475,10 @@ PGR100 = {
  toggleBtns = {nil,nil,nil},
  toggleKnobs = {nil,nil,nil},
  enOnFlags = {false,false,false},
+ statLbls = {nil,nil,nil},
+ dotRefs = {nil,nil,nil},
+ attemptLbls = {nil,nil,nil},
+ lastLbls = {nil,nil,nil},
 }
 
 local HALO_NAMES = {"Bronze Halo", "Gold Halo", "Diamond Halo"}
@@ -2579,34 +2583,142 @@ _ASH_ORN.STATE = {
 }
 ORN = _ASH_ORN.STATE
 
--- [BLACKBOXAI v37] PGR100 100x Roll Loop Function (Step 5)
+-- [v38] PGR100 100x Roll Loop Function
+-- Perbedaan dari Fastroll biasa:
+--   - Kirim remote AutoRandomHeroEquipGrade (100x dalam 1 invoke) dengan stopGradeIds dari dropdown
+--   - Server akan berhenti sendiri kalau target ditemukan
+--   - Setelah selesai, parse hasil → tampilkan notifikasi sama seperti Fastroll
 PGR100.Loop = function(msi)
   local thread = PGR100.threads[msi]
   if thread then pcall(task.cancel, thread) end
-  PGR100.running[msi] = true
-  PGR100.enOnFlags[msi] = true
-  PGR100.threads[msi] = task.spawn(function()
-    for i = 1, 100 do
-      if not PGR100.running[msi] or not PGR.guids[msi] then break end
-      pcall(function()
-        RE.RandomHeroEquipGrade:InvokeServer({
-          drawId = PG_DRAW_IDS[msi + 1],
-          stopGradeIds = {990006, 990031, 990010}, -- S, M, M+ stop grades
-          guid = PGR.guids[msi]
-        })
-      end)
-      task.wait(0.05)
+
+  local function setStatus100(txt, col)
+    if PGR100.statLbls[msi] then
+      PGR100.statLbls[msi].Text = txt
+      PGR100.statLbls[msi].TextColor3 = col or C.TXT2
     end
+    if PGR100.dotRefs[msi] then
+      PGR100.dotRefs[msi].BackgroundColor3 = col or Color3.fromRGB(100,100,100)
+    end
+  end
+
+  local function setOff100()
     PGR100.running[msi] = false
     PGR100.enOnFlags[msi] = false
-    -- Auto-off toggle visual
-    if PGR100.toggleBtns[msi] then 
-      PGR100.toggleBtns[msi].BackgroundColor3 = C.PILL_OFF
+    if PGR100.toggleBtns[msi] then PGR100.toggleBtns[msi].BackgroundColor3 = C.BG3 end
+    if PGR100.toggleKnobs[msi] then PGR100.toggleKnobs[msi].Position = UDim2.new(0,2,0.5,-9) end
+    setStatus100("[.] Idle", Color3.fromRGB(160,148,135))
+  end
+
+  PGR100.running[msi] = true
+  PGR100.enOnFlags[msi] = true
+
+  PGR100.threads[msi] = task.spawn(function()
+    -- Kumpulkan stopGradeIds dari dropdown target (sama dengan PGR.targets[msi])
+    local stopIds = {}
+    for gradeId, isSelected in pairs(PGR.targets[msi]) do
+      if isSelected then
+        table.insert(stopIds, gradeId)
+      end
     end
-    if PGR100.toggleKnobs[msi] then 
-      PGR100.toggleKnobs[msi].Position = UDim2.new(0, 3, 0.5, 0)
-      PGR100.toggleKnobs[msi].BackgroundColor3 = C.KNOB_OFF
+
+    -- Validasi: harus ada GUID dan target
+    if not PGR.guids[msi] or PGR.guids[msi] == "" then
+      setStatus100("[..] Click 1x on Reroll Machine", Color3.fromRGB(180,220,255))
+      -- Tunggu GUID ter-capture lalu auto-start ulang
+      task.spawn(function()
+        while PGR100.enOnFlags[msi] do
+          if PGR.guids[msi] and PGR.guids[msi] ~= "" then
+            PGR100.Loop(msi)
+            return
+          end
+          task.wait(0.5)
+        end
+      end)
+      return
     end
+
+    if #stopIds == 0 then
+      setStatus100("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
+      setOff100()
+      return
+    end
+
+    local attempt = 0
+    while PGR100.enOnFlags[msi] do
+      repeat
+        if not (PGR.guids[msi] and PGR.guids[msi] ~= "") then
+          setStatus100("[..] Click 1x on Reroll Machine", Color3.fromRGB(180,220,255))
+          task.wait(1); break
+        end
+
+        attempt = attempt + 1
+        if PGR100.attemptLbls[msi] then
+          PGR100.attemptLbls[msi].Text = "100x Batch: #"..attempt
+        end
+        setStatus100("[~] 100x Roll #"..attempt.."...", Color3.fromRGB(100,200,255))
+
+        local ok, res = pcall(function()
+          local autoRemote = Remotes:FindFirstChild("AutoRandomHeroEquipGrade")
+          local remote = autoRemote or RE.RandomHeroEquipGrade
+          return remote:InvokeServer({
+            drawId = PG_DRAW_IDS[msi],
+            stopGradeIds = stopIds,
+            guid = PGR.guids[msi],
+          })
+        end)
+
+        if not ok then
+          setStatus100("[!] Error - retry...", Color3.fromRGB(255,100,60))
+          task.wait(0.5); break
+        end
+
+        -- Parse gradeId dari response (sama seperti Fastroll)
+        local gotId = nil
+        if type(res) == "table" then
+          gotId = res.gradeId or res.grade or res.id or res.resultId
+          if type(gotId) ~= "number" and type(res.data) == "table" then
+            gotId = res.data.grade or res.data.gradeId or res.data.id
+          end
+          if type(gotId) ~= "number" then
+            local function FindGradeId100(t, depth)
+              if type(t) ~= "table" or depth > 4 then return nil end
+              for k, v in pairs(t) do
+                if type(v) == "number" and v >= 990000 and v <= 999999 then
+                  return v
+                elseif type(v) == "table" then
+                  local found = FindGradeId100(v, depth+1)
+                  if found then return found end
+                end
+              end
+              return nil
+            end
+            gotId = FindGradeId100(res, 1)
+          end
+        end
+
+        local hit = gotId and PGR.targets[msi][gotId] == true
+
+        if hit then
+          -- TARGET FOUND — notifikasi sama seperti Fastroll
+          setStatus100("[!] Target SUCCES! (100x #"..attempt..")", Color3.fromRGB(80,255,120))
+          if PGR100.lastLbls[msi] then
+            local gradeName = PG_GRADE_MAP[gotId] or "?"
+            PGR100.lastLbls[msi].Text = "Last: "..gradeName.." - TARGET!"
+          end
+          setOff100()
+          return
+        else
+          setStatus100("[OK] 100x Batch #"..attempt.." DONE", Color3.fromRGB(80,180,80))
+          if PGR100.lastLbls[msi] then
+            local gradeName = gotId and PG_GRADE_MAP[gotId] or "?"
+            PGR100.lastLbls[msi].Text = "Last: "..gradeName
+          end
+        end
+        task.wait(0.1)
+      until true
+    end
+    setOff100()
   end)
 end
 
@@ -5731,7 +5843,80 @@ do
   Stroke(enRow, enOn and Color3.fromRGB(255,140,0) or C.ACC, 1, enOn and 0.3 or 0.7)
   DoAutoRollPetGear(msi_l, enOn)
  end)
- end
+
+ -- ============================================================
+ -- [v38] 100x Reroll Toggle Row
+ -- ============================================================
+ local r100Row = Frame(mCard, C.BG2, UDim2.new(1,0,0,34))
+ r100Row.LayoutOrder = 6; Corner(r100Row, 10); Stroke(r100Row, Color3.fromRGB(0,180,200), 1.5, 0.7)
+
+ -- Status dot
+ local r100Dot = Frame(r100Row, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
+ r100Dot.Position = UDim2.new(0,7,0.5,-4); Corner(r100Dot,4)
+ PGR100.dotRefs[msi] = r100Dot
+
+ local r100Lbl = Label(r100Row,"100x Reroll",12,Color3.fromRGB(80,220,255),Enum.Font.GothamBold)
+ r100Lbl.Size = UDim2.new(0.55,0,1,0); r100Lbl.Position = UDim2.new(0,22,0,0)
+ local r100Sub = Label(r100Row,"ON = 100x per invoke",9,C.TXT3,Enum.Font.GothamBold)
+ r100Sub.Size = UDim2.new(0.55,0,0,12); r100Sub.Position = UDim2.new(0,22,1,-14)
+
+ local r100Toggle = Btn(r100Row, C.BG3, UDim2.new(0,40,0,22))
+ r100Toggle.Position = UDim2.new(1,-50,0.5,-11); Corner(r100Toggle,11)
+ local r100Knob = Frame(r100Toggle, C.TXT, UDim2.new(0,18,0,18))
+ r100Knob.Position = UDim2.new(0,2,0.5,-9); Corner(r100Knob,9)
+
+ PGR100.toggleBtns[msi] = r100Toggle
+ PGR100.toggleKnobs[msi] = r100Knob
+
+ -- Status label (bersama, di bawah toggle row)
+ local r100StatRow = Frame(mCard, C.BG3, UDim2.new(1,0,0,22))
+ r100StatRow.LayoutOrder = 7; Corner(r100StatRow,5)
+ local r100AttLbl = Label(r100StatRow,"100x Batch: -",9.5,C.TXT3,Enum.Font.GothamBold)
+ r100AttLbl.Size = UDim2.new(0.5,0,1,0); r100AttLbl.Position = UDim2.new(0,8,0,0)
+ PGR100.attemptLbls[msi] = r100AttLbl
+ local r100LastLbl = Label(r100StatRow,"Last: -",9.5,Color3.fromRGB(180,180,180),Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+ r100LastLbl.Size = UDim2.new(0.5,-10,1,0); r100LastLbl.Position = UDim2.new(0.5,0,0,0)
+ PGR100.lastLbls[msi] = r100LastLbl
+
+ local r100StatFullRow = Frame(mCard, C.BG2, UDim2.new(1,0,0,26))
+ r100StatFullRow.LayoutOrder = 8; Corner(r100StatFullRow,6); Stroke(r100StatFullRow, Color3.fromRGB(0,180,200), 1.5, 0.5)
+ local r100StatDot = Frame(r100StatFullRow, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
+ r100StatDot.Position = UDim2.new(0,7,0.5,-4); Corner(r100StatDot,4)
+ local r100StLbl = Label(r100StatFullRow,"[100x] Idle",10,C.TXT2,Enum.Font.GothamBold)
+ r100StLbl.Size = UDim2.new(1,-22,1,0); r100StLbl.Position = UDim2.new(0,21,0,0)
+ r100StLbl.TextTruncate = Enum.TextTruncate.AtEnd
+ PGR100.statLbls[msi] = r100StLbl
+
+ local msi_r100 = msi
+ r100Toggle.MouseButton1Click:Connect(function()
+   PGR100.enOnFlags[msi_r100] = not PGR100.enOnFlags[msi_r100]
+   local r100On = PGR100.enOnFlags[msi_r100]
+   r100Toggle.BackgroundColor3 = r100On and Color3.fromRGB(0,180,200) or C.BG3
+   r100Knob.Position = r100On and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+   r100Row.BackgroundColor3 = r100On and C.SURFACE or C.BG2
+   Stroke(r100Row, r100On and Color3.fromRGB(0,230,255) or Color3.fromRGB(0,180,200), 1.5, r100On and 0.3 or 0.7)
+   if r100On then
+     -- Stop Fastroll biasa dulu kalau aktif (tidak boleh 2 loop jalan bersamaan di slot yg sama)
+     if PGR.enOnFlags[msi_r100] then
+       PGR.enOnFlags[msi_r100] = false
+       enToggle.BackgroundColor3 = C.BG3
+       enKnob.Position = UDim2.new(0,2,0.5,-9)
+       DoAutoRollPetGear(msi_r100, false)
+     end
+     PGR100.Loop(msi_r100)
+   else
+     PGR100.enOnFlags[msi_r100] = false
+     if PGR100.threads[msi_r100] then
+       pcall(task.cancel, PGR100.threads[msi_r100])
+       PGR100.threads[msi_r100] = nil
+     end
+     PGR100.running[msi_r100] = false
+     r100StLbl.Text = "[100x] Idle"
+     r100StLbl.TextColor3 = C.TXT2
+     r100StatDot.BackgroundColor3 = Color3.fromRGB(100,100,100)
+   end
+ end) -- end r100Toggle.MouseButton1Click
+ end -- end for msi = 1, 3 do
 
  pgHeader.MouseButton1Click:Connect(function()
  pgOpen = not pgOpen

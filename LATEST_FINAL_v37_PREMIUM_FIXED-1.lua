@@ -114,7 +114,7 @@ function StartInstantGoldCollector(on)
     local DROP_FOLDERS = {"Golds", "Items", "Drops", "Rewards", "Loot", "DropItems", "RewardItems"}
     
     _instantCollectConn = workspace.ChildAdded:Connect(function(obj)
-        task.wait(0.01) -- Micro-delay for GUID attribute
+task.wait() -- Instant collect, no delay
         local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
         if guid and not _instantCollected[guid] then
             _instantCollected[guid] = true
@@ -1685,7 +1685,7 @@ function StartGoldMagnet(checkFn)
  end
  end
  end)
- task.wait(0.05)  -- Godmode: Ultra-fast 50ms loop
+task.wait()  -- Godmode: Instant batch collection
  end
  end)
 end

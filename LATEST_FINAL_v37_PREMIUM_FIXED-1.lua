@@ -9962,7 +9962,7 @@ StartSiegeLoop = function()
                     
                     -- Wait confirm TP
                     local tpWait = 0
-                    while tpWait < 8 and workspace:GetAttribute("MapId") ~= baseMapId and SIEGE.running do
+                    while tpWait < 1 and workspace:GetAttribute("MapId") ~= baseMapId and SIEGE.running do
                         task.wait(0.5); tpWait = tpWait + 0.5
                     end
                     if workspace:GetAttribute("MapId") == baseMapId then

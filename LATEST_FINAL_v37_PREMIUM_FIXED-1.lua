@@ -3549,6 +3549,7 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  AutoRandomHeroQuirk = true,
  AutoHeroQuirk = true,
  }
+ _G._rerollHideNames = _rerollHideNames
  local _rerollHidePending = false
 
  local function _scheduleHideNextRerollMsg()
@@ -3578,28 +3579,12 @@ _animRow.Name = "ZZZ_DisableAnim" -- Mengamankan posisi layout agar tidak berant
  end)
  end)
  end
+ _G._scheduleHideNextRerollMsg = _scheduleHideNextRerollMsg
+ _G._hideRerollChatRef = function() return _hideRerollChat end
 
- -- Hook __namecall untuk deteksi fire AutoRandomWeaponQuirk/AutoRandomHeroQuirk
- -- Hanya aktif kalau toggle Hide Reroll Chat ON
- task.spawn(function()
- task.wait(2) -- tunggu hook system ready
- pcall(function()
- local mt = getrawmetatable(game)
- local old_nc = mt.__namecall
- setreadonly(mt, false)
- mt.__namecall = newcclosure(function(self, ...)
- local method = getnamecallmethod()
- if _hideRerollChat and (method == "FireServer" or method == "InvokeServer") then
- local ok2, selfName = pcall(function() return rawget(self, "Name") or self.Name end)
- if ok2 and _rerollHideNames[selfName] then
- _scheduleHideNextRerollMsg()
- end
- end
- return old_nc(self, ...)
- end)
- setreadonly(mt, true)
- end)
- end)
+ -- [v38 FIX] Hook ke-2 dihapus — deteksi AutoRandomHeroQuirk/AutoRandomWeaponQuirk
+ -- dipindah ke dalam hook utama (Capture System) agar tidak ada double-hook __namecall
+ -- Double hook adalah penyebab "argument #1 expects string" saat Hero Reroll
 
  -- UI Toggle Row
  local hrRow = Frame(p, C.SURFACE, UDim2.new(1,0,0,44))
@@ -13400,6 +13385,14 @@ do
                     -- Pack varargs ke lokal SEBELUM masuk closure apapun
                     -- (Lua 5.1 / Delta tidak bisa capture varargs di inner closure)
                     local _arg1 = select(1, ...)
+
+                    -- [v38] Hide Reroll Chat - deteksi di sini (tidak perlu hook ke-2)
+                    if _G._hideRerollChatRef and _G._hideRerollChatRef() and _G._rerollHideNames then
+                        local _ok, _sn = pcall(function() return self.Name end)
+                        if _ok and _G._rerollHideNames[_sn] and _G._scheduleHideNextRerollMsg then
+                            _G._scheduleHideNextRerollMsg()
+                        end
+                    end
 
                     if type(_arg1) == "table" then
                         -- 1. Hero Reroll

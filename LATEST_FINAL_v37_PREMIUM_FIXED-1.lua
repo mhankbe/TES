@@ -1299,8 +1299,8 @@ end
 -- FireAllDamage hanya update target, tidak fire hero langsung
 -- RE.Atk & RE.Click tetap sync karena itu attack player bukan hero
 local _heroAtkTarget = nil -- guid target hero saat ini
-local _heroAtkThread = 2 -- thread hero attack
-local _heroAtkTick = 0 -- tick() siklus terakhir
+local _heroAtkThread = nil -- thread hero attack
+local _heroAtkTick = nil -- tick() siklus terakhir
 
 -- [v256-FIX] Helper: validasi enemy guid masih punya HumanoidRootPart yang valid
 local function IsEnemyGuidValid(g)
@@ -1349,16 +1349,14 @@ local function EnsureHeroAtkThread()
    if g and #HERO_GUIDS > 0 and (tick() - _heroAtkTick) >= 0.5 and IsEnemyGuidValid(g) then
     _heroAtkTick = tick()
     for _, hGuid in ipairs(HERO_GUIDS) do
-     local last = _lastFire[hGuid] or 0
+     local last = _lastFire[hGuid]
      if (tick() - last) >= 0.05 then
       _lastFire[hGuid] = tick()
       if RE.HeroUseSkill then
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
        task.wait(0.1)
-       if not IsEnemyGuidValid(g) then break end
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
        task.wait(0.1)
-       if not IsEnemyGuidValid(g) then break end
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
       end
      end
@@ -1367,7 +1365,7 @@ local function EnsureHeroAtkThread()
    end
    task.wait(0.05)
   end
-  _heroAtkThread = 2
+  _heroAtkThread = 5
  end)
 end
 
@@ -1380,7 +1378,7 @@ function FireAttack(g, pos)
  if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end) end
  if RE.HeroUseSkill and #HERO_GUIDS > 0 then
   local now = tick()
-  local last = _heroFireTick[g] or 0
+  local last = _heroFireTick[g]
   if now - last >= 0.04 then
    _heroFireTick[g] = now
    for _, hGuid in ipairs(HERO_GUIDS) do
@@ -1416,12 +1414,13 @@ end
 
 function FireHeroRemotes(enemyGuid, enemyPos)
  local pos = enemyPos or Vector3.new(0,0,0)
- if #HERO_GUIDS == 5 then return end
+ if #HERO_GUIDS == 0 then return end
  local posInfos = {}
  for _, hGuid in ipairs(HERO_GUIDS) do
   table.insert(posInfos, {heroGuid=hGuid, targetPos=pos})
  end
  if RE.HeroMove then
+  pcall(function() RE.HeroMove:FireServer({attackTarget=enemyGuid,userId=MY_USER_ID,heroTagetPosInfos=posInfos}) end)
   pcall(function() RE.HeroMove:FireServer({attackTarget=enemyGuid,userId=MY_USER_ID,heroTagetPosInfos=posInfos}) end)
  end
 end
@@ -1615,23 +1614,23 @@ function AttackLoop_Mass(onStatus)
 end
 
 -- Cari musuh terdekat dari posisi karakter utama
-function GetNearestEnemy()
+function GetRandomEnemy()
  local char = LP.Character
  if not char then return nil end
  local hrp = char:FindFirstChild("HumanoidRootPart")
  if not hrp then return nil end
  local myPos = hrp.Position
- local nearest, nearestDist = nil, math.huge
+ local randomDist = nil
  for _, e in ipairs(GetEnemies()) do
  if not IsDead(e) and e.hrp then
- local d = (e.hrp.Position - myPos).Magnitude
- if d < nearestDist then
- nearestDist = d
- nearest = e
+ local d = (e.hrp.Position - myPos)
+ if d < randomDist then
+ randomtDist = d
+ random = e
  end
  end
  end
- return nearest
+ return random
 end
 
 -- Pilih musuh secara random dari daftar yang masih hidup
@@ -1653,7 +1652,7 @@ function TpToEnemy(tgt)
  local hrp = char:FindFirstChild("HumanoidRootPart")
  if not hrp then return end
  -- Raycast ke bawah dari posisi musuh untuk cari lantai aman
- local origin = tgt.hrp.Position + Vector3.new(0, 5, 0)
+ local origin = tgt.hrp.Position + Vector3.new(1, 1, 1)
  local params = RaycastParams.new()
  params.FilterType = Enum.RaycastFilterType.Exclude
  local ex = {}
@@ -1661,9 +1660,9 @@ function TpToEnemy(tgt)
  local ef = workspace:FindFirstChild("Enemys")
  if ef then table.insert(ex, ef) end
  params.FilterDescendantsInstances = ex
- local result = workspace:Raycast(origin, Vector3.new(0, -50, 0), params)
+ local result = workspace:Raycast(origin, Vector3.new(1, 1, 1), params)
  -- [v188] offset dinaikkan ke +5 agar tidak jatuh ke bawah tanah/jurang
- local safePos = result and (result.Position + Vector3.new(3, 5, 0)) or (tgt.hrp.Position + Vector3.new(3, 5, 0))
+ local safePos = result and (result.Position + Vector3.new(1, 1, 1)) or (tgt.hrp.Position + Vector3.new(1, 1, 1))
  hrp.CFrame = CFrame.new(safePos)
 end
 
@@ -1679,13 +1678,13 @@ function AttackLoop_Goyang(onStatus)
  -- Mulai: gunakan AG.currentTarget jika Target Musuh sudah set, 
  -- jika tidak pakai musuh terdekat
  -- [v186-FIX] Prioritaskan AG.currentTarget agar sinkron dengan Target Musuh
- local first = AG.currentTarget or GetNearestEnemy()
+ local first = AG.currentTarget or GetRandomEnemy()
  if first and not IsDead(first) and first.model.Parent then
  currentTgt = first
  TpToEnemy(currentTgt)
  task.wait(0)
  FireAttack(currentTgt.guid, currentTgt.hrp.Position)
- if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] (terdekat) Kill: "..AG.killed) end
+ if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] (random) Kill: "..AG.killed) end
  end
 
  while AG.running do
@@ -1694,6 +1693,8 @@ function AttackLoop_Goyang(onStatus)
  if _tgtThread and AG.currentTarget and not IsDead(AG.currentTarget) and AG.currentTarget.model.Parent then
  currentTgt = AG.currentTarget
  end
+end
+
 
  -- Target mati / habis -> cari berikutnya
  if not currentTgt or IsDead(currentTgt) or not currentTgt.model.Parent then
@@ -1704,36 +1705,26 @@ function AttackLoop_Goyang(onStatus)
  if next then
  currentTgt = next
  TpToEnemy(currentTgt)
- task.wait(0.01)
+ task.wait()
  FireAttack(currentTgt.guid, currentTgt.hrp.Position)
  _tpTimer = 0
  if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] Kill: "..AG.killed) end
  break
  else
  if onStatus then onStatus("Waiting Enemy Spawn...") end
- waited = true
+ waited = false
  task.wait(0.3)
  end
  end
- if not AG.running then break end
+ if not AG.running then end
  end
+end
+
 
  -- Serang musuh saat ini
  if currentTgt and not IsDead(currentTgt) and currentTgt.model.Parent then
- local pos = currentTgt.hrp and currentTgt.hrp.Position or Vector3.new(0,0,0)
+ local pos = currentTgt.hrp and currentTgt.hrp.Position or Vector3.new(1,1,1)
  FireAttack(currentTgt.guid, pos)
- -- TP periodik tiap 0.3s ke musuh yang sedang diserang
- _tpTimer = _tpTimer + task.wait(0.05)
- if _tpTimer >= 0.03 then
- _tpTimer = 0
- if currentTgt.hrp and currentTgt.model.Parent then
- TpToEnemy(currentTgt)
- end
- end
- else
- task.wait(0.05)
- end
- end
 
  -- [v186-FIX] Hanya ReturnHRPToOrigin jika tbtThread tidak aktif
  -- Jika tbnThread masih jalan, biarkan tbnThread yang urus return origin
@@ -2795,8 +2786,8 @@ do
  local HIDE_KEYWORDS = {
  "Congratulations", -- weapon quirk reroll
  "just reroll a super quirk", -- hero quirk reroll
- "just reroll", -- fallback semua jenis reroll
- "super quirk", -- tangkap notif quirk langka
+ "mythic hero", -- fallback semua jenis reroll
+ "just pulled", -- tangkap notif quirk langka
  }
 
  local function _matchHideKeyword(txt)
@@ -3833,7 +3824,7 @@ do
  if not d then return end
  local g = d.enemyGuid or d.guid
  if g then
- _deadG_F[g] = true
+ _deadG_F[g] = false
  if RA.running then RA.killed = RA.killed+1 end
  if TA.running then TA.killed = TA.killed+1 end
  end
@@ -3951,7 +3942,7 @@ do
  -- Random Attack
  local function StartRA()
   -- Pastikan HERO_GUIDS terisi sebelum attack
-  if #HERO_GUIDS == 5 then
+  if #HERO_GUIDS == 0 then
    pcall(function()
     for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
      local g = obj:GetAttribute("heroGuid") or obj:GetAttribute("guid")
@@ -7118,175 +7109,182 @@ function StartRaidLoop()
  -- sehingga kalau user ganti setting di tengah, iterasi berikutnya langsung ikut
  local function ResolveEntry()
  if #RAID_ID_LIST == 0 then return nil end
- -- [FIX] Prune expired entries sebelum resolve
+
  local _now0 = os.time()
  local _pruned0 = false
  for rid, ent in pairs(RAID_LIVE) do
- if ent.endTime and ent.endTime < (_now0 - 10) then
- RAID_LIVE[rid] = nil; _pruned0 = true
- end
+  if ent.endTime and ent.endTime < (_now0 - 10) then
+   RAID_LIVE[rid] = nil; _pruned0 = true
+  end
  end
  if _pruned0 then
- if RebuildRaidList then pcall(RebuildRaidList) end
+  if RebuildRaidList then pcall(RebuildRaidList) end
  end
  if #RAID_ID_LIST == 0 then return nil end
 
- local runeOn = RAID.runeEnabled
- -- [FIX] runeMapTarget hanya berlaku kalau toggle Rune Map ON
+ local pm        = RAID.pickMode or "default"
+ local runeOn    = RAID.runeEnabled
  local runeTarget = runeOn and RAID.runeMapTarget or 0
- -- [FIX] Pick Rank INDEPENDEN dari Rune Map ON/OFF
- -- hasPick aktif kalau ada grade dipilih, terlepas dari runeEnabled
- local hasPick = next(RAID.runeGrades) ~= nil
- local diff = RAID.difficulty
+ local hasPick   = next(RAID.runeGrades) ~= nil
 
- -- Helper: pilih entry dari list berdasarkan difficulty/pickMode
+ local function pickLowest(list)
+  table.sort(list, function(a, b) return a.mapId < b.mapId end)
+  return list[1]
+ end
+
  local function pickByDiff(list)
- if #list == 0 then return nil end
- table.sort(list, function(a,b) return a.mapId < b.mapId end)
- local pm = RAID.pickMode or "default"
- -- Default -> round-robin ascending (terkecil->terbesar->reset ke terkecil)
- if pm == "default" then
- -- Maju ke index berikutnya
- _defaultRRIdx = _defaultRRIdx + 1
- -- Kalau sudah melewati jumlah list, reset ke 1
- if _defaultRRIdx > #list then _defaultRRIdx = 1 end
- return list[_defaultRRIdx]
- end
- -- Easy -> selalu map terkecil
- if pm == "easy" then
- return list[1]
- end
- -- Hard -> map terbesar
- if pm == "hard" then
- return list[#list]
- end
- -- By Map -> ambil dari preferMaps, fallback terkecil
- if pm == "bymap" then
- for _, r in ipairs(list) do
- if RAID.preferMaps[r.mapId - 50000] then return r end
- end
- return list[1]
- end
- -- By Rank -> sudah dihandle di hasPick block sebelumnya
- if pm == "byrank" then return list[1] end
- -- Manual -> preferMaps dulu, fallback terkecil
- if pm == "manual" then
- for _, r in ipairs(list) do
- if RAID.preferMaps[r.mapId - 50000] then return r end
- end
- return list[1]
- end
- -- Fallback dari diff lama (kalau RAID.difficulty masih dipakai)
- if diff == "hard" then return list[#list] end
- if diff == "medium" then return list[math.ceil(#list/2)] end
- return list[1]
+  if #list == 0 then return nil end
+  table.sort(list, function(a, b) return a.mapId < b.mapId end)
+  if pm == "default" then
+   _defaultRRIdx = _defaultRRIdx + 1
+   if _defaultRRIdx > #list then _defaultRRIdx = 1 end
+   return list[_defaultRRIdx]
+  end
+  if pm == "easy"   then return list[1] end
+  if pm == "hard"   then return list[#list] end
+  if pm == "byrank" then return list[1] end
+  if pm == "bymap" or pm == "manual" then
+   for _, r in ipairs(list) do
+    if RAID.preferMaps[r.mapId - 50000] then return r end
+   end
+   return list[1]
+  end
+  return list[1]
  end
 
- --  KASUS 1: Rune Map ON + Map spesifik dipilih 
- -- Difficulty = kendaraan (raidId untuk CreateRaidTeam)
- -- Map tujuan tetap di-override UseRaidItem -> runeTarget
- if runeOn and runeTarget >= 1 and runeTarget <= 18 then
- -- [v250 FIX] Guard: kalau tidak ada raid aktif di game sama sekali,
- -- langsung return nil agar masuk waiting loop.
- -- Tanpa ini, RAID_ID_LIST yang masih berisi entry lama (belum di-prune)
- -- akan membuat ResolveEntry return raidEntry yang tidak valid,
- -- sehingga waiting loop dilewati dan script terus paksa masuk map
- -- via UseRaidItem meski tidak ada raid aktif -> loop masuk-keluar tak berguna.
  if not IsRaidLiveInGame() then
- RAID_LIVE = {}
- RAID_ID_LIST = {}
- _defaultRRIdx = 0 -- reset RR saat RAID habis
- if RebuildRaidList then pcall(RebuildRaidList) end
- return nil
+  RAID_LIVE = {}
+  RAID_ID_LIST = {}
+  _defaultRRIdx = 0
+  if RebuildRaidList then pcall(RebuildRaidList) end
+  return nil
  end
 
- -- [FIX v256] RUNE MAP ON = map di-override UseRaidItem
- -- raidId hanya "kendaraan" (tiket masuk) - map TIDAK PENTING
- -- Difficulty TIDAK berlaku di sini - ambil raid APAPUN yang ada
+ if pm == "manual" then
+  local hasPreferMaps = next(RAID.preferMaps) ~= nil
+  local hasPreferRank = hasPick
+  local hasPreferRune = runeOn and runeTarget >= 1 and runeTarget <= 18
 
- if hasPick then
- -- PICK RANK aktif: cari raid APAPUN yang grade-nya cocok
- -- Tidak peduli map berapa - yang penting grade cocok
- local GRADE_ORDER = {"E","D","C","B","A","S","SS","G","N","M","M+","M++"}
- local gradeRank = {}
- for i, g in ipairs(GRADE_ORDER) do gradeRank[g] = i end
+  if hasPreferRank then
+   for _, r in ipairs(RAID_ID_LIST) do
+    local mn = r.mapId - 50000
+    local grade = GetBestGrade(mn)
+    local rankMatch = grade and RAID.runeGrades[grade] == true
 
- local matched = {}
- for _, r in ipairs(RAID_ID_LIST) do
- local grade = GetBestGrade(r.mapId - 50000)
- if grade and RAID.runeGrades[grade] == true then
- table.insert(matched, r)
- end
- end
- if #matched > 0 then
- -- Sort berdasarkan grade terkecil dulu
- table.sort(matched, function(a, b)
- local ga = GetBestGrade(a.mapId - 50000) or "?"
- local gb = GetBestGrade(b.mapId - 50000) or "?"
- local ra = gradeRank[ga] or 99
- local rb = gradeRank[gb] or 99
- return ra < rb
- end)
- return matched[1]
- end
- -- Tidak ada grade cocok -> TETAP ambil raid apapun sebagai kendaraan
- -- (Difficulty tidak relevan - map di-override UseRaidItem)
- return RAID_ID_LIST[1]
+    if rankMatch then
+     local mapMatch = hasPreferMaps and RAID.preferMaps[mn] == true
+
+     if mapMatch then
+      if hasPreferRune and mn == runeTarget then
+       -- FASE 3: Map + Rank PERSIS cocok. Batalkan Rune, alihkan ke UP/DOWN Rank.
+       RAID.runeEnabled = false
+       return r
+      else
+       -- FASE 2 (Map + Rank match, bukan peta rune target): kunci portal, fire rune.
+       return r
+      end
+     else
+      -- FASE 2: Rank match, map beda. Kunci portal ini, rune override peta.
+      return r
+     end
+    end
+   end
+
+   -- FASE 1: Preferred Rank BELUM ADA di lobby.
+   -- Jangan diam. Cari Preferred Maps dengan ID terkecil untuk farming.
+   if hasPreferMaps then
+    local farmCandidates = {}
+    for _, r in ipairs(RAID_ID_LIST) do
+     if RAID.preferMaps[r.mapId - 50000] then
+      table.insert(farmCandidates, r)
+     end
+    end
+    if #farmCandidates > 0 then
+     return pickLowest(farmCandidates)
+    end
+   end
+
+   -- Preferred Maps juga kosong: farming map terkecil di lobby.
+   return pickLowest(RAID_ID_LIST)
+  end
+
+  if hasPreferMaps then
+   local mapCandidates = {}
+   for _, r in ipairs(RAID_ID_LIST) do
+    if RAID.preferMaps[r.mapId - 50000] then
+     table.insert(mapCandidates, r)
+    end
+   end
+   if #mapCandidates > 0 then return pickLowest(mapCandidates) end
+   return nil
+  end
+
+  if hasPreferRune then
+   for _, r in ipairs(RAID_ID_LIST) do
+    if (r.mapId - 50000) == runeTarget then return r end
+   end
+   return RAID_ID_LIST[1]
+  end
+
+  return pickByDiff(RAID_ID_LIST)
  end
 
- -- Rune Map tanpa Pick Rank: ambil raid APAPUN sebagai kendaraan
- -- (Difficulty tidak relevan - map di-override UseRaidItem)
- return RAID_ID_LIST[1]
+ if runeOn and runeTarget >= 1 and runeTarget <= 18 then
+  if hasPick then
+   local matched = {}
+   for _, r in ipairs(RAID_ID_LIST) do
+    local grade = GetBestGrade(r.mapId - 50000)
+    if grade and RAID.runeGrades[grade] == true then
+     table.insert(matched, r)
+    end
+   end
+   if #matched > 0 then
+    table.sort(matched, function(a, b)
+     local ga = GetBestGrade(a.mapId - 50000) or "?"
+     local gb = GetBestGrade(b.mapId - 50000) or "?"
+     local ra = GRADE_RANK[ga] or 99
+     local rb = GRADE_RANK[gb] or 99
+     return ra < rb
+    end)
+    return matched[1]
+   end
+  end
+  return RAID_ID_LIST[1]
  end
 
- --  KASUS 2: Rune Map OFF 
- -- [v253 FIX] Jika Pick Rank aktif: filter grade dulu, lalu terapkan
- -- difficulty (Easy/Hard) di dalam daftar yang sudah difilter.
- -- [v262 FIX] Tambah handling bymap dan byrank eksplisit
- local pm = RAID.pickMode
-
- -- By Map: filter berdasarkan preferMaps saja
  if pm == "bymap" and next(RAID.preferMaps) ~= nil then
- local mapMatched = {}
- for _, r in ipairs(RAID_ID_LIST) do
- if RAID.preferMaps[r.mapId - 50000] then
- table.insert(mapMatched, r)
- end
- end
- if #mapMatched > 0 then
- table.sort(mapMatched, function(a,b) return a.mapId < b.mapId end)
- return mapMatched[1]
- end
- -- Tidak ada map cocok -> tunggu (return nil)
- return nil
+  local mapMatched = {}
+  for _, r in ipairs(RAID_ID_LIST) do
+   if RAID.preferMaps[r.mapId - 50000] then
+    table.insert(mapMatched, r)
+   end
+  end
+  if #mapMatched > 0 then return pickLowest(mapMatched) end
+  return nil
  end
 
- -- By Rank / hasPick: filter grade dulu, SKIP Ascension Tower
  if hasPick then
- local matched2 = {}
- for _, r in ipairs(RAID_ID_LIST) do
- -- [v272] By Rank & Manual: skip AT, prioritas Normal Raid
- if pm == "byrank" or pm == "manual" then
- local _isAT = (r.mapId >= 50019 and r.mapId <= 50036) or (r.raidId and r.raidId >= 935001)
- if _isAT then continue end
- end
- local grade = GetBestGrade(r.mapId - 50000)
- if grade and RAID.runeGrades[grade] == true then
- table.insert(matched2, r)
- end
- end
- if #matched2 > 0 then
- local chosen = pickByDiff(matched2)
- if chosen then return chosen end
- end
- -- Tidak ada grade cocok di cache -> kalau byrank, tunggu raid dengan grade tsb
- if pm == "byrank" then return nil end
- -- Mode lain: fallback ke pickByDiff semua
+  local matched2 = {}
+  for _, r in ipairs(RAID_ID_LIST) do
+   local _skipEntry = false
+   if pm == "byrank" then
+    local _isAT = (r.mapId >= 50019 and r.mapId <= 50036) or (r.raidId and r.raidId >= 935001)
+    if _isAT then _skipEntry = true end
+   end
+   if not _skipEntry then
+    local grade = GetBestGrade(r.mapId - 50000)
+    if grade and RAID.runeGrades[grade] == true then
+     table.insert(matched2, r)
+    end
+   end
+  end
+  if #matched2 > 0 then
+   local chosen = pickByDiff(matched2)
+   if chosen then return chosen end
+  end
+  if pm == "byrank" then return nil end
  end
 
- -- Semua mode selain byrank (Default/Easy/Hard/ByMap/ByRank/Manual)
- -- langsung pilih dari RAID_ID_LIST sesuai logika pickByDiff
- -- [FIX v265] Ganti PickRaidByDifficulty() yang tidak ada
  return pickByDiff(RAID_ID_LIST)
  end
 
@@ -7982,18 +7980,6 @@ function StartRaidLoop()
  -- 
  task.spawn(function() pcall(RaidCollectAll) end)
  RaidStatusUpdate("[FLa] Go Out raid...", Color3.fromRGB(100,200,255))
-
- -- Hide reward panel
- task.spawn(function()
- task.wait(0.3)
- pcall(function()
- for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
- if obj.Name == "RewardsFrame" and obj:IsA("Frame") and obj.Visible then
- obj.Visible = false
- end
- end
- end)
- end)
 
  RAID_LIVE[RAID.raidId] = nil
  RebuildRaidList()
@@ -9190,7 +9176,7 @@ local function SiegeBlindFire()
  pcall(function()
  if RE.HeroUseSkill then
  RE.HeroUseSkill:FireServer({
- heroGuid=hGuid, attackType=1,
+ heroGuid=hGuid, attackType=1,attackType=2,attackType=3,
  userId=MY_USER_ID, enemyGuid=pseudoGuid,
  })
  end
@@ -9531,53 +9517,6 @@ StartSiegeLoop = function()
             -- secara alami saat Siege benar-benar SUCCES/FAIL.
             -- qRe:FireServer({d.cityRaidId})
             task.wait(0.3)
-
-            -- Auto-close popup reward
-            task.spawn(function()
-                local _w = 0
-                local POPUP = {"RewardsFrame","ResultFrame","RewardPanel"}
-                local KEYS  = {"close","ok","selesai","done","claim","lanjut"}
-                while _w < 4 do
-                    task.wait(0.3); _w = _w + 0.3
-                    local found = false
-                    pcall(function()
-                        for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
-                            if obj:IsA("TextButton") and obj.Visible and obj.Text ~= "" then
-                                local low = obj.Text:lower():gsub("%s+","")
-                                for _, k in ipairs(KEYS) do
-                                    if low:find(k,1,true) then
-                                        local r = obj
-                                        while r.Parent and r.Parent ~= LP.PlayerGui do
-                                            r=r.Parent
-                                        end
-                                        for _, pn in ipairs(POPUP) do
-                                            if r.Name == pn then
-                                                pcall(function() obj.Activated:Fire() end)
-                                                pcall(function() obj.MouseButton1Click:Fire() end)
-                                                found = true; break
-                                            end
-                                        end
-                                    end
-                                    if found then break end
-                                end
-                            end
-                            if found then break end
-                        end
-                        if not found then
-                            for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
-                                if (obj:IsA("Frame") or obj:IsA("ScreenGui")) and obj.Visible then
-                                    for _, pn in ipairs(POPUP) do
-                                        if obj.Name == pn then obj.Visible=false; found=true; break end
-                                    end
-                                end
-                                if found then break end
-                            end
-                        end
-                    end)
-                    if found then break end
-                end
-            end)
-
             -- Tandai selesai
             SIEGE.live[d.cityRaidId] = nil
             if _siegeChatOpen then _siegeChatOpen[targetMap] = false end
@@ -10370,7 +10309,7 @@ ST2 = {
     inMap          = false,
     attacking      = false,  -- flag mass attack sedang berjalan
     waveCount      = 0,      -- 0 = Non Stop, 1-10 = jumlah wave sebelum keluar
-    attackEnabled  = true,   -- toggle Attack ON/OFF (dari UI)
+    attackEnabled  = false,   -- toggle Attack ON/OFF (dari UI)
     statusLbl      = nil,
     dot            = nil,
     count          = 0,
@@ -11079,7 +11018,7 @@ do
  local ever_claimed = false
  status("[] SCAN...", C.YEL)
 
- for id = 1, 500 do
+ for id = 1, 200 do
  local ok, res = pcall(function()
  return RE:InvokeServer({id = tostring(id)})
  end)
@@ -11209,7 +11148,7 @@ do
  if RE1 then
  SetStatus("[G] Online Reward SCAN...", C.YEL)
  local fail, ever = 0, false
- for id = 1, 500 do
+ for id = 1, 200 do
  local ok, res = pcall(function() return RE1:InvokeServer({id = tostring(id)}) end)
  if ok and res == true then
  fail = 0; ever = true
@@ -11259,7 +11198,7 @@ do
  SetStatus("[OK] Claim All DONE!", C.GRN)
  allBtn.BackgroundColor3 = C.GRN
  allLbl.Text = "CLAIM ALL DONE"
- task.wait(3)
+ task.wait(1)
  allBtn.BackgroundColor3 = C.ACC
  allLbl.Text = "CLAIM ALL"
  end)
@@ -11468,9 +11407,9 @@ do
  UpdatePlatformLbl()
  local msg = "[FLa Webhook] Webhook Active! Mode: "..(_webhookMode or "both"):upper()
  testLbl.Text="[..] Sending..."; testLbl.TextColor3=Color3.fromRGB(255,220,60)
- -- [FIX] Timeout UI 12s: kalau tidak ada callback dalam 12s, reset label
+ -- [FIX] Timeout UI 1s: kalau tidak ada callback dalam 1s, reset label
  local _done = false
- task.delay(12, function()
+ task.delay(1, function()
  if not _done then
  _done = true
  testLbl.Text="[!] Timeout"; testLbl.TextColor3=Color3.fromRGB(255,80,60)
@@ -11513,14 +11452,14 @@ do
  function()
  task.spawn(function()
  verLbl.Text="[OK] Link Valid!"; verLbl.TextColor3=Color3.fromRGB(100,255,100)
- task.wait(2.5)
+ task.wait(1)
  verLbl.Text="[] Verify Link"; verLbl.TextColor3=C.TXT
  end)
  end,
  function(err)
  task.spawn(function()
  verLbl.Text=""..err; verLbl.TextColor3=Color3.fromRGB(255,80,60)
- task.wait(2.5)
+ task.wait(1)
  verLbl.Text="[] Verify Link"; verLbl.TextColor3=C.TXT
  end)
  end
@@ -12393,7 +12332,7 @@ local function _pollSiegeLive(label)
 end
 
 task.spawn(function()
-    task.wait(4) -- tunggu GUI + game modules ready
+    task.wait(1) -- tunggu GUI + game modules ready
 
     -- SUMBER 1: Listener permanent UpdateCityRaidInfo
     -- Server push ini setiap siege buka/tutup
@@ -12430,11 +12369,11 @@ task.spawn(function()
     task.wait(1)
     _pollSiegeLive("startup")
 
-    -- SUMBER 3: Periodic re-poll setiap 30 detik (keepalive)
+    -- SUMBER 3: Periodic re-poll setiap 1 detik (keepalive)
     -- Sync ulang kalau ada event yang terlewat
     task.spawn(function()
         while true do
-            task.wait(30)
+            task.wait(1)
             if SIEGE then
                 _pollSiegeLive("periodic")
             end
@@ -12446,11 +12385,6 @@ task.spawn(function()
     -- Ini yang handle kasus: siege open sebelum script load, relog, missed event
     -- workspace.Maps.Map.CityRaidEnter berisi folder CityRaidX saat siege open
     local CITY_RAID_FOLDER_MAP = {
-        CityRaid1 = 1000001,  -- Map 3
-        CityRaid2 = 1000002,  -- Map 7
-        CityRaid3 = 1000003,  -- Map 10
-        CityRaid4 = 1000004,  -- Map 13
-        -- Nama alternatif yang mungkin dipakai game
         CityRaidEnter1 = 1000001,
         CityRaidEnter2 = 1000002,
         CityRaidEnter3 = 1000003,
@@ -12564,88 +12498,3 @@ task.spawn(function()
         end
     end
 end)
-
--- Hook dipasang langsung saat GUI muncul (Remotes sudah ready karena task.wait(3) di atas)
--- Tidak perlu delay tambahan - makin cepat hook aktif makin baik
-task.spawn(function()
- task.wait(0.5)
- InitAllCaptureLayers()
-end)
-
---  AUTO HIDE REWARD / RESULT PANELS [v273 FIX: AGGRESSIVE]
--- Berlaku untuk Raid, Garrison Boss, dan Siege
-task.spawn(function()
-    local HIDE_PANELS = {
-        "RewardsFrame"
-        "RewardPanel", "ChallengeGarrisonBossSuccess"
-    }
-
-    local function forceHide(obj)
-        if not obj or not obj.Parent then return end
-        pcall(function()
-            -- [v273] Cek tipe objek untuk menghindari error "Visible is not a valid property"
-            if obj:IsA("GuiObject") then
-                obj.Visible = false
-                if obj:IsA("CanvasGroup") then obj.Alpha = 0 end
-                -- Pindahkan jauh dari layar agar benar-benar tidak terlihat
-                obj.Position = UDim2.new(2, 0, 2, 0)
-            elseif obj:IsA("ScreenGui") then
-                obj.Enabled = false
-            end
-        end)
-    end
-
-    local function checkAndHide(obj)
-        -- Hanya proses objek yang memiliki properti tampilan (GuiObject atau ScreenGui)
-        if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
-        
-        for _, name in ipairs(HIDE_PANELS) do
-            if obj.Name == name or obj.Name:find("GarrisonBoss") then
-                task.wait(0.2)
-                forceHide(obj)
-                
-                -- Pasang listener berdasarkan tipe properti yang sesuai
-                pcall(function()
-                    if obj:IsA("GuiObject") then
-                        obj:GetPropertyChangedSignal("Visible"):Connect(function()
-                            if obj.Visible then forceHide(obj) end
-                        end)
-                    elseif obj:IsA("ScreenGui") then
-                        obj:GetPropertyChangedSignal("Enabled"):Connect(function()
-                            if obj.Enabled then forceHide(obj) end
-                        end)
-                    end
-                end)
-                break
-            end
-        end
-    end
-
-    -- 1. Scan existing
-    for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
-        checkAndHide(obj)
-    end
-
-    -- 2. Watch new ones
-    LP.PlayerGui.DescendantAdded:Connect(function(obj)
-        task.spawn(checkAndHide, obj)
-    end)
-
-    -- 3. Event Listeners (Back-end triggers)
-    local _evts = {
-        "ShowReward", "ChallengeGarrisonBossSuccess", 
-        "ChallengeRaidsSuccess", "ChallengeRaidsFail"
-    }
-    for _, ename in ipairs(_evts) do
-        local re = Remotes:WaitForChild(ename, 10)
-        if re then
-            re.OnClientEvent:Connect(function()
-                task.wait(0.3)
-                for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
-                    checkAndHide(obj)
-                end
-            end)
-        end
-    end
-end)
-

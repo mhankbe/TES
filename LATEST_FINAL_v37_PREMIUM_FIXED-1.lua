@@ -739,7 +739,6 @@ ContentFrame.BackgroundTransparency = 1
 local NAV_ITEMS = {
  {tag="main", ico="", lbl="Main"},
  {tag="farm", ico="", lbl="Farm"},
- {tag="attack", ico="", lbl="Attack"},
  {tag="autoraid", ico="", lbl="Automation"},
  {tag="player", ico="", lbl="Player"},
  {tag="autoroll", ico="", lbl="Reroll"},
@@ -1053,30 +1052,23 @@ AG = {running=false, thread=nil, killed=0, collected=0, currentTarget=nil, autoC
 -- RAID STATE
 RAID = {
  running = false,
- inMap = false, -- true saat karakter sedang di dalam map raid
+ inMap = false,
  thread = nil,
- sukses = 0, -- counter raid berhasil (masuk+bunuh bos+ambil reward)
+ sukses = 0,
  collected = 0,
  raidId = 0,
  raidMapId = 50001,
- slotIndex = 2, -- dapat dari EnterRaidsUpdateInfo
- fromMapId = nil, -- [v203] map asal sebelum masuk raid (dari EnterRaidsUpdateInfo)
- serverMapId = nil, -- [v172] mapId aktual dari EnterRaidsUpdateInfo server
- _raidDone = false, -- true saat ChallengeRaidsSuccess/Fail fire
+ slotIndex = 2,
+ fromMapId = nil,
+ serverMapId = nil,
+ _raidDone = false,
 
  statusLbl = nil,
- suksesLbl = nil, -- label UI sukses (ganti killLbl/loopLbl)
+ suksesLbl = nil,
  dot = nil,
- -- Difficulty & preferred maps
- difficulty = "easy", -- "easy" | "hard" (via PM_TO_DIFF)
- preferMaps = {}, -- set: {[mapNumber]=true} (1..18)
- runeGrades = {}, -- [v114] Rune Map: set grade aktif {["M++"]=true, ...}
- runeEnabled = false, -- [V147] Toggle utama Rune Map (grade + pindah)
- runeMapTarget = 0, -- [V147] Map tujuan Rune Map Pindah (1-18), 0 = nonaktif
- updownEnabled = false, -- UP/DOWN Rank: fire UseRaidItem setelah masuk raid byrank
- updownDir = "up", -- "up" = UseRaidItem(10270) | "down" = UseRaidItem(10271)
- diffLbl = nil, -- label UI difficulty
- snapshotMapId = nil, -- mapId hasil jepretan sesuai difficulty saat ini
+ difficulty = "easy",
+ pickMode = "default",
+ snapshotMapId = nil,
 }
 _raidOn = false
 
@@ -1084,8 +1076,8 @@ _raidOn = false
 -- [v252] MODE DISPATCHER - Single source of truth
 -- ============================================================
 MODE = {
- current = "idle", -- "idle"|"ma"|"raid"|"siege"|"dungeon"
- priority = { dungeon=4, siege=3, raid=2, ma=1, idle=0 },
+ current = "idle", -- "idle"|"ma"|"raid"|"siege"
+ priority = { siege=3, raid=2, ma=1, idle=0 },
  _prev = {}, -- stack: simpan mode yang diinterrupt, untuk resume
 }
 
@@ -1139,6 +1131,177 @@ local _gainRaidsLock = false -- flag cegah infinite loop di hook GainRaidsReward
 _webhookEnabled = false
 _webhookUrl = ""
 _whSilent = false -- true saat scan history awal (jangan fire webhook duplikat)
+-- [v129] Sistem cooldown + pending webhook (dari V117)
+
+-- ============================================================
+-- AUTO CONFIRM / AUTO CLOSE
+-- Scan GUI tiap 0.3s, cari button Confirm/Close
+-- Panggil callback via Activated:Fire() sebagai fallback Delta
+-- ============================================================
+_popupThread, _popupRunning = nil, false
+
+-- ============================================================
+-- ANIMATION SNIFFER [v264]
+-- ============================================================
+-- ANIMATION DISABLER [v264 FIX: ULTRA AGGRESSIVE]
+-- ============================================================
+local function StopTracks(animator)
+    if not animator or not _G.DisableAnimations then return end
+    pcall(function()
+        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+            track:Stop(0)
+        end
+    end)
+end
+
+local function MonitorAnimator(animator)
+    if not animator:IsA("Animator") then return end
+    
+    -- Stop existing
+    StopTracks(animator)
+    
+    -- Stop new
+    animator.AnimationPlayed:Connect(function(track)
+        if _G.DisableAnimations then
+            pcall(function() track:Stop(0) end)
+        end
+    end)
+end
+
+function StopAllWorkspaceAnimations()
+    if not _G.DisableAnimations then return end
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Animator") then
+            StopTracks(obj)
+        end
+    end
+end
+
+task.spawn(function()
+    -- Scan existing animators
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Animator") then
+            task.spawn(MonitorAnimator, obj)
+        end
+    end
+    
+    -- Watch for new animators (Players & NPCs)
+    workspace.DescendantAdded:Connect(function(obj)
+        if obj:IsA("Animator") then
+            task.spawn(MonitorAnimator, obj)
+        end
+    end)
+
+    -- Pantau Player (Fallback)
+    game.Players.PlayerAdded:Connect(function(p)
+        p.CharacterAdded:Connect(function(char)
+            local hum = char:WaitForChild("Humanoid", 10)
+            if hum then
+                local animator = hum:WaitForChild("Animator", 10)
+                if animator then MonitorAnimator(animator) end
+            end
+        end)
+    end)
+
+    -- [v264] Fast Loop Fallback: Paksa stop setiap 1 detik jika toggle ON
+    -- Ini untuk menangkap animasi yang mungkin bypass listener (jarang tapi mungkin)
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            if _G.DisableAnimations then
+                StopAllWorkspaceAnimations()
+            end
+        end
+    end)
+end)
+
+local POPUP_CONFIRM_KEYS = {"confirm", "ok", "yes", "continue", "proceed", "accept"}
+local POPUP_CLOSE_KEYS = {"close", "cancel", "cancel", "exit", "dismiss", "skip", "no"}
+-- GUI yang TIDAK boleh di-auto-click apapun (online reward, daily login, dll)
+local POPUP_GUI_BLACKLIST = {
+ ["OnlineRewardPanel"] = true,
+ ["OnlineReward"] = true,
+ ["DailyReward"] = true,
+ ["DailyLogin"] = true,
+}
+
+-- Popup scanner hanya akan scan ScreenGui yang muncul SETELAH game load
+-- dan bukan termasuk GUI persistent milik game.
+-- Pendekatan: cek apakah parent ScreenGui-nya "baru muncul" (bukan persistent)
+-- Persistent GUI game biasanya sudah ada sejak awal - kita skip semua yang
+-- sudah ada saat script inject. List di-build saat startup.
+local _existingGuis = {}
+task.spawn(function()
+ task.wait(2) -- tunggu game load dulu
+ for _, g in ipairs(PG:GetChildren()) do
+ _existingGuis[g] = true
+ end
+end)
+
+function _isIgnored(obj)
+ -- Skip GUI milik script kita sendiri
+ local root = obj
+ while root.Parent and root.Parent ~= PG do
+ root = root.Parent
+ end
+ -- root sekarang adalah ScreenGui level pertama di bawah PG
+ if root == ScreenGui then return true end
+ -- Skip semua GUI yang sudah ada saat script inject (persistent game UI)
+ if _existingGuis[root] then return true end
+ -- Skip GUI yang ada di blacklist (online reward, daily login, dll)
+ if POPUP_GUI_BLACKLIST[root.Name] then return true end
+ -- Skip kalau nama root mengandung "reward" atau "login" atau "daily"
+ local rn = root.Name:lower()
+ if rn:find("onlinereward") or rn:find("dailyreward") or rn:find("dailylogin") then
+ return true
+ end
+ return false
+end
+
+function _fuzzyMatch(text, keys)
+ local low = text:lower():gsub("%s+","")
+ for _, k in ipairs(keys) do
+ if low:find(k, 1, true) then return true end
+ end
+ return false
+end
+
+
+function ScanAndClickPopup()
+ for _, obj in ipairs(PG:GetDescendants()) do
+ if obj:IsA("TextButton") and obj.Visible and obj.Text ~= "" and not _isIgnored(obj) then
+ local txt = obj.Text
+ if STATE.autoConfirm and _fuzzyMatch(txt, POPUP_CONFIRM_KEYS) then
+ pcall(function() obj.Activated:Fire() end)
+ pcall(function() obj.MouseButton1Click:Fire() end)
+ return
+ end
+ if STATE.autoClose and _fuzzyMatch(txt, POPUP_CLOSE_KEYS) then
+ pcall(function() obj.Activated:Fire() end)
+ pcall(function() obj.MouseButton1Click:Fire() end)
+ return
+ end
+ end
+ end
+end
+
+function StartPopupScanner()
+ _popupRunning = false
+ if _popupThread then
+ pcall(function() task.cancel(_popupThread) end)
+ _popupThread = nil
+ end
+ if not STATE.autoConfirm and not STATE.autoClose then return end
+ _popupRunning = true
+ _popupThread = task.spawn(function()
+ while _popupRunning and (STATE.autoConfirm or STATE.autoClose) do
+ pcall(ScanAndClickPopup)
+ task.wait(0.3)
+ end
+ _popupRunning = false
+ _popupThread = nil
+ end)
+end
 
 
 RAID.autoKillBoss = false -- toggle: teleport ke raja + auto attack sampai mati
@@ -1300,7 +1463,7 @@ end
 -- RE.Atk & RE.Click tetap sync karena itu attack player bukan hero
 local _heroAtkTarget = nil -- guid target hero saat ini
 local _heroAtkThread = nil -- thread hero attack
-local _heroAtkTick = nil -- tick() siklus terakhir
+local _heroAtkTick = 0 -- tick() siklus terakhir
 
 -- [v256-FIX] Helper: validasi enemy guid masih punya HumanoidRootPart yang valid
 local function IsEnemyGuidValid(g)
@@ -1349,14 +1512,16 @@ local function EnsureHeroAtkThread()
    if g and #HERO_GUIDS > 0 and (tick() - _heroAtkTick) >= 0.5 and IsEnemyGuidValid(g) then
     _heroAtkTick = tick()
     for _, hGuid in ipairs(HERO_GUIDS) do
-     local last = _lastFire[hGuid]
-     if (tick() - last) >= 0.05 then
+     local last = _lastFire[hGuid] or 0
+     if (tick() - last) >= 0.5 then
       _lastFire[hGuid] = tick()
       if RE.HeroUseSkill then
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
        task.wait(0.1)
+       if not IsEnemyGuidValid(g) then break end
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
        task.wait(0.1)
+       if not IsEnemyGuidValid(g) then break end
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
       end
      end
@@ -1365,7 +1530,7 @@ local function EnsureHeroAtkThread()
    end
    task.wait(0.05)
   end
-  _heroAtkThread = 5
+  _heroAtkThread = nil
  end)
 end
 
@@ -1378,13 +1543,12 @@ function FireAttack(g, pos)
  if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end) end
  if RE.HeroUseSkill and #HERO_GUIDS > 0 then
   local now = tick()
-  local last = _heroFireTick[g]
-  if now - last >= 0.04 then
+  local last = _heroFireTick[g] or 0
+  if now - last >= 0.4 then
    _heroFireTick[g] = now
    for _, hGuid in ipairs(HERO_GUIDS) do
     pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
     pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
-    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
    end
   end
  end
@@ -1406,8 +1570,6 @@ function FireAllDamage(g, ep)
  if not RE.HeroUseSkill and RE.HeroSkill then
   for _, hGuid in ipairs(HERO_GUIDS) do
    pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=1,masterId=MY_USER_ID}) end)
-   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=2,masterId=MY_USER_ID}) end)
-   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=3,masterId=MY_USER_ID}) end)
   end
  end
 end
@@ -1420,7 +1582,6 @@ function FireHeroRemotes(enemyGuid, enemyPos)
   table.insert(posInfos, {heroGuid=hGuid, targetPos=pos})
  end
  if RE.HeroMove then
-  pcall(function() RE.HeroMove:FireServer({attackTarget=enemyGuid,userId=MY_USER_ID,heroTagetPosInfos=posInfos}) end)
   pcall(function() RE.HeroMove:FireServer({attackTarget=enemyGuid,userId=MY_USER_ID,heroTagetPosInfos=posInfos}) end)
  end
 end
@@ -1552,85 +1713,24 @@ end
 -- ============================================================
 -- ATTACK LOOPS
 -- ============================================================
-function AttackLoop_Mass(onStatus)
- _deadG = {}
- local start, wt = MA.killed, 0
- while wt < 6 and MA.running do
-  if #GetEnemies() > 0 then break end
-  if onStatus then onStatus("Enemy NOT FOUND ("..math.floor(6-wt).."s)") end
-  task.wait(0.4); wt = wt + 0.4
- end
- if not MA.running then return false end
- if #GetEnemies() == 0 then
-  if onStatus then onStatus("Map NOT FOUND, skip...") end; return true
- end
- local emptyT, lastKill, stuckT = 0, MA.killed, 0
- while MA.running do
-  local isAll = (MA.killTarget == 0)
-  local here = MA.killed - start
-  local alive = 0
-  for _, e in ipairs(GetEnemies()) do
-   if not IsDead(e) then alive = alive + 1 end
-  end
-  if isAll then
-   if alive == 0 then
-    emptyT = emptyT + 0.08
-    if emptyT >= 0.5 then return true end
-    task.wait(0.05); continue
-   end
-   emptyT = 0
-   if onStatus then onStatus("Kill All: "..alive.." sisa") end
-  else
-   if here >= MA.killTarget then return true end
-   if onStatus then onStatus(alive.." hidup "..here.."/"..MA.killTarget) end
-  end
-  if MA.killed > lastKill then
-   lastKill = MA.killed; stuckT = 0
-  else
-   stuckT = stuckT + 0.08
-   if stuckT >= 0.5 then
-    if onStatus then onStatus("Stuck, skip map...") end; return true
-   end
-  end
-  if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or (DUNGEON and DUNGEON.interrupt) then
-   return "interrupted"
-  end
-
-  for _, e in ipairs(GetEnemies()) do
-   if not IsDead(e) then
-    local hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
-    if hrp then
-     local g, p = e.guid, hrp.Position
-     task.spawn(function()
-      FireAllDamage(g, p)
-      FireHeroRemotes(g, p)
-     end)
-    end
-   end
-  end
-  task.wait(0.08)
- end
- return false
-end
-
 -- Cari musuh terdekat dari posisi karakter utama
-function GetRandomEnemy()
+function GetNearestEnemy()
  local char = LP.Character
  if not char then return nil end
  local hrp = char:FindFirstChild("HumanoidRootPart")
  if not hrp then return nil end
  local myPos = hrp.Position
- local randomDist = nil
+ local nearest, nearestDist = nil, math.huge
  for _, e in ipairs(GetEnemies()) do
  if not IsDead(e) and e.hrp then
- local d = (e.hrp.Position - myPos)
- if d < randomDist then
- randomtDist = d
- random = e
+ local d = (e.hrp.Position - myPos).Magnitude
+ if d < nearestDist then
+ nearestDist = d
+ nearest = e
  end
  end
  end
- return random
+ return nearest
 end
 
 -- Pilih musuh secara random dari daftar yang masih hidup
@@ -1652,7 +1752,7 @@ function TpToEnemy(tgt)
  local hrp = char:FindFirstChild("HumanoidRootPart")
  if not hrp then return end
  -- Raycast ke bawah dari posisi musuh untuk cari lantai aman
- local origin = tgt.hrp.Position + Vector3.new(1, 1, 1)
+ local origin = tgt.hrp.Position + Vector3.new(0, 5, 0)
  local params = RaycastParams.new()
  params.FilterType = Enum.RaycastFilterType.Exclude
  local ex = {}
@@ -1660,92 +1760,11 @@ function TpToEnemy(tgt)
  local ef = workspace:FindFirstChild("Enemys")
  if ef then table.insert(ex, ef) end
  params.FilterDescendantsInstances = ex
- local result = workspace:Raycast(origin, Vector3.new(1, 1, 1), params)
+ local result = workspace:Raycast(origin, Vector3.new(0, -50, 0), params)
  -- [v188] offset dinaikkan ke +5 agar tidak jatuh ke bawah tanah/jurang
- local safePos = result and (result.Position + Vector3.new(1, 1, 1)) or (tgt.hrp.Position + Vector3.new(1, 1, 1))
+ local safePos = result and (result.Position + Vector3.new(3, 5, 0)) or (tgt.hrp.Position + Vector3.new(3, 5, 0))
  hrp.CFrame = CFrame.new(safePos)
 end
-
-function AttackLoop_Goyang(onStatus)
- -- [v186-FIX] SaveOrigin hanya jika Target Musuh (tbnThread) tidak sedang aktif
- -- Jika tbnThread aktif, origin sudah disimpan olehnya -> jangan overwrite
- if not _tgtThread then
- SaveOrigin()
- end
- local currentTgt = nil
- local _tpTimer = 0 -- [v186-FIX] timer untuk TP periodik tiap 0.5s
-
- -- Mulai: gunakan AG.currentTarget jika Target Musuh sudah set, 
- -- jika tidak pakai musuh terdekat
- -- [v186-FIX] Prioritaskan AG.currentTarget agar sinkron dengan Target Musuh
- local first = AG.currentTarget or GetRandomEnemy()
- if first and not IsDead(first) and first.model.Parent then
- currentTgt = first
- TpToEnemy(currentTgt)
- task.wait(0)
- FireAttack(currentTgt.guid, currentTgt.hrp.Position)
- if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] (random) Kill: "..AG.killed) end
- end
-
- while AG.running do
- -- [v186-FIX] Jika Target Musuh aktif, selalu ikuti AG.currentTarget
- -- AG.currentTarget di-update oleh tbnThread secara real-time
- if _tgtThread and AG.currentTarget and not IsDead(AG.currentTarget) and AG.currentTarget.model.Parent then
- currentTgt = AG.currentTarget
- end
-end
-
-
- -- Target mati / habis -> cari berikutnya
- if not currentTgt or IsDead(currentTgt) or not currentTgt.model.Parent then
- local waited = false
- while AG.running do
- -- [v186-FIX] Cek AG.currentTarget dulu sebelum random
- local next = (AG.currentTarget and not IsDead(AG.currentTarget) and AG.currentTarget.model.Parent and AG.currentTarget) or GetRandomEnemy()
- if next then
- currentTgt = next
- TpToEnemy(currentTgt)
- task.wait()
- FireAttack(currentTgt.guid, currentTgt.hrp.Position)
- _tpTimer = 0
- if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] Kill: "..AG.killed) end
- break
- else
- if onStatus then onStatus("Waiting Enemy Spawn...") end
- waited = false
- task.wait(0.3)
- end
- end
- if not AG.running then end
- end
-end
-
-
- -- Serang musuh saat ini
- if currentTgt and not IsDead(currentTgt) and currentTgt.model.Parent then
- local pos = currentTgt.hrp and currentTgt.hrp.Position or Vector3.new(1,1,1)
- FireAttack(currentTgt.guid, pos)
-
- -- [v186-FIX] Hanya ReturnHRPToOrigin jika tbtThread tidak aktif
- -- Jika tbnThread masih jalan, biarkan tbnThread yang urus return origin
- if not _tgtThread then
- ReturnHRPToOrigin()
- end
- return false
-end
-
-function RunAG(onStatus, onDone)
- AG.running = true; AG.killed = 0; AG.collected = 0
- StartDestroyWorker(function() return AG.running end)
- StartGoldMagnet(function() return AG.running end) -- [v257] Gold magnet
- AG.thread = task.spawn(function()
- AttackLoop_Goyang(onStatus)
- AG.running = false
- ReturnHRPToOrigin()
- if onDone then onDone() end
- end)
-end
-
 
 -- ============================================================
 -- AUTO FUNCTIONS
@@ -1832,9 +1851,7 @@ function WaitRaidDone()
   -- [FIX] Kalau RAID tidak running sama sekali, jangan pause
   if not RAID.running then return false, nil end
 
-  -- Dungeon & Siege selalu pause MA
-  if MODE.current == "dungeon" or (DUNGEON and DUNGEON.interrupt) then return true, "Auto Dungeon" end
-  -- [INDEPENDEN] siege tidak pause MA
+  -- Siege: [INDEPENDEN] siege tidak pause MA
 
   -- Raid: hanya pause kalau player BENAR-BENAR di dalam map raid
   if _raidInterrupt and RAID.inMap then return true, "Auto Raid" end
@@ -1892,7 +1909,7 @@ function WaitSiegeDone()
             break
         end
         -- Timeout 30 detik: paksa release
-        if waited >= 10 then
+        if waited >= 30 then
             _siegeInterrupt = false
             if MODE.current == "siege" then MODE.current = "idle" end
             MODE:Release("siege")
@@ -1900,97 +1917,6 @@ function WaitSiegeDone()
             break
         end
     end
-end
-function DoMassAttack(on)
- if on then
- _mOn = true
- MA.running = true
- MA.killed = 0
- MA.collected = 0
- StartDestroyWorker(function() return MA.running end)
- StartGoldMagnet(function() return MA.running end) -- [v257] Gold magnet
- MA.thread = task.spawn(function()
- local _maStart = os.time()
- local function maStatus(msg, col)
- if _maStatusLbl then
- local dur = os.time() - _maStart
- local ts = string.format("%02d:%02d:%02d", math.floor(dur/3600), math.floor(dur/60)%60, dur%60)
- _maStatusLbl.Text = "["..ts.."] "..msg
- _maStatusLbl.TextColor3 = col or C.ACC2
- end
- end
- while MA.running do
- -- [v252] Pause kalau ada fitur prioritas lebih tinggi aktif
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or (DUNGEON and DUNGEON.interrupt) then
- WaitRaidDone()
- end
- if not MA.running then break end
-
- local mapsToUse = {}
- for i = 1, 18 do if MR.selected[i] then table.insert(mapsToUse, MAPS[i]) end end
-
- if #mapsToUse == 0 then
- local cont = AttackLoop_Mass(function(msg)
- maStatus(msg)
- end)
- if cont == "interrupted" then
- WaitRaidDone()
- elseif not cont or not MA.running then
- break
- end
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or (DUNGEON and DUNGEON.interrupt) then WaitRaidDone() end
- task.wait(MR.nextMapDelay)
- else
- -- [FIX] while+index manual: loop balik ke map pertama setelah map terakhir
- -- Rebuild _fresh tiap iterasi dari MR.selected terbaru
- -- -> langsung respon kalau user ubah selection di tengah jalan
- local _mapIdx = 1
- while MA.running do
- local _fresh = {}
- for i = 1, 18 do
- if MR.selected[i] then table.insert(_fresh, MAPS[i]) end
- end
- if #_fresh == 0 then mapsToUse = {}; break end
- if _mapIdx > #_fresh then _mapIdx = 1 end
- local m = _fresh[_mapIdx]
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or (DUNGEON and DUNGEON.interrupt) then WaitRaidDone() end
- if not MA.running then break end
- if _raidInterrupt then _mapIdx = _mapIdx + 1; continue end
- maStatus("-> TP ke "..m.name.."...", Color3.fromRGB(180,220,255))
- TpMap(m)
- task.wait(MR.teleportDelay)
- if not MA.running then break end
- local cont = AttackLoop_Mass(function(msg)
- maStatus("["..m.name.."] "..msg)
- end)
- if cont == "interrupted" then
- WaitRaidDone()
- elseif not cont or not MA.running then
- break
- end
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or (DUNGEON and DUNGEON.interrupt) then WaitRaidDone() end
- if not MA.running then break end
- maStatus("[OK] SUCCES "..m.name.." - Go to...", Color3.fromRGB(100,255,150))
- task.wait(MR.nextMapDelay)
- _mapIdx = _mapIdx + 1
- if _mapIdx > #_fresh then
- _mapIdx = 1
- end
- end
- end
- end
- _mOn = false
- MA.running = false
- if _maStatusLbl then
- _maStatusLbl.Text = "[.] SUCCES"
- _maStatusLbl.TextColor3 = C.DIM
- end
- end)
- else
- _mOn = false; MA.running = false
- if MA.thread then pcall(function() task.cancel(MA.thread) end); MA.thread = nil end
- if _maStatusLbl then _maStatusLbl.Text = "Idle" end
- end
 end
 
 function DoRejoin()
@@ -2039,94 +1965,6 @@ for _, list in ipairs(QUIRK_LIST_PER_SLOT) do
 end
 
 -- Weapon: hanya tampilkan quirk tier tinggi per slot, max pilih 3
-W_QUIRK_LIST_PER_SLOT = {
- -- Slot 1 (6 pilihan, max 3)
- {
- {id=99067,name="Celestial Onslaught"},
- {id=99068,name="Lucky Scavenger"},
- {id=99069,name="Titan's Wrath"},
- {id=99070,name="Omnipotent Benefactor"},
- {id=99071,name="Archangel's Judgment"},
- {id=99072,name="Avatar of Destruction"},
- },
- -- Slot 2 (6 pilihan, max 3)
- {
- {id=99085,name="Celestial Onslaught"},
- {id=99086,name="Lucky Scavenger"},
- {id=99087,name="Titan's Wrath"},
- {id=99088,name="Omnipotent Benefactor"},
- {id=99089,name="Archangel's Judgment"},
- {id=99090,name="Avatar of Destruction"},
- },
- -- Slot 3 (6 pilihan, max 3)
- {
- {id=99103,name="Celestial Onslaught"},
- {id=99104,name="Lucky Scavenger"},
- {id=99105,name="Titan's Wrath"},
- {id=99106,name="Omnipotent Benefactor"},
- {id=99107,name="Archangel's Judgment"},
- {id=99108,name="Avatar of Destruction"},
- },
-}
-W_MAX_PER_SLOT = 3
-
-W_QUIRK_MAP = {}
-for _, list in ipairs(W_QUIRK_LIST_PER_SLOT) do
- for _, q in ipairs(list) do W_QUIRK_MAP[q.id] = q.name end
-end
-
-local PG_MACHINE_NAMES = {"R-Pet Gear", "Y-Pet Gear", "B-Pet Gear"}
-local PG_DRAW_IDS = {980001, 980002, 980003}
-
--- [v215] PG_GRADES_PER_MACHINE FINAL confirmed sniff GUI + roll
--- R-Pet (980001): 990001-990010 + 990031
--- Y-Pet (980002): 990011-990020 + 990041
--- B-Pet (980003): 990021-990030 + 990051
-local PG_GRADES_PER_MACHINE = {
- -- [1] R-Pet Gear (drawId 980001)
- {
- {id=990001, name="E"}, {id=990002, name="D"}, {id=990003, name="C"},
- {id=990004, name="B"}, {id=990005, name="A"}, {id=990006, name="S"},
- {id=990007, name="SS"}, {id=990008, name="G"}, {id=990009, name="N"},
- {id=990010, name="M"}, {id=990031, name="M+"},
- },
- -- [2] Y-Pet Gear (drawId 980002)
- {
- {id=990011, name="E"}, {id=990012, name="D"}, {id=990013, name="C"},
- {id=990014, name="B"}, {id=990015, name="A"}, {id=990016, name="S"},
- {id=990017, name="SS"}, {id=990018, name="G"}, {id=990019, name="N"},
- {id=990020, name="M"}, {id=990041, name="M+"},
- },
- -- [3] B-Pet Gear (drawId 980003)
- {
- {id=990021, name="E"}, {id=990022, name="D"}, {id=990023, name="C"},
- {id=990024, name="B"}, {id=990025, name="A"}, {id=990026, name="S"},
- {id=990027, name="SS"}, {id=990028, name="G"}, {id=990029, name="N"},
- {id=990030, name="M"}, {id=990051, name="M+"},
- },
-}
-
-local PG_GRADE_MAP = {}
-for _, list in ipairs(PG_GRADES_PER_MACHINE) do
- for _, g in ipairs(list) do PG_GRADE_MAP[g.id] = g.name end
-end
-
--- ============================================================
-PGR = {
- guids = {"","",""},
- captured = {false,false,false},
- targets = {{},{},{}},
- running = {false,false,false},
- statLbls = {nil,nil,nil},
- dotRefs = {nil,nil,nil},
- sumLbls = {nil,nil,nil},
- attemptLbls = {nil,nil,nil},
- lastLbls = {nil,nil,nil},
- toggleBtns = {nil,nil,nil},
- toggleKnobs = {nil,nil,nil},
- enOnFlags = {false,false,false},
-}
-
 local HALO_NAMES = {"Bronze Halo", "Gold Halo", "Diamond Halo"}
 local HALO_DRAW_ID = {1, 2, 3}
 HALO = {
@@ -2397,7 +2235,6 @@ end
 _spyLog = {}
 _layer0Active = false
 _HR_RPT = nil -- laporan hero fastroll
-_WR_RPT = nil -- laporan weapon fastroll
 _watcherConns = {}
 
 -- ============================================================
@@ -2411,8 +2248,6 @@ DDLayer.Name = "ASH_DD"
 _activeDDClose = nil
 -- Forward declare AutoRoll functions used in panels (global, cross-scope)
 DoAutoRollHero = nil
-DoAutoRollWeapon = nil
-DoAutoRollPetGear = nil
 InitAllCaptureLayers = nil
 
 -- CloseActiveDD: tutup dropdown yang sedang terbuka
@@ -2786,8 +2621,8 @@ do
  local HIDE_KEYWORDS = {
  "Congratulations", -- weapon quirk reroll
  "just reroll a super quirk", -- hero quirk reroll
- "mythic hero", -- fallback semua jenis reroll
- "just pulled", -- tangkap notif quirk langka
+ "just reroll", -- fallback semua jenis reroll
+ "super quirk", -- tangkap notif quirk langka
  }
 
  local function _matchHideKeyword(txt)
@@ -2958,853 +2793,8 @@ do
  -- 
  -- 
  -- ============================================================
- -- AUTO SELL WEAPON [v56b FIX] + WEAPON FILTER DROPDOWN
- -- Persistent listener di UpdateWeapon.OnClientEvent
- -- Dropdown pakai DDLayer (sistem existing) - no MaxSize bug
- -- LayoutOrder: swRow=5, swDropCard=6, swStatusCard=7
- --              dgRow=8, dgSliderCard=9 (geser +2)
+ -- PANEL : FARM
  -- ============================================================
-
- local WEAPON_LIST = {
-  {180002, "Nail", 1, Color3.fromRGB(200,200,200)},
-  {180003, "Crimson Dragon", 2, Color3.fromRGB(100,200,255)},
-  {180004, "Knight's Oath", 3, Color3.fromRGB(200,100,255)},
-  {180005, "Staff", 4, Color3.fromRGB(255,160,40)},
-  {180006, "ToothScepter", 5, Color3.fromRGB(255,80,80)},
-  {180007, "Gleaming", 5, Color3.fromRGB(255,80,80)},
-  {180008, "Underworld", 1, Color3.fromRGB(200,200,200)},
-  {180009, "SwordOfDarkness", 2, Color3.fromRGB(100,200,255)},
-  {180010, "BlackHoleSword", 3, Color3.fromRGB(200,100,255)},
-  {180011, "Starlight", 4, Color3.fromRGB(255,160,40)},
-  {180012, "VoidSword", 5, Color3.fromRGB(255,80,80)},
-  {180013, "Cyberpunk", 5, Color3.fromRGB(255,80,80)},
-  {180014, "Crescendo", 1, Color3.fromRGB(200,200,200)},
-  {180015, "JupiterSword", 2, Color3.fromRGB(100,200,255)},
-  {180016, "Obsidian Shard", 3, Color3.fromRGB(200,100,255)},
-  {180017, "redtide", 4, Color3.fromRGB(255,160,40)},
-  {180018, "Blazing Fury", 5, Color3.fromRGB(255,80,80)},
-  {180019, "Ashbringer", 5, Color3.fromRGB(255,80,80)},
-  {180020, "ValentineSword", 1, Color3.fromRGB(200,200,200)},
-  {180021, "Frost Serpent", 2, Color3.fromRGB(100,200,255)},
-  {180022, "OceanSamurai", 3, Color3.fromRGB(200,100,255)},
-  {180023, "SnakeSpear", 4, Color3.fromRGB(255,160,40)},
-  {180024, "Skywalker", 5, Color3.fromRGB(255,80,80)},
-  {180025, "Crystalline", 5, Color3.fromRGB(255,80,80)},
-  {180026, "MoonKatana", 1, Color3.fromRGB(200,200,200)},
-  {180027, "Azure Blue", 2, Color3.fromRGB(100,200,255)},
-  {180028, "PurpleMagicSword", 3, Color3.fromRGB(200,100,255)},
-  {180029, "InternalDemonSword", 4, Color3.fromRGB(255,160,40)},
-  {180030, "Abyssal Scythe", 5, Color3.fromRGB(255,80,80)},
-  {180031, "Stellar Domain", 5, Color3.fromRGB(255,80,80)},
-  {180032, "Skeletal", 1, Color3.fromRGB(200,200,200)},
-  {180033, "Holy Sword", 2, Color3.fromRGB(100,200,255)},
-  {180034, "The breath of water", 3, Color3.fromRGB(200,100,255)},
-  {180035, "DiamondBladeSword", 4, Color3.fromRGB(255,160,40)},
-  {180036, "Thunderfury", 5, Color3.fromRGB(255,80,80)},
-  {180037, "Hailstorm", 5, Color3.fromRGB(255,80,80)},
-  {180038, "LightningRage", 1, Color3.fromRGB(200,200,200)},
-  {180039, "TechSword", 2, Color3.fromRGB(100,200,255)},
-  {180040, "BatScythe", 3, Color3.fromRGB(200,100,255)},
-  {180041, "Widowmaker", 4, Color3.fromRGB(255,160,40)},
-  {180042, "Dragonscale", 5, Color3.fromRGB(255,80,80)},
-  {180043, "DarkFire", 5, Color3.fromRGB(255,80,80)},
-  {180044, "DullBlade", 1, Color3.fromRGB(200,200,200)},
-  {180045, "Batwing", 2, Color3.fromRGB(100,200,255)},
-  {180046, "CoolSteel", 3, Color3.fromRGB(200,100,255)},
-  {180047, "WinterEdge", 4, Color3.fromRGB(255,160,40)},
-  {180048, "IcedTomahawk", 5, Color3.fromRGB(255,80,80)},
-  {180049, "TheFlute", 5, Color3.fromRGB(255,80,80)},
-  {180050, "Wailing Eye\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180051, "GlareHammer\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180052, "Wailing Eye\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180053, "GlareHammer\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180054, "Wailing Eye\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180055, "GlareHammer\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180056, "InfiniteSword", 1, Color3.fromRGB(200,200,200)},
-  {180057, "PeerlessSword", 2, Color3.fromRGB(100,200,255)},
-  {180058, "SandSword", 3, Color3.fromRGB(200,100,255)},
-  {180059, "FlyingSword", 4, Color3.fromRGB(255,160,40)},
-  {180060, "Recursion's Edge", 5, Color3.fromRGB(255,80,80)},
-  {180061, "Night", 5, Color3.fromRGB(255,80,80)},
-  {180062, "Silence of Aporia", 1, Color3.fromRGB(200,200,200)},
-  {180063, "Lacuna Blade", 2, Color3.fromRGB(100,200,255)},
-  {180064, "Zephyr's Grief", 3, Color3.fromRGB(200,100,255)},
-  {180065, "Axiom's Verdict", 4, Color3.fromRGB(255,160,40)},
-  {180066, "Fractalized Borealis", 5, Color3.fromRGB(255,80,80)},
-  {180067, "Destiny", 5, Color3.fromRGB(255,80,80)},
-  {180068, "Violet Lightning", 1, Color3.fromRGB(200,200,200)},
-  {180073, "Tech Sword", 5, Color3.fromRGB(255,80,80)},
-  {180074, "BlueLaserSword", 1, Color3.fromRGB(200,200,200)},
-  {180077, "SpiderSword", 4, Color3.fromRGB(255,160,40)},
-  {180078, "DragonFireSword", 5, Color3.fromRGB(255,80,80)},
-  {180079, "Scourge", 5, Color3.fromRGB(255,80,80)},
-  {180081, "Molten Lava", 2, Color3.fromRGB(100,200,255)},
-  {180082, "Venomous Eye", 3, Color3.fromRGB(200,100,255)},
-  {180084, "Cursed Bone", 5, Color3.fromRGB(255,80,80)},
-  {180085, "Thunder Breath", 5, Color3.fromRGB(255,80,80)},
-  {180086, "DragonSlayer[gold]", 1, Color3.fromRGB(200,200,200)},
-  {180087, "MoonKatana[gold]", 2, Color3.fromRGB(100,200,255)},
-  {180088, "MoonSlasher[gold]", 3, Color3.fromRGB(200,100,255)},
-  {180089, "Pills[gold]", 4, Color3.fromRGB(255,160,40)},
-  {180090, "SixPathsStaff", 5, Color3.fromRGB(255,80,80)},
-  {180091, "Reapers", 5, Color3.fromRGB(255,80,80)},
-  {180092, "Infernal Saber", 1, Color3.fromRGB(200,200,200)},
-  {180093, "Infernal Cross", 2, Color3.fromRGB(100,200,255)},
-  {180096, "Sulfuras", 5, Color3.fromRGB(255,80,80)},
-  {180097, "Emberclaw Edge", 5, Color3.fromRGB(255,80,80)},
-  {180098, "Stellar Prism", 1, Color3.fromRGB(200,200,200)},
-  {180099, "Legacy Argent", 2, Color3.fromRGB(100,200,255)},
-  {180100, "Aether Wingblade", 3, Color3.fromRGB(200,100,255)},
-  {180101, "Celestia's Crescent", 4, Color3.fromRGB(255,160,40)},
-  {180102, "MechanicalKatana", 5, Color3.fromRGB(255,80,80)},
-  {180103, "Shadow Sovereign Blade", 5, Color3.fromRGB(255,80,80)},
-  {180104, "Starcrest Blade", 1, Color3.fromRGB(200,200,200)},
-  {180105, "Jadevine Blade", 2, Color3.fromRGB(100,200,255)},
-  {180106, "Scarlet Thornrose Blade", 3, Color3.fromRGB(200,100,255)},
-  {180107, "Holy Azure Saber", 4, Color3.fromRGB(255,160,40)},
-  {180108, "Aetherial Blade", 5, Color3.fromRGB(255,80,80)},
-  {180109, "Solar Flare Reckoning", 5, Color3.fromRGB(255,80,80)},
-  {180110, "Redwing Blade", 1, Color3.fromRGB(200,200,200)},
-  {180111, "Silver Knight", 2, Color3.fromRGB(100,200,255)},
-  {180112, "Starvein Petal", 3, Color3.fromRGB(200,100,255)},
-  {180113, "Hornchain Scale", 4, Color3.fromRGB(255,160,40)},
-  {180114, "Beastvine Amethyst", 5, Color3.fromRGB(255,80,80)},
-  {180115, "Cloud Dragon", 5, Color3.fromRGB(255,80,80)},
-  {180116, "SchoolKernel[gold]", 1, Color3.fromRGB(200,200,200)},
-  {180117, "LightningRage[gold]", 2, Color3.fromRGB(100,200,255)},
-  {180118, "GoldifiedLightning[gold]", 3, Color3.fromRGB(200,100,255)},
-  {180119, "DoubleEdge[gold]", 4, Color3.fromRGB(255,160,40)},
-  {180121, "RainbowSword", 5, Color3.fromRGB(255,80,80)},
-  {180122, "SerratedSword[gold]", 1, Color3.fromRGB(200,200,200)},
-  {180123, "AstralStaff[gold]", 2, Color3.fromRGB(100,200,255)},
-  {180124, "PixelSword[gold]", 3, Color3.fromRGB(200,100,255)},
-  {180125, "Underworld[gold]", 4, Color3.fromRGB(255,160,40)},
-  {180127, "GoldenLegendary", 5, Color3.fromRGB(255,80,80)},
-  {180128, "Glowbone", 5, Color3.fromRGB(255,80,80)},
-  {180129, "Divine Purge Claymore", 5, Color3.fromRGB(255,80,80)},
-  {180130, "Ember Blade\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180131, "Ember Blade\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180132, "Ember Blade\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180133, "Ember Blade+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180134, "Ember Blade+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180135, "Ember Blade+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180136, "Skullhorn Staff\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180137, "Skullhorn Staff\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180138, "Skullhorn Staff\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180139, "Skullhorn Staff+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180140, "Skullhorn Staff+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180141, "Skullhorn Staff+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180142, "Violet Briar Dagger\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180143, "Violet Briar Dagger\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180144, "Violet Briar Dagger\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180145, "Violet Briar Dagger+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180146, "Violet Briar Dagger+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180147, "Violet Briar Dagger+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180148, "GlareHammer+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180149, "GlareHammer+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180150, "GlareHammer+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180154, "Wailing Eye+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180155, "Wailing Eye+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180156, "Wailing Eye+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180160, "Stellarmoon Staff\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180161, "Stellarmoon Staff\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180162, "Stellarmoon Staff\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180163, "Stellarmoon Staff+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180164, "Stellarmoon Staff+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180165, "Stellarmoon Staff+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180166, "Crystalcrown Blade\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180167, "Crystalcrown Blade\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180168, "Crystalcrown Blade\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180169, "Crystalcrown Blade+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180170, "Crystalcrown Blade+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180171, "Crystalcrown Blade+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180172, "Redspine Claw\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180173, "Redspine Claw\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180174, "Redspine Claw\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180175, "Redspine Claw+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180176, "Redspine Claw+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180177, "Redspine Claw+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180178, "Purplecrack Blade\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180179, "Purplecrack Blade\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180180, "Purplecrack Blade\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180181, "Purplecrack Blade+1\227\128\144\226\133\160\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180182, "Purplecrack Blade+1\227\128\144\226\133\161\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180183, "Purplecrack Blade+1\227\128\144\226\133\162\227\128\145", 5, Color3.fromRGB(255,80,80)},
-  {180184, "Holly Cane Sword", 5, Color3.fromRGB(255,80,80)},
-  {180185, "CandyCanes2025", 5, Color3.fromRGB(255,80,80)},
-  {180186, "Crimson Heart Katana", 5, Color3.fromRGB(255,80,80)},
-  {180187, "Holy Vine Lance", 5, Color3.fromRGB(255,80,80)},
-  {180188, "Wind Wing Saber", 5, Color3.fromRGB(255,80,80)},
-  {180189, "Starfall Greatsword", 5, Color3.fromRGB(255,80,80)},
-  {180190, "Celestial Wing Sword", 5, Color3.fromRGB(255,80,80)},
-}
-
- -- Matcher: return function(itemId)->bool
- local function BuildWeaponMatcher(selectAll, selectedIds)
-  if selectAll or not next(selectedIds) then
-   return function() return true end
-  end
-  return function(itemId)
-   return itemId and selectedIds[itemId] == true
-  end
- end
-
- local _autoSellWeaponOn = false
- local _swConn           = nil
- local _swSoldCount      = 0
- local _swSelectAll      = true            -- true = jual semua
- local _swSelectedIds    = {}              -- {[equipId]=true}
- local _swSelNames       = {}              -- {[equipId]=name}
-
- -- ── Toggle row ──────────────────────────────────────────────
- local swRow = Frame(p, C.SURFACE, UDim2.new(1,0,0,44))
- swRow.LayoutOrder = 5; Corner(swRow,10); Stroke(swRow, C.BORD, 1.5, 0.3)
- local swLbl = Label(swRow, "AUTO SELL WEAPON", 13, C.TXT, Enum.Font.GothamBold)
- swLbl.Size = UDim2.new(1,-68,0,20); swLbl.Position = UDim2.new(0,14,0.5,-10)
- local swPill = Btn(swRow, C.PILL_OFF, UDim2.new(0,52,0,30))
- swPill.AnchorPoint = Vector2.new(1,0.5); swPill.Position = UDim2.new(1,-12,0.5,0); Corner(swPill,13)
- local swKnob = Frame(swPill, C.KNOB_OFF, UDim2.new(0,24,0,24))
- swKnob.AnchorPoint = Vector2.new(0,0.5); swKnob.Position = UDim2.new(0,3,0.5,0); Corner(swKnob,10)
-
- -- ── Dropdown filter card (LayoutOrder 6) ────────────────────
- local swDropCard = Frame(p, C.BG3, UDim2.new(1,0,0,0))
- swDropCard.LayoutOrder = 6
- swDropCard.AutomaticSize = Enum.AutomaticSize.Y
- Corner(swDropCard, 10); Stroke(swDropCard,C.BORD, 1.5,0.4)
- Padding(swDropCard,6,6,10,10)
- New("UIListLayout",{Parent=swDropCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
-
- local swDTopRow = Frame(swDropCard, Color3.new(0,0,0), UDim2.new(1,0,0,16))
- swDTopRow.LayoutOrder=1; swDTopRow.BackgroundTransparency=1
- local swDFilterLbl = Label(swDTopRow,"Filter Item Weapon (jual item terpilih)",10,C.TXT3,Enum.Font.GothamBold)
- swDFilterLbl.Size=UDim2.new(0.65,0,1,0)
- local swDCountLbl = Label(swDTopRow,"Select All",10,C.ACC2,Enum.Font.GothamBold)
- swDCountLbl.Size=UDim2.new(0.35,0,1,0); swDCountLbl.Position=UDim2.new(0.65,0,0,0)
- swDCountLbl.TextXAlignment=Enum.TextXAlignment.Right
-
- local swDBtn = Btn(swDropCard, C.BG2, UDim2.new(1,0,0,32))
- swDBtn.LayoutOrder=2; Corner(swDBtn, 10); Stroke(swDBtn,C.BORD, 1.5,0.5)
- local swDBtnLbl = Label(swDBtn,"Select Item",12,C.TXT3,Enum.Font.GothamBold)
- swDBtnLbl.Size=UDim2.new(1,-30,1,0); swDBtnLbl.Position=UDim2.new(0,10,0,0)
- swDBtnLbl.TextXAlignment=Enum.TextXAlignment.Left
- swDBtnLbl.TextTruncate=Enum.TextTruncate.AtEnd
- local swDArrow = Label(swDBtn,"▾",13,C.ACC,Enum.Font.GothamBold)
- swDArrow.Size=UDim2.new(0,22,1,0); swDArrow.Position=UDim2.new(1,-26,0,0)
- swDArrow.TextXAlignment=Enum.TextXAlignment.Center
-
- -- ── Status bar (LayoutOrder 7) ───────────────────────────────
- local swStatusCard = Frame(p, C.BG3, UDim2.new(1,0,0,26))
- swStatusCard.LayoutOrder = 7; Corner(swStatusCard,6); Stroke(swStatusCard,C.BORD, 1.5,0.4)
- local swDot = Frame(swStatusCard, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
- swDot.Position = UDim2.new(0,7,0.5,-4); Corner(swDot,4)
- local swStatusLbl = Label(swStatusCard,"Idle",10,C.TXT3,Enum.Font.GothamBold)
- swStatusLbl.Size = UDim2.new(1,-22,1,0); swStatusLbl.Position = UDim2.new(0,21,0,0)
- swStatusLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
- local function SetSWStatus(msg, col)
-  pcall(function()
-   swStatusLbl.Text = msg
-   swStatusLbl.TextColor3 = col or C.TXT3
-   swDot.BackgroundColor3 = col or Color3.fromRGB(100,100,100)
-  end)
- end
-
- -- ── Update tampilan tombol dropdown ─────────────────────────
- local function UpdateSwDropUI()
-  if _swSelectAll then
-   swDBtnLbl.Text   = "Select All"
-   swDBtnLbl.TextColor3 = C.ACC2
-   swDCountLbl.Text = "Select All"
-  else
-   local n = 0; for _ in pairs(_swSelectedIds) do n=n+1 end
-   if n == 0 then
-    swDBtnLbl.Text       = "Select Item"
-    swDBtnLbl.TextColor3 = C.TXT3
-    swDCountLbl.Text     = "0 dipilih"
-   else
-    local names = {}
-    for _, nm in pairs(_swSelNames) do table.insert(names, nm) end
-    table.sort(names)
-    local preview = table.concat(names, ", ")
-    if #preview > 38 then preview = preview:sub(1,35).."..." end
-    swDBtnLbl.Text       = preview
-    swDBtnLbl.TextColor3 = C.ACC
-    swDCountLbl.Text     = n.." item"
-   end
-  end
- end
-
- -- ── Quality color map ────────────────────────────────────────
- local SW_QCOL = {
-  [1]=Color3.fromRGB(200,200,200),
-  [2]=Color3.fromRGB(100,200,255),
-  [3]=Color3.fromRGB(200,100,255),
-  [4]=Color3.fromRGB(255,160,40),
-  [5]=Color3.fromRGB(255,80,80),
- }
-
- -- ── Dropdown popup (pakai DDLayer existing) ──────────────────
- swDBtn.MouseButton1Click:Connect(function()
-  CloseActiveDD()
-
-  local absPos  = swDBtn.AbsolutePosition
-  local absSize = swDBtn.AbsoluteSize
-  local ITEM_H  = 28
-  local totalH  = #WEAPON_LIST * (ITEM_H + 2) + 8
-  local scrollH = math.min(totalH, 320)
-  local HEADER_H = 72   -- Select All btn + padding
-
-  local popup = Instance.new("Frame")
-  popup.Parent = DDLayer
-  popup.BackgroundColor3 = C.DD_BG
-  popup.BorderSizePixel  = 0
-  popup.Size     = UDim2.new(0, absSize.X + 20, 0, HEADER_H + scrollH)
-  popup.Position = UDim2.new(0, absPos.X - 10, 0, absPos.Y + absSize.Y + 4)
-  popup.ZIndex   = 9999
-  popup.ClipsDescendants = true
-  Corner(popup, 10); Stroke(popup, C.BORD2, 1.5, 0.2)
-
-  -- Header: Select All btn + count label
-  local hdr = Frame(popup, C.TBAR, UDim2.new(1,0,0,HEADER_H)); hdr.ZIndex=9999
-  Corner(hdr, 10)
-
-  local hdrCountLbl = Label(hdr, "Select Item", 11, C.TXT3, Enum.Font.GothamBold)
-  hdrCountLbl.Size=UDim2.new(0.6,0,0,20); hdrCountLbl.Position=UDim2.new(0,8,0,6); hdrCountLbl.ZIndex=9999
-
-  local hdrClose = Btn(hdr, Color3.fromRGB(150,40,40), UDim2.new(0,40,0,22))
-  hdrClose.Position=UDim2.new(1,-46,0,6); Corner(hdrClose,5); hdrClose.ZIndex=9999
-  local hdrCloseLbl = Label(hdrClose,"Close",10,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-  hdrCloseLbl.Size=UDim2.new(1,0,1,0); hdrCloseLbl.ZIndex=9999
-
-  local selAllBtn = Btn(hdr, Color3.fromRGB(30,100,60), UDim2.new(1,-16,0,26))
-  selAllBtn.Position=UDim2.new(0,8,0,34); Corner(selAllBtn,6); selAllBtn.ZIndex=9999
-  local selAllLbl = Label(selAllBtn,"✓  Select All  (jual semua unlocked)",11,C.TXT,Enum.Font.GothamBold)
-  selAllLbl.Size=UDim2.new(1,0,1,0); selAllLbl.ZIndex=9999
-
-  -- ScrollingFrame list
-  local sf = Instance.new("ScrollingFrame")
-  sf.Parent=popup; sf.BackgroundTransparency=1; sf.BorderSizePixel=0
-  sf.Position=UDim2.new(0,0,0,HEADER_H); sf.Size=UDim2.new(1,0,0,scrollH)
-  sf.CanvasSize=UDim2.new(0,0,0,totalH)
-  sf.ScrollBarThickness=5; sf.ScrollBarImageColor3=C.ACC
-  sf.ScrollingDirection=Enum.ScrollingDirection.Y; sf.ZIndex=9999
-  local sfLayout = Instance.new("UIListLayout",sf)
-  sfLayout.SortOrder=Enum.SortOrder.LayoutOrder; sfLayout.Padding=UDim.new(0,2)
-  local sfp = Instance.new("UIPadding",sf)
-  sfp.PaddingTop=UDim.new(0,4); sfp.PaddingBottom=UDim.new(0,4)
-  sfp.PaddingLeft=UDim.new(0,4); sfp.PaddingRight=UDim.new(0, 10)
-
-  -- Working copy state (applied on close)
-  local tempSel    = {}
-  local tempSelAll = _swSelectAll
-  if not tempSelAll then
-   for k,v in pairs(_swSelectedIds) do tempSel[k]=v end
-  end
-
-  -- Update header count
-  local rowRefs = {}
-  local function RefreshHdr()
-   if tempSelAll then
-    hdrCountLbl.Text       = "Select All aktif"
-    hdrCountLbl.TextColor3 = C.ACC2
-    selAllLbl.Text         = "✓  Select All  (aktif)"
-    selAllLbl.TextColor3   = Color3.fromRGB(80,255,150)
-   else
-    local n=0; for _ in pairs(tempSel) do n=n+1 end
-    hdrCountLbl.Text       = n.." item dipilih"
-    hdrCountLbl.TextColor3 = n>0 and C.ACC or C.TXT3
-    selAllLbl.Text         = "✓  Select All  (jual semua unlocked)"
-    selAllLbl.TextColor3   = C.TXT
-   end
-  end
-  RefreshHdr()
-
-  -- Build rows
-  for idx, entry in ipairs(WEAPON_LIST) do
-   local wid, wname, wquality, wcol = entry[1], entry[2], entry[3], entry[4]
-   local isSel = tempSel[wid]==true
-
-   local row = Btn(sf, isSel and Color3.fromRGB(30,70,30) or C.DD_BG, UDim2.new(1,-8,0,ITEM_H))
-   row.LayoutOrder=idx; Corner(row,5); row.ZIndex=9999
-
-   local tick = Frame(row, isSel and C.PILL_ON or C.PILL_OFF, UDim2.new(0,14,0,14))
-   tick.AnchorPoint=Vector2.new(0,0.5); tick.Position=UDim2.new(0,5,0.5,0)
-   Corner(tick,3); tick.ZIndex=9999
-   local tickMark = Label(tick,"✓",9,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
-   tickMark.Size=UDim2.new(1,0,1,0); tickMark.ZIndex=9999; tickMark.Visible=isSel
-
-   local nmLbl = Label(row, wname, 11, wcol or C.TXT, Enum.Font.GothamBold)
-   nmLbl.Size=UDim2.new(1,-26,1,0); nmLbl.Position=UDim2.new(0,24,0,0)
-   nmLbl.TextXAlignment=Enum.TextXAlignment.Left; nmLbl.ZIndex=9999
-   nmLbl.TextTruncate=Enum.TextTruncate.AtEnd
-
-   rowRefs[wid]={row=row,tick=tick,tickMark=tickMark}
-
-   row.MouseButton1Click:Connect(function()
-    -- Keluar dari Select All mode jika ada
-    if tempSelAll then
-     tempSelAll=false
-     for k in pairs(tempSel) do tempSel[k]=nil end
-     for _, ref in pairs(rowRefs) do
-      ref.tick.BackgroundColor3=C.PILL_OFF
-      ref.tickMark.Visible=false
-      ref.row.BackgroundColor3=C.DD_BG
-     end
-    end
-    -- Toggle item
-    if tempSel[wid] then
-     tempSel[wid]=nil
-     tick.BackgroundColor3=C.PILL_OFF; tickMark.Visible=false
-     row.BackgroundColor3=C.DD_BG
-    else
-     tempSel[wid]=true
-     tick.BackgroundColor3=C.PILL_ON; tickMark.Visible=true
-     row.BackgroundColor3=Color3.fromRGB(30,70,30)
-    end
-    RefreshHdr()
-   end)
-  end
-
-  -- Fungsi apply & close
-  -- ApplyClose: simpan pilihan, tutup popup TANPA rekursi
-  local _closed = false
-  local function ApplyClose()
-   if _closed then return end
-   _closed = true
-   -- Simpan state
-   if tempSelAll then
-    _swSelectAll=true; _swSelectedIds={}; _swSelNames={}
-   else
-    _swSelectAll=false; _swSelectedIds={}; _swSelNames={}
-    for k in pairs(tempSel) do
-     _swSelectedIds[k]=true
-     for _, e in ipairs(WEAPON_LIST) do
-      if e[1]==k then _swSelNames[k]=e[2]; break end
-     end
-    end
-   end
-   UpdateSwDropUI()
-   if _autoSellWeaponOn then StartAutoSellWeapon() end
-   -- Tutup langsung: destroy popup, hide DDLayer, clear callback
-   _activeDDClose = nil
-   DDLayer.Visible = false
-   pcall(function() popup:Destroy() end)
-  end
-
-  selAllBtn.MouseButton1Click:Connect(function()
-   tempSelAll=true
-   for k in pairs(tempSel) do tempSel[k]=nil end
-   for _, ref in pairs(rowRefs) do
-    ref.tick.BackgroundColor3=C.PILL_OFF
-    ref.tickMark.Visible=false
-    ref.row.BackgroundColor3=C.DD_BG
-   end
-   RefreshHdr()
-  end)
-
-  hdrClose.MouseButton1Click:Connect(ApplyClose)
-
-  DDLayer.Visible = true
-  _activeDDClose  = ApplyClose
- end)
-
- -- ── StartAutoSellWeapon ──────────────────────────────────────
- -- Source data: PlayerManager.localPlayerData.weapons (confirmed accessible)
- -- Struktur: {guid, isLock, isEquip, isBuffer, isFavourite, itemId, ...}
- function StartAutoSellWeapon()
-  if _swConn then pcall(function() task.cancel(_swConn) end); _swConn = nil end
-  _swSoldCount = 0
-
-  local re = Remotes:FindFirstChild("DeleteWeapons")
-  if not re then
-   SetSWStatus("[!] DeleteWeapons NOT FOUND!", Color3.fromRGB(255,80,80)); return
-  end
-
-  -- Ambil PlayerManager sekali
-  local _pm = nil
-  pcall(function()
-   _pm = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.PlayerManager)
-  end)
-  if not _pm then
-   SetSWStatus("[!] PlayerManager NOT FOUND!", Color3.fromRGB(255,80,80)); return
-  end
-
-  local function GetSellableWeapons()
-   local guids = {}
-   pcall(function()
-    local weapons = _pm.localPlayerData and _pm.localPlayerData.weapons
-    if not weapons then return end
-    for guid, data in pairs(weapons) do
-     if data.isLock then continue end
-     if data.isEquip then continue end
-     if data.isBuffer then continue end
-     if data.isFavourite then continue end
-     -- Filter item spesifik kalau bukan Select All
-     if not _swSelectAll and next(_swSelectedIds) then
-      -- itemId dari data vs WEAPON_LIST equipId
-      -- Coba match langsung, atau via offset (Item vs Equip config)
-      local matched = false
-      if data.itemId and _swSelectedIds[data.itemId] then
-       matched = true
-      end
-      -- Fallback: cari di WEAPON_LIST berdasarkan itemId proximity
-      if not matched then continue end
-     end
-     table.insert(guids, guid)
-    end
-   end)
-   return guids
-  end
-
-  _swConn = task.spawn(function()
-   while _autoSellWeaponOn do
-    local guids = GetSellableWeapons()
-    if guids and #guids > 0 then
-     SetSWStatus("Selling "..#guids.." weapon...", Color3.fromRGB(255,200,60))
-     local BATCH = 20
-     for i = 1, #guids, BATCH do
-      if not _autoSellWeaponOn then break end
-      local batch = {}
-      for j = i, math.min(i+BATCH-1, #guids) do
-       table.insert(batch, guids[j])
-      end
-      pcall(function() re:FireServer(batch) end)
-      _swSoldCount = _swSoldCount + #batch
-      SetSWStatus("[OK] Sold [".._swSoldCount.."] weapon", Color3.fromRGB(255,160,40))
-      task.wait(0.5)
-     end
-    else
-     local fd = _swSelectAll and "All" or (function()
-      local n=0; for _ in pairs(_swSelectedIds) do n=n+1 end; return n.." item"
-     end)()
-     SetSWStatus("[OK] Active ("..fd..") - waiting...", Color3.fromRGB(100,220,100))
-    end
-    task.wait(2)
-   end
-  end)
-
-  SetSWStatus("[OK] Active - scanning...", Color3.fromRGB(100,220,100))
- end
-
- swPill.MouseButton1Click:Connect(function()
-  _autoSellWeaponOn = not _autoSellWeaponOn
-  local on = _autoSellWeaponOn
-  TweenService:Create(swPill,TweenInfo.new(0.16),{BackgroundColor3=on and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(swKnob,TweenInfo.new(0.16),{
-   Position=on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3=on and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
-  if on then StartAutoSellWeapon()
-  else
-   if _swConn then pcall(function() task.cancel(_swConn) end); _swConn=nil end
-   SetSWStatus("Idle - ".._swSoldCount.." SOLD", C.TXT3)
-  end
- end)
-
-
- -- AUTO DECOMPOSE GEM [v54 FIX: scan itemId agresif, support Colorful/Rainbow Gem]
- -- Sumber GUID: GemsPanel.Frame.BgImage.List.ScrollingFrame
- -- Nama child = UUID gem. NumText "Lv.X" = level gem.
- -- Filter berdasarkan itemId dari config game.
- -- Remote: DecomposeItems:FireServer({itemType=7, data={guid1,...}})
- -- 
- local _autoDecompGemOn = false
- local _autoDecompGemThread = nil
- local GEM_ITEM_TYPE = 7
- local _gemMaxLevel = 9 -- default slider: decompose level 1-9
-
- -- Tabel itemId gem berdasarkan nama dan level (dari game config)
- -- Format: [itemId] = level
- -- Ruby 88001-88009 (L1-9), Emerald 88011-88019, Sapphire 88021-88029
- -- Deadly Gem 88031-88039, Purple Gem 88141-88149
- -- Colorful Gem 88041-88049 (L101-109=L1-9), Rainbow Gem 88051-88059
- local GEM_ID_RANGES = {
- -- {startId, endId, minLevel, maxLevel, displayName}
- {88001, 88009, 1, 9, "Ruby"},
- {88011, 88019, 1, 9, "Emerald"},
- {88021, 88029, 1, 9, "Sapphire"},
- {88031, 88039, 1, 9, "Deadly Gem"},
- {88141, 88149, 1, 9, "Purple Gem"},
- -- LV10-20: Ruby 88010,88061-88070 etc
- {88010, 88010, 10, 10, "Ruby"},
- {88061, 88070, 11, 20, "Ruby"},
- {88020, 88020, 10, 10, "Emerald"},
- {88071, 88080, 11, 20, "Emerald"},
- {88030, 88030, 10, 10, "Sapphire"},
- {88081, 88090, 11, 20, "Sapphire"},
- {88040, 88040, 10, 10, "Deadly Gem"},
- {88091, 88100, 11, 20, "Deadly Gem"},
- {88150, 88150, 10, 10, "Purple Gem"},
- {88151, 88160, 11, 20, "Purple Gem"},
- -- LV21-30
- {88171, 88180, 21, 30, "Ruby"},
- {88181, 88190, 21, 30, "Emerald"},
- {88191, 88200, 21, 30, "Sapphire"},
- -- Colorful Gem: game Level 101-109 = user level 1-9
- {88041, 88049, 1, 9, "Colorful Gem"},
- {88050, 88050, 10, 10, "Colorful Gem"},
- {88101, 88110, 11, 20, "Colorful Gem"},
- -- Rainbow Gem: game Level 101-109 = user level 1-9
- {88051, 88059, 1, 9, "Rainbow Gem"},
- {88060, 88060, 10, 10, "Rainbow Gem"},
- {88111, 88120, 11, 20, "Rainbow Gem"},
- }
-
- -- Build lookup: itemId -> userLevel (1-30)
- local GEM_ID_TO_LEVEL = {}
- for _, r in ipairs(GEM_ID_RANGES) do
- local startId, endId, minLv = r[1], r[2], r[3]
- for id = startId, endId do
- local offset = id - startId
- GEM_ID_TO_LEVEL[id] = minLv + offset
- end
- end
-
- -- Build lookup: itemId valid untuk decompose
- local function IsGemIdToDecomp(itemId, maxLv)
- local lv = GEM_ID_TO_LEVEL[itemId]
- if not lv then return false end
- return lv <= maxLv
- end
-
- -- UI 
- local dgRow = Frame(p, C.SURFACE, UDim2.new(1,0,0,44))
- dgRow.LayoutOrder = 8; Corner(dgRow,10); Stroke(dgRow, C.BORD, 1.5, 0.3)
- local dgLbl = Label(dgRow, "AUTO DECOMPOSE GEMS", 13, C.TXT, Enum.Font.GothamBold)
- dgLbl.Size = UDim2.new(1,-68,0,20); dgLbl.Position = UDim2.new(0,14,0.5,-10)
- local dgPill = Btn(dgRow, C.PILL_OFF, UDim2.new(0,52,0,30))
- dgPill.AnchorPoint = Vector2.new(1,0.5); dgPill.Position = UDim2.new(1,-12,0.5,0); Corner(dgPill,13)
- local dgKnob = Frame(dgPill, C.KNOB_OFF, UDim2.new(0,24,0,24))
- dgKnob.AnchorPoint = Vector2.new(0,0.5); dgKnob.Position = UDim2.new(0,3,0.5,0); Corner(dgKnob,10)
-
- -- Slider Max Level 
- local dgSliderCard = Frame(p, C.BG3, UDim2.new(1,0,0,44))
- dgSliderCard.LayoutOrder = 9; Corner(dgSliderCard, 10); Stroke(dgSliderCard,C.BORD, 1.5,0.4)
- Padding(dgSliderCard,6,6,10,10)
- New("UIListLayout",{Parent=dgSliderCard,FillDirection=Enum.FillDirection.Vertical,Padding=UDim.new(0,4)})
-
- local dgSliderTopRow = Frame(dgSliderCard, Color3.new(0,0,0), UDim2.new(1,0,0,14))
- dgSliderTopRow.BackgroundTransparency=1
- local dgSliderLbl = Label(dgSliderTopRow,"Min - Max Level Decompose",10,C.TXT3,Enum.Font.GothamBold)
- dgSliderLbl.Size=UDim2.new(0.6,0,1,0)
- local dgSliderVal = Label(dgSliderTopRow,"Lv 1 - 150",10,C.ACC2,Enum.Font.GothamBold)
- dgSliderVal.Size=UDim2.new(0.4,0,1,0); dgSliderVal.Position=UDim2.new(0.6,0,0,0)
- dgSliderVal.TextXAlignment=Enum.TextXAlignment.Right
-
- local dgSliderRow = Frame(dgSliderCard, Color3.new(0,0,0), UDim2.new(1,0,0,18))
- dgSliderRow.BackgroundTransparency=1
-
- local dgMinus = Btn(dgSliderRow,C.BG2,UDim2.new(0,18,0,18))
- dgMinus.Position=UDim2.new(0,0,0,0); Corner(dgMinus,6)
- Label(dgMinus,"-",12,C.TXT,Enum.Font.GothamBold).Size=UDim2.new(1,0,1,0)
-
- local dgTrackBg = Frame(dgSliderRow,C.BG2,UDim2.new(1,-42,0,6))
- dgTrackBg.Position=UDim2.new(0,22,0.5,-3); Corner(dgTrackBg,3)
- local dgFill = Frame(dgTrackBg,C.ACC2,UDim2.new(8/29,0,1,0))
- dgFill.Position=UDim2.new(0,0,0,0); Corner(dgFill,3)
- local dgThumb = Frame(dgTrackBg,C.TXT,UDim2.new(0,10,0,10))
- dgThumb.AnchorPoint=Vector2.new(0.5,0.5); dgThumb.Position=UDim2.new(8/29,0,0.5,0); Corner(dgThumb,5)
-
- local dgPlus = Btn(dgSliderRow,C.BG2,UDim2.new(0,18,0,18))
- dgPlus.Position=UDim2.new(1,-18,0,0); Corner(dgPlus,6)
- Label(dgPlus,"+",12,C.TXT,Enum.Font.GothamBold).Size=UDim2.new(1,0,1,0)
-
- local function SetDGLevel(lv)
- lv = math.clamp(lv, 1, 150)
- _gemMaxLevel = lv
- local pct = (lv-1)/149
- dgSliderVal.Text = "Lv 1 - "..lv
- TweenService:Create(dgFill,TweenInfo.new(0.1),{Size=UDim2.new(pct,0,1,0)}):Play()
- TweenService:Create(dgThumb,TweenInfo.new(0.1),{Position=UDim2.new(pct,0,0.5,0)}):Play()
- end
- SetDGLevel(9)
-
- dgMinus.MouseButton1Click:Connect(function() SetDGLevel(_gemMaxLevel - 1) end)
- dgPlus.MouseButton1Click:Connect(function() SetDGLevel(_gemMaxLevel + 1) end)
-
- -- Drag slider
- local dgDragging = false
- dgThumb.InputBegan:Connect(function(inp)
- if inp.UserInputType==Enum.UserInputType.Touch or inp.UserInputType==Enum.UserInputType.MouseButton1 then
- dgDragging=true
- end
- end)
- game:GetService("UserInputService").InputChanged:Connect(function(inp)
- if not dgDragging then return end
- if inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch then
- local trackPos = dgTrackBg.AbsolutePosition.X
- local trackW = dgTrackBg.AbsoluteSize.X
- local pct = math.clamp((inp.Position.X - trackPos)/trackW, 0, 1)
- local lv = math.round(1 + pct * 149)
- SetDGLevel(lv)
- end
- end)
- game:GetService("UserInputService").InputEnded:Connect(function(inp)
- if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
- dgDragging=false
- end
- end)
-
- -- Status bar
- local function SetDGStatus(msg, col)
- pcall(function()
- dgStatusLbl.Text = msg
- dgStatusLbl.TextColor3 = col or C.TXT3
- end)
- end
-
- -- Scan GemsPanel - ambil guid + itemId dari NumText / child name
- -- [v54 FIX] GetGemGuidsFromPanel: scan lebih agresif, support Colorful/Rainbow Gem
- -- Return: list of {guid=string, itemId=number} untuk dipakai di DecomposeItems
- local function GetGemGuidsFromPanel(maxLv)
- local result = {}
- pcall(function()
- local pg = LP.PlayerGui
- local gp = pg:FindFirstChild("GemsPanel")
- if not gp then return end
-
- -- Cari ScrollingFrame container gem
- local sf = nil
- pcall(function()
- sf = gp:FindFirstChild("Frame")
- :FindFirstChild("BgImage")
- :FindFirstChild("List")
- :FindFirstChild("ScrollingFrame")
- end)
- if not sf then
- for _, obj in ipairs(gp:GetDescendants()) do
- if obj:IsA("ScrollingFrame") then sf = obj; break end
- end
- end
- if not sf then return end
-
- for _, child in ipairs(sf:GetChildren()) do
- local guidStr = child.Name
- -- Hanya proses child dengan nama UUID (guid)
- if #guidStr ~= 36 or not guidStr:find("^%x+%-%x+%-%x+%-%x+%-%x+$") then continue end
-
- -- [v54 FIX] Cari itemId dari semua sumber: attribute di child, attribute di descendants, value di ImageLabel
- local itemId = nil
-
- -- Sumber 1: attribute langsung di child
- itemId = child:GetAttribute("itemId") or child:GetAttribute("ItemId")
- or child:GetAttribute("id") or child:GetAttribute("Id")
- or child:GetAttribute("item_id")
-
- -- Sumber 2: scan descendants (attribute di child apapun)
- if not itemId then
- for _, c in ipairs(child:GetDescendants()) do
- local aid = c:GetAttribute("itemId") or c:GetAttribute("ItemId")
- or c:GetAttribute("id") or c:GetAttribute("Id")
- or c:GetAttribute("item_id")
- if aid and tonumber(aid) then itemId = tonumber(aid); break end
- end
- end
-
- -- Jika dapat itemId, gunakan GEM_ID_TO_LEVEL untuk filter
- if itemId and tonumber(itemId) then
- local id = tonumber(itemId)
- if IsGemIdToDecomp(id, maxLv) then
- table.insert(result, guidStr)
- end
- else
- -- Fallback: parse "Lv.X" dari NumText
- local lvFound = nil
- for _, c in ipairs(child:GetDescendants()) do
- if c:IsA("TextLabel") and (c.Name == "NumText" or c.Name:lower():find("lv") or c.Name:lower():find("level")) then
- local n = c.Text:match("[Ll][Vv]%.?%s*(%d+)")
- if n then lvFound = tonumber(n); break end
- end
- end
- if lvFound and lvFound <= maxLv then
- table.insert(result, guidStr)
- elseif not lvFound then
- -- Tidak bisa tentukan level sama sekali: masukkan (safe decompose)
- table.insert(result, guidStr)
- end
- end
- end
- end)
- return result
- end
-
- local function SetDGPillOff()
- _autoDecompGemOn = false
- TweenService:Create(dgPill,TweenInfo.new(0.16),{BackgroundColor3=C.PILL_OFF}):Play()
- TweenService:Create(dgKnob,TweenInfo.new(0.16),{
- Position=UDim2.new(0,3,0.5,0), BackgroundColor3=C.KNOB_OFF
- }):Play()
- end
-
- local function RunAutoDecompGem()
- SetDGStatus("SCAN Inventory...", C.ACC2)
- task.wait(0.5)
-
- local guids = GetGemGuidsFromPanel(_gemMaxLevel)
-
- if #guids == 0 then
- SetDGStatus("[!] OPEN GemsPanel First! (max Lv".._gemMaxLevel..")", Color3.fromRGB(255,180,60))
- task.wait(2); SetDGPillOff()
- SetDGStatus("Idle - OPEN GemsPanel First", C.TXT3)
- return
- end
-
- SetDGStatus("GOT "..#guids.." gem (max Lv".._gemMaxLevel..")...", C.ACC2)
- task.wait(0.3)
-
- local decomposed = 0
- local BATCH = 20
- local re = Remotes:FindFirstChild("DecomposeItems")
- if not re then
- SetDGStatus("[!] DecomposeItems remote NOT FOUND!", Color3.fromRGB(255,80,80))
- task.wait(2); SetDGPillOff()
- return
- end
-
- for i = 1, #guids, BATCH do
- if not _autoDecompGemOn then break end
- local batch = {}
- for j = i, math.min(i + BATCH - 1, #guids) do
- table.insert(batch, guids[j])
- end
- SetDGStatus("Decompose "..decomposed.."/"..#guids.."...", Color3.fromRGB(100,220,100))
- -- [v54 FIX] Kirim dua format sekaligus: string array DAN table array
- -- Format 1: {itemType=7, data={"guid1","guid2",...}} (confirmed SimpleSpy normal gem)
- -- Format 2: {itemType=7, guids=batch} (fallback beberapa versi game)
- pcall(function() re:FireServer({itemType=GEM_ITEM_TYPE, data=batch}) end)
- decomposed = decomposed + #batch
- task.wait(0.5)
- end
-
- SetDGStatus("[OK] "..decomposed.." gem DECOMPOSED!", Color3.fromRGB(110,231,183))
- task.wait(2); SetDGPillOff()
- SetDGStatus("Idle", C.TXT3)
- end
-
- dgPill.MouseButton1Click:Connect(function()
- _autoDecompGemOn = not _autoDecompGemOn
- local on = _autoDecompGemOn
- TweenService:Create(dgPill,TweenInfo.new(0.16),{BackgroundColor3=on and C.PILL_ON or C.PILL_OFF}):Play()
- TweenService:Create(dgKnob,TweenInfo.new(0.16),{
- Position=on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
- BackgroundColor3=on and C.KNOB_ON or C.KNOB_OFF,
- }):Play()
- if on then
- _autoDecompGemThread = task.spawn(RunAutoDecompGem)
- else
- if _autoDecompGemThread then pcall(function() task.cancel(_autoDecompGemThread) end) end
- SetDGStatus("Idle - STOPPED", C.TXT3)
- end
- end)
-
-end
-
-
--- ============================================================
-
--- ============================================================
--- PANEL : FARM
--- ============================================================
 do
  local p = NewPanel("farm")
 
@@ -3824,7 +2814,7 @@ do
  if not d then return end
  local g = d.enemyGuid or d.guid
  if g then
- _deadG_F[g] = false
+ _deadG_F[g] = true
  if RA.running then RA.killed = RA.killed+1 end
  if TA.running then TA.killed = TA.killed+1 end
  end
@@ -3869,6 +2859,8 @@ do
  if _deadG_F[e.guid] then return true end
  if not e.model or not e.model.Parent then return true end
  local h = e.model:FindFirstChildOfClass("Humanoid")
+ if not h or h.Health<=0 then return true end
+ if not IsPosValidF(e.hrp) then return true end
  return false
  end
 
@@ -3884,11 +2876,11 @@ do
  local char = LP.Character; if not char then return end
  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
  local tgtPos = tgt.hrp.Position
- if tgtPos.Y < -10 then return end
+ if tgtPos.Y < -100 then return end
  local dir = (hrp.Position - tgtPos)
  if dir.Magnitude < 0.5 then dir = Vector3.new(1,0,0) end
  dir = Vector3.new(dir.X, 0, dir.Z).Unit
- local nearPos = tgtPos + dir*8
+ local nearPos = tgtPos + dir*4
  local params = RaycastParams.new()
  params.FilterType = Enum.RaycastFilterType.Exclude
  local ex = {}
@@ -3904,18 +2896,20 @@ do
  end
 
  local function FCharF(g, pos)
-  if not g then return end
-  -- [vDewaS] Logika ST2: Serang Player + Hero Skill All-in-One
-  FireAttack(g, pos)
-  FireAllDamage(g, pos)
-  FireHeroRemotes(g, pos)
-  FireAttack(g, pos)
-  FireAllDamage(g, pos)
-  FireHeroRemotes(g, pos)
+  -- Confirmed SimpleSpy: hanya PlayerClickAttackSkill, tidak ada ClickEnemy
+  if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end) end
  end
 
  local function FHeroF(g)
-  -- Logic dipindah ke FCharF untuk efisiensi "Tingkat Dewa" (seperti ST2)
+  if not RE.HeroUseSkill or #HERO_GUIDS_F == 0 then return end
+  local now = tick()
+  local last = _heroFireTick[g] or 0
+  if now - last < 0.4 then return end
+  _heroFireTick[g] = now
+  for _, h in ipairs(HERO_GUIDS_F) do
+   pcall(function() RE.HeroUseSkill:FireServer({heroGuid=h,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
+   pcall(function() RE.HeroUseSkill:FireServer({heroGuid=h,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
+  end
  end
 
  local function StartCollectF(checkFn)
@@ -3956,25 +2950,34 @@ do
   end
   RA.running=true; RA.killed=0; RA.cur=nil; RA.threads={}
  local tChar = task.spawn(function()
-  local tpT = 1
+  local tpT = 0
   while RA.running do
    if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
     _deadG_F={}; RA.cur=nil
     for _,e in ipairs(GetEnemiesF()) do
      if not IsDeadF(e) then RA.cur=e; break end
     end
-    if RA.cur and not TA.running then TpToF(RA.cur); tpT=1 end
+    if RA.cur and not TA.running then TpToF(RA.cur); tpT=0 end
    end
    if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
     FCharF(RA.cur.guid, RA.cur.hrp.Position)
-    tpT = tpT + task.wait(0)
-    if tpT>=1 and not TA.running then tpT=1; TpToF(RA.cur) end
+    tpT = tpT + task.wait()
+    if tpT>=2 and not TA.running then tpT=0; TpToF(RA.cur) end
    else
-    task.wait(0.5)
+    task.wait()
    end
   end
  end)
- RA.threads = {tChar}
+ local tHero = task.spawn(function()
+  while RA.running do
+   local cur = RA.cur
+   if cur and not IsDeadF(cur) and cur.model.Parent and cur.model:FindFirstChild("HumanoidRootPart") then
+    FHeroF(cur.guid)
+   end
+   task.wait()
+  end
+ end)
+ RA.threads = {tChar, tHero}
  StartCollectF(function() return RA.running end)
  end
 
@@ -3995,7 +2998,7 @@ do
  TA.cur = nil
  if onStatus then onStatus("WAITING ["..targetName.."] respawn...") end
  while TA.running do
- task.wait(); tgt=FindByNameF(targetName)
+ task.wait(0.3); tgt=FindByNameF(targetName)
  if tgt then break end
  end
  if not TA.running then break end
@@ -4003,17 +3006,26 @@ do
  end
  if tgt and not IsDeadF(tgt) and tgt.model.Parent then
  TA.cur = tgt
- if tgt.guid~=lastGuid then lastGuid=tgt.guid; TpToF(tgt); tpT=1 end
+ if tgt.guid~=lastGuid then lastGuid=tgt.guid; TpToF(tgt); tpT=0 end
  FCharF(tgt.guid, tgt.hrp.Position)
  tpT = tpT + task.wait()
- if tpT>=0 then tpT=0; TpToF(tgt) end
+ if tpT>=2 then tpT=0; TpToF(tgt) end
  if onStatus then onStatus(">> ["..targetName.."] Kill: "..TA.killed) end
  else
  task.wait()
  end
  end
  end)
- TA.threads = {tChar}
+ local tHero = task.spawn(function()
+ while TA.running do
+  local tgt = TA.cur
+  if tgt and not IsDeadF(tgt) and tgt.model.Parent and tgt.model:FindFirstChild("HumanoidRootPart") then
+   FHeroF(tgt.guid)
+  end
+  task.wait()
+ end
+ end)
+ TA.threads = {tChar, tHero}
  StartCollectF(function() return TA.running end)
  end
 
@@ -4166,213 +3178,7 @@ end
 -- PANEL : ATTACK
 -- ============================================================
 do
- local p = NewPanel("attack")
-
- local ddBackdrop = Instance.new("TextButton",ScreenGui)
- ddBackdrop.Size=UDim2.new(1,0,1,0); ddBackdrop.Position=UDim2.new(0,0,0,0)
- ddBackdrop.BackgroundTransparency=1; ddBackdrop.Text=""; ddBackdrop.ZIndex=49
- ddBackdrop.AutoButtonColor=false; ddBackdrop.Visible=false; ddBackdrop.Active=false
- local _openDDs = {}
-
- function OpenDD(list)
- for _, d in ipairs(_openDDs) do d.Visible = false end
- _openDDs = {}; list.Visible = true; table.insert(_openDDs, list); ddBackdrop.Visible = true
- end
- function CloseAllDD()
- for _, d in ipairs(_openDDs) do d.Visible = false end
- _openDDs = {}; ddBackdrop.Visible = false
- end
- ddBackdrop.MouseButton1Click:Connect(CloseAllDD)
-
- SectionHeader(p,"MASS ATTACK",0)
-
- local maCard = Frame(p,C.SURFACE,UDim2.new(1,0,0,44))
- maCard.LayoutOrder=1; Corner(maCard, 10); Stroke(maCard,C.BORD, 1.5,0.88)
- Padding(maCard,6,6,12,8)
- local maTitleLbl = Label(maCard,"Status",12,C.TXT,Enum.Font.GothamBold)
- maTitleLbl.Size=UDim2.new(0.4,0,0,16); maTitleLbl.Position=UDim2.new(0,0,0,4)
- local maStatusText = Label(maCard,"Idle",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
- maStatusText.Size=UDim2.new(0.6,0,0,16); maStatusText.Position=UDim2.new(0.4,0,0,4)
- maStatusText.TextTruncate=Enum.TextTruncate.AtEnd
- _maStatusLbl = maStatusText
-
- function MakeSimpleDD(card, title, opts, vals, defIdx, onSelect, lo)
- local c = Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
- c.LayoutOrder=lo; Corner(c, 10); Stroke(c,C.BORD, 1.5,0.88); Padding(c,6,6,12,8)
- local lbl = Label(c,title,12,C.TXT,Enum.Font.GothamBold)
- lbl.Size=UDim2.new(0.5,0,1,0); lbl.Position=UDim2.new(0,0,0,0)
- local curIdx = defIdx
- local ddBtn = Btn(c,C.BG3,UDim2.new(0.5,-4,1,-4))
- ddBtn.Position=UDim2.new(0.5,0,0,2); Corner(ddBtn,6); Stroke(ddBtn,C.BORD, 1.5,0.2)
- local ddLbl = Label(ddBtn," "..opts[curIdx],11,C.ACC2,Enum.Font.GothamBold)
- ddLbl.Size=UDim2.new(1,-18,1,0)
- local arr = Label(ddBtn,"v",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- arr.Size=UDim2.new(0,16,1,0); arr.Position=UDim2.new(1,-18,0,0)
-
- local list = Instance.new("Frame",ScreenGui)
- list.Size=UDim2.new(0,130,0,#opts*28+8)
- list.BackgroundColor3=C.BG3; list.BackgroundTransparency=0.42; list.BorderSizePixel=0
- list.ZIndex=50; list.Visible=false
- Instance.new("UICorner",list).CornerRadius=UDim.new(0, 10)
- do local _s=Instance.new("UIStroke",list); _s.Color=C.BORD; _s.Thickness=1.5; _s.Transparency=0 end
- local ll=Instance.new("UIListLayout",list); ll.Padding=UDim.new(0,2); ll.SortOrder=Enum.SortOrder.LayoutOrder
- Instance.new("UIPadding",list).PaddingTop=UDim.new(0,4)
-
- local irefs = {}
- for i, opt in ipairs(opts) do
- local item=Instance.new("TextButton",list)
- item.Size=UDim2.new(1,-8,0,26); item.LayoutOrder=i
- item.BackgroundColor3=i==curIdx and C.SURFACE2 or C.BG2
- item.BackgroundTransparency=i==curIdx and 0.18 or 0.42
- item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=51
- Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
- local iL=Instance.new("TextLabel",item)
- iL.Size=UDim2.new(1,-8,1,0); iL.Position=UDim2.new(0,8,0,0)
- iL.BackgroundTransparency=1; iL.Text=opt; iL.TextSize=13
- iL.Font=Enum.Font.Gotham; iL.TextColor3=i==curIdx and C.ACC2 or C.TXT
- iL.TextXAlignment=Enum.TextXAlignment.Left; iL.ZIndex=52
- irefs[i]={btn=item,lbl=iL}
- local ii=i
- item.MouseButton1Click:Connect(function()
- curIdx=ii; ddLbl.Text=" "..opts[ii]
- for j,r in ipairs(irefs) do
- r.btn.BackgroundColor3=j==ii and C.SURFACE2 or C.BG2
- r.btn.BackgroundTransparency=j==ii and 0.18 or 0.42
- r.lbl.TextColor3=j==ii and C.ACC2 or C.TXT
- end
- if vals then onSelect(vals[ii]) else onSelect(ii) end
- CloseAllDD()
- end)
- end
- ddBtn.MouseButton1Click:Connect(function()
- if list.Visible then CloseAllDD(); return end
- local ap=ddBtn.AbsolutePosition; local as=ddBtn.AbsoluteSize
- list.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-GuiInsetY())
- list.Size=UDim2.new(0,as.X,0,#opts*28+8)
- OpenDD(list)
- end)
- end
-
- MakeSimpleDD(nil,"TARGET KILL",
- {"5","10","15","20","Kill All"},{5,10,15,20,0},1,
- function(v) MA.killTarget=v end, 2)
-
- do
- local mapCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,38))
- mapCard.LayoutOrder=3; Corner(mapCard, 10); Stroke(mapCard,C.BORD, 1.5,0.88); Padding(mapCard,6,6,12,8)
- local mapLbl=Label(mapCard,"Rotation Map",12,C.TXT,Enum.Font.GothamBold)
- mapLbl.Size=UDim2.new(0.5,0,1,0)
- local mapOpts={"ALL MAP"}
- for i=1,18 do mapOpts[i+1]="Map "..i end
- local mapSelSet={}
- local mapDDBtn=Btn(mapCard,C.BG3,UDim2.new(0.5,-4,1,-4))
- mapDDBtn.Position=UDim2.new(0.5,0,0,2); Corner(mapDDBtn,6); Stroke(mapDDBtn,C.BORD, 1.5,0.2)
- local mapDDLbl=Label(mapDDBtn," SELECT MAP",11,C.ACC2,Enum.Font.GothamBold)
- mapDDLbl.Size=UDim2.new(1,-18,1,0)
- local mapArrow=Label(mapDDBtn,"v",11,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- mapArrow.Size=UDim2.new(0,16,1,0); mapArrow.Position=UDim2.new(1,-18,0,0)
-
- function UpdateMapDDLbl()
- local count=0; for _ in pairs(mapSelSet) do count=count+1 end
- if count==0 then mapDDLbl.Text=" MAP NOW"
- elseif count==18 then mapDDLbl.Text=" ALL MAP"
- else mapDDLbl.Text=" "..count.." MAP SELECTED" end
- end
-
- local mapListH=math.min(#mapOpts*28+8,180)
- local mapList=Instance.new("Frame",ScreenGui)
- mapList.Size=UDim2.new(0,130,0,mapListH); mapList.BackgroundColor3=C.BG3
- mapList.BackgroundTransparency=0.42; mapList.BorderSizePixel=0; mapList.ZIndex=50; mapList.Visible=false; mapList.ClipsDescendants=true
- Instance.new("UICorner",mapList).CornerRadius=UDim.new(0, 10)
- do local _ms=Instance.new("UIStroke",mapList); _ms.Color=C.BORD; _ms.Thickness=1.5; _ms.Transparency=0 end
-
- local mapScroll=Instance.new("ScrollingFrame",mapList)
- mapScroll.Size=UDim2.new(1,0,1,0); mapScroll.BackgroundTransparency=1; mapScroll.BorderSizePixel=0
- mapScroll.ScrollBarThickness=3; mapScroll.ScrollBarImageColor3=C.ACC
- mapScroll.CanvasSize=UDim2.new(0,0,0,#mapOpts*28+8); mapScroll.ZIndex=51
- local mapScrollLayout=Instance.new("UIListLayout",mapScroll)
- mapScrollLayout.Padding=UDim.new(0,2); mapScrollLayout.SortOrder=Enum.SortOrder.LayoutOrder
- Instance.new("UIPadding",mapScroll).PaddingTop=UDim.new(0,4)
-
- local mapItemRefs={}
- for i,opt in ipairs(mapOpts) do
- local item=Instance.new("TextButton",mapScroll)
- item.Size=UDim2.new(1,-8,0,26); item.LayoutOrder=i
- item.BackgroundColor3=C.BG2; item.BackgroundTransparency=0.42
- item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=52
- Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
- local chk=Instance.new("TextLabel",item); chk.Size=UDim2.new(0,16,1,0); chk.Position=UDim2.new(0,4,0,0)
- chk.BackgroundTransparency=1; chk.Text=""; chk.TextSize=13
- chk.Font=Enum.Font.GothamBold; chk.TextColor3=C.GRN; chk.ZIndex=53
- local iLbl=Instance.new("TextLabel",item); iLbl.Size=UDim2.new(1,-24,1,0); iLbl.Position=UDim2.new(0,20,0,0)
- iLbl.BackgroundTransparency=1; iLbl.Text=opt; iLbl.TextSize=13
- iLbl.Font=Enum.Font.Gotham; iLbl.TextColor3=C.TXT; iLbl.TextXAlignment=Enum.TextXAlignment.Left; iLbl.ZIndex=53
- mapItemRefs[i]={btn=item,chk=chk,lbl=iLbl}
- local ii=i
- item.MouseButton1Click:Connect(function()
- if ii==1 then
- local anyOff=false
- for j=1,18 do if not mapSelSet[j] then anyOff=true; break end end
- if anyOff then
- for j=1,18 do mapSelSet[j]=true; MR.selected[j]=true end
- for j=2,#mapItemRefs do mapItemRefs[j].chk.Text="v"; mapItemRefs[j].lbl.TextColor3=C.ACC2 end
- mapItemRefs[1].chk.Text="v"; mapItemRefs[1].lbl.TextColor3=C.ACC2
- else
- for j=1,18 do mapSelSet[j]=nil; MR.selected[j]=nil end
- for j=1,#mapItemRefs do mapItemRefs[j].chk.Text=""; mapItemRefs[j].lbl.TextColor3=C.TXT end
- end
- else
- local mi=ii-1; mapSelSet[mi]=not mapSelSet[mi]; MR.selected[mi]=mapSelSet[mi]
- mapItemRefs[ii].chk.Text=mapSelSet[mi] and "v" or ""
- mapItemRefs[ii].lbl.TextColor3=mapSelSet[mi] and C.ACC2 or C.TXT
- local allOn=true; for j=1,18 do if not mapSelSet[j] then allOn=false; break end end
- mapItemRefs[1].chk.Text=allOn and "v" or ""; mapItemRefs[1].lbl.TextColor3=allOn and C.ACC2 or C.TXT
- end
- UpdateMapDDLbl()
- end)
- end
- mapDDBtn.MouseButton1Click:Connect(function()
- if mapList.Visible then CloseAllDD(); return end
- local ap=mapDDBtn.AbsolutePosition; local as=mapDDBtn.AbsoluteSize
- mapList.Position=UDim2.new(0,ap.X,0,ap.Y+as.Y+2-GuiInsetY())
- OpenDD(mapList)
- end)
- end
-
- MakeSimpleDD(nil,"Delay Pindah Map",
- {"1","3","5","7","10"},{1,3,5,7,10},2,
- function(v) MR.nextMapDelay=v end, 4)
-
- local skillCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,64))
- skillCard.LayoutOrder=5; Corner(skillCard, 10); Stroke(skillCard,C.BORD, 1.5,0.88); Padding(skillCard,8,8,12,8)
- local skillTitle=Label(skillCard,"Auto Skill",12,C.TXT,Enum.Font.GothamBold)
- skillTitle.Size=UDim2.new(1,0,0,16); skillTitle.Position=UDim2.new(0,0,0,0)
- local skillRow=Frame(skillCard,C.BLACK,UDim2.new(1,0,0,32))
- skillRow.BackgroundTransparency=1; skillRow.Position=UDim2.new(0,0,0,20)
- New("UIListLayout",{Parent=skillRow,FillDirection=Enum.FillDirection.Horizontal,
- SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
- for i,d in ipairs({{n="Z",c=Color3.fromRGB(252,128,128)},{n="X",c=Color3.fromRGB(252,211,77)},{n="C",c=Color3.fromRGB(110,231,183)},{n="V",c=Color3.fromRGB(125,211,252)},{n="F",c=Color3.fromRGB(147,197,253)}}) do
- local sb=Btn(skillRow,C.BG3,UDim2.new(0,40,0,32)); sb.LayoutOrder=i; Corner(sb,6); Stroke(sb,C.BORD, 1.5,0.88)
- local sl=Label(sb,d.n,12,d.c,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- sl.Size=UDim2.new(1,0,0,18); sl.Position=UDim2.new(0,0,0,2)
- sl.TextYAlignment=Enum.TextYAlignment.Center
- local st=Label(sb,"OFF",8,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- st.Size=UDim2.new(1,0,0,11); st.Position=UDim2.new(0,0,0,19)
- st.TextYAlignment=Enum.TextYAlignment.Center
- -- Simpan referensi ke SKL_UI supaya SkSetUI bisa update tampilan
- SKL.ui[d.n] = {btn=sb, lbl=st}
- local dn=d.n
- sb.MouseButton1Click:Connect(function()
- if SKL[dn].on then SkOff(dn) else SkOn(dn) end
- end)
- end
-
- ToggleRow(p,"Mass Attack","Serang semua musuh di map sekaligus",6,function(on)
- DoMassAttack(on)
- end)
-end
-
--- ============================================================
+ -- ============================================================
 -- PANEL : PLAYER
 -- ============================================================
 do
@@ -4782,7 +3588,7 @@ do
  end
  end)
 
- hrHeader.MouseButton1Click:Connect(function()
+hrHeader.MouseButton1Click:Connect(function()
  hrOpen = not hrOpen
  hrBody.Visible = hrOpen
  hrIcon.Text = hrOpen and "v" or ">"
@@ -4790,321 +3596,7 @@ do
  end)
 end
 
--- ============================================================
--- PANEL : WEAPON FASTROLL
--- ============================================================
-do
- local p = Panels["autoroll"]
- local wrOpen = false
-
- _WR_RPT = {
- guid = "",
- nameLbl = nil,
- slotLbls = {nil,nil,nil},
- slotTarget = {{},{},{}},
- running = false,
- SetSlot = function(i,txt,col)
- if _WR_RPT.slotLbls[i] then
- _WR_RPT.slotLbls[i].Text = txt
- _WR_RPT.slotLbls[i].TextColor3 = col or Color3.fromRGB(160,148,135)
- end
- end,
- Refresh = function()
- if not _WR_RPT.nameLbl then return end
- if _WR_RPT.guid and _WR_RPT.guid ~= "" then
- _WR_RPT.nameLbl.Text = "Terdeteksi"
- _WR_RPT.nameLbl.TextColor3 = Color3.fromRGB(80,220,80)
- else
- _WR_RPT.nameLbl.Text = "PLEASE REROLL 1x First"
- _WR_RPT.nameLbl.TextColor3 = Color3.fromRGB(180,220,255)
- end
- end,
- SetToggleOff = function() end,
- }
-
- local wrHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
- wrHeader.LayoutOrder = 10; Corner(wrHeader, 10); Stroke(wrHeader,C.BORD, 1.5,0.88)
- local wrIcon = Label(wrHeader,">",12,C.ACC2,Enum.Font.GothamBold)
- wrIcon.Size=UDim2.new(0,20,1,0); wrIcon.Position=UDim2.new(0,10,0,0)
- local wrLabel = Label(wrHeader,"Weapon Fastroll",13,C.TXT,Enum.Font.GothamBold)
- wrLabel.Size=UDim2.new(1,-40,1,0); wrLabel.Position=UDim2.new(0,30,0,0)
-
- local wrBody = Frame(p, C.BG2, UDim2.new(1,0,0,0))
- wrBody.LayoutOrder=11; wrBody.ClipsDescendants=true
- Corner(wrBody, 10); Stroke(wrBody,C.BORD, 1.5,0.88); wrBody.Visible=false
-
- local wrInner = Frame(wrBody, C.BLACK, UDim2.new(1,-16,0,0))
- wrInner.BackgroundTransparency=1; wrInner.Position=UDim2.new(0,8,0,8)
- local wrLayout = New("UIListLayout",{Parent=wrInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0, 10)})
-
- local function ResizeWRBody()
- wrLayout:ApplyLayout()
- local h = wrLayout.AbsoluteContentSize.Y + 20
- wrInner.Size=UDim2.new(1,0,0,h); wrBody.Size=UDim2.new(1,0,0,h+16)
- end
-
- -- Card laporan
- local rptCard = Frame(wrInner, C.SURFACE, UDim2.new(1,0,0,0))
- rptCard.LayoutOrder=1; Corner(rptCard, 10); Stroke(rptCard,C.BORD, 1.5,0.88)
- rptCard.AutomaticSize=Enum.AutomaticSize.Y
- local rptPad = Instance.new("UIPadding",rptCard)
- rptPad.PaddingLeft=UDim.new(0,10); rptPad.PaddingRight=UDim.new(0,10)
- rptPad.PaddingTop=UDim.new(0, 10); rptPad.PaddingBottom=UDim.new(0, 10)
- New("UIListLayout",{Parent=rptCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
-
- local nameRow = Frame(rptCard, C.BG2, UDim2.new(1,0,0,26))
- nameRow.LayoutOrder=0; Corner(nameRow,6)
- local namePre = Label(nameRow,"Weapon :",11,C.TXT3,Enum.Font.GothamBold)
- namePre.Size=UDim2.new(0,58,1,0); namePre.Position=UDim2.new(0,8,0,0)
- namePre.TextXAlignment=Enum.TextXAlignment.Left
- local nameLbl = Label(nameRow,"PLEASE REROLL 1x First",11,Color3.fromRGB(180,220,255),Enum.Font.GothamBold)
- nameLbl.Size=UDim2.new(1,-70,1,0); nameLbl.Position=UDim2.new(0,66,0,0)
- nameLbl.TextXAlignment=Enum.TextXAlignment.Left
- nameLbl.TextTruncate=Enum.TextTruncate.AtEnd
- _WR_RPT.nameLbl = nameLbl
-
- local slotNames = {"Slot 1","Slot 2","Slot 3"}
- for i = 1, 3 do
- local sRow = Frame(rptCard, C.BG3, UDim2.new(1,0,0,24))
- sRow.LayoutOrder=i; Corner(sRow,5)
- local sPre = Label(sRow,slotNames[i].." :",11,C.TXT3,Enum.Font.GothamBold)
- sPre.Size=UDim2.new(0,46,1,0); sPre.Position=UDim2.new(0,8,0,0)
- sPre.TextXAlignment=Enum.TextXAlignment.Left
- local sLbl = Label(sRow,"Idle",11,Color3.fromRGB(160,148,135),Enum.Font.GothamBold)
- sLbl.Size=UDim2.new(1,-58,1,0); sLbl.Position=UDim2.new(0,54,0,0)
- sLbl.TextXAlignment=Enum.TextXAlignment.Left
- sLbl.TextTruncate=Enum.TextTruncate.AtEnd
- _WR_RPT.slotLbls[i] = sLbl
- end
-
- local div1 = Frame(wrInner, C.BG3, UDim2.new(1,0,0,1))
- div1.LayoutOrder=2; div1.BackgroundTransparency=0.4
-
- for si = 1, 3 do
- local si_l = si
- local tRow = Frame(wrInner, C.BG2, UDim2.new(1,0,0,32))
- tRow.LayoutOrder=2+si; Corner(tRow,6)
-
- local tLbl = Label(tRow,"Target "..slotNames[si].." :",11,C.TXT,Enum.Font.GothamBold)
- tLbl.Size=UDim2.new(0,92,1,0); tLbl.Position=UDim2.new(0,8,0,0)
- tLbl.TextXAlignment=Enum.TextXAlignment.Left
-
- local tDdBtn = Btn(tRow, C.DD_BG, UDim2.new(1,-108,0,24))
- tDdBtn.Position=UDim2.new(0,100,0.5,-12); Corner(tDdBtn,5); Stroke(tDdBtn,C.BORD2, 1.5,0.85)
- local tDdLbl = Label(tDdBtn,"-- pilih quirk --",10,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Left)
- tDdLbl.Size=UDim2.new(1,-20,1,0); tDdLbl.Position=UDim2.new(0,7,0,0)
- tDdLbl.TextTruncate=Enum.TextTruncate.AtEnd
- local tArrow = Label(tDdBtn,"v",9,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- tArrow.Size=UDim2.new(0,14,1,0); tArrow.Position=UDim2.new(1,-16,0,0)
-
- MakeGenericDropdown({
- ddBtn = tDdBtn,
- list = W_QUIRK_LIST_PER_SLOT[si_l],
- maxSel = W_MAX_PER_SLOT,
- selTable = _WR_RPT.slotTarget[si_l],
- onRefresh = function()
- local names = {}
- for _, q in ipairs(W_QUIRK_LIST_PER_SLOT[si_l]) do
- if _WR_RPT.slotTarget[si_l][q.id] then
- table.insert(names, q.name)
- end
- end
- tDdLbl.Text = #names > 0 and table.concat(names," / ") or "-- pilih quirk --"
- tDdLbl.TextColor3 = #names > 0 and C.ACC2 or C.TXT2
- end,
- })
- end
-
- local toggleRow = Frame(wrInner, C.BG2, UDim2.new(1,0,0,34))
- toggleRow.LayoutOrder=7; Corner(toggleRow, 10); Stroke(toggleRow,C.ACC, 1.5,0.7)
- local tgLbl = Label(toggleRow,"Auto Roll Weapon",12,C.TXT,Enum.Font.GothamBold)
- tgLbl.Size=UDim2.new(0.55,0,1,0); tgLbl.Position=UDim2.new(0,10,0,0)
- local tgSub = Label(toggleRow,"ON = START REROLL",9,C.TXT3,Enum.Font.GothamBold)
- tgSub.Size=UDim2.new(0.55,0,0,12); tgSub.Position=UDim2.new(0,10,1,-14)
- local wrPill = Btn(toggleRow,C.BG3,UDim2.new(0,40,0,22))
- wrPill.Position=UDim2.new(1,-50,0.5,-11); Corner(wrPill,11)
- local wrKnob = Frame(wrPill,C.TXT,UDim2.new(0,18,0,18))
- wrKnob.Position=UDim2.new(0,2,0.5,-9); Corner(wrKnob,9)
-
- local function SetWeaponToggleUI(on)
- TweenService:Create(wrPill,TweenInfo.new(0.15),{BackgroundColor3=on and C.PILL_ON or C.BG3}):Play()
- TweenService:Create(wrKnob,TweenInfo.new(0.15),{
- Position=on and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9),
- BackgroundColor3=on and Color3.fromRGB(255,255,255) or C.TXT,
- }):Play()
- end
-
- _WR_RPT.SetToggleOff = function()
- _WR_RPT.running = false
- SetWeaponToggleUI(false)
- end
-
- wrPill.MouseButton1Click:Connect(function()
- _WR_RPT.running = not _WR_RPT.running
- SetWeaponToggleUI(_WR_RPT.running)
- if _WR_RPT.running then
- DoAutoRollWeapon(true)
- else
- DoAutoRollWeapon(false)
- end
- end)
-
- wrHeader.MouseButton1Click:Connect(function()
- wrOpen = not wrOpen
- wrBody.Visible = wrOpen
- wrIcon.Text = wrOpen and "v" or ">"
- if wrOpen then task.defer(ResizeWRBody) end
- end)
-end
-
--- ============================================================
--- PANEL : AUTO ROLL - PET GEAR
--- ============================================================
-do
- local p = Panels["autoroll"]
- local pgOpen = false
-
- local pgHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
- pgHeader.LayoutOrder = 20; Corner(pgHeader, 10); Stroke(pgHeader,C.BORD, 1.5,0.88)
- local pgIcon = Label(pgHeader,">",12,C.ACC2,Enum.Font.GothamBold)
- pgIcon.Size = UDim2.new(0,20,1,0); pgIcon.Position = UDim2.new(0,10,0,0)
- local pgLabel = Label(pgHeader,"Pet Gear Fastroll",13,C.TXT,Enum.Font.GothamBold)
- pgLabel.Size = UDim2.new(1,-40,1,0); pgLabel.Position = UDim2.new(0,30,0,0)
-
- local pgBody = Frame(p, C.BG2, UDim2.new(1,0,0,0))
- pgBody.LayoutOrder = 21; pgBody.ClipsDescendants = true
- Corner(pgBody, 10); Stroke(pgBody,C.BORD, 1.5,0.88); pgBody.Visible = false
-
- local pgInner = Frame(pgBody, C.BLACK, UDim2.new(1,-16,0,0))
- pgInner.BackgroundTransparency = 1; pgInner.Position = UDim2.new(0,8,0,8)
- local pgLayout = New("UIListLayout",{Parent=pgInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0, 10)})
-
- function ResizePGBody()
- pgLayout:ApplyLayout()
- local h = pgLayout.AbsoluteContentSize.Y + 20
- pgInner.Size = UDim2.new(1,0,0,h); pgBody.Size = UDim2.new(1,0,0,h+16)
- end
-
- for msi = 1, 3 do
- local msi_l = msi
-
- local mCard = Frame(pgInner, C.SURFACE, UDim2.new(1,0,0,0))
- mCard.LayoutOrder = msi; Corner(mCard, 10); Stroke(mCard,C.BORD, 1.5,0.88)
- mCard.AutomaticSize = Enum.AutomaticSize.Y
- local mPad = Instance.new("UIPadding", mCard)
- mPad.PaddingLeft=UDim.new(0,12); mPad.PaddingRight=UDim.new(0,12)
- mPad.PaddingTop=UDim.new(0,10); mPad.PaddingBottom=UDim.new(0,10)
- New("UIListLayout",{Parent=mCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
-
- local mTitle = Label(mCard,""..PG_MACHINE_NAMES[msi],12,C.ACC2,Enum.Font.GothamBold)
- mTitle.Size = UDim2.new(1,0,0,18); mTitle.LayoutOrder = 0
-
- local statRow = Frame(mCard, C.BG2, UDim2.new(1,0,0,26))
- statRow.LayoutOrder = 1; Corner(statRow,6); Stroke(statRow,C.BORD2, 1.5,0.5)
- local mDot = Frame(statRow, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
- mDot.Position = UDim2.new(0,7,0.5,-4); Corner(mDot,4)
- PGR.dotRefs[msi] = mDot
- local mStLbl = Label(statRow,"Idle - Pilih target & aktifkan Roll",10,C.TXT2,Enum.Font.GothamBold)
- mStLbl.Size = UDim2.new(1,-22,1,0); mStLbl.Position = UDim2.new(0,21,0,0)
- mStLbl.TextTruncate = Enum.TextTruncate.AtEnd
- PGR.statLbls[msi] = mStLbl
-
- local infoRow = Frame(mCard, C.BG3, UDim2.new(1,0,0,22))
- infoRow.LayoutOrder = 2; Corner(infoRow,5)
- local attLbl = Label(infoRow,"Attempt: -",9.5,C.TXT3,Enum.Font.GothamBold)
- attLbl.Size = UDim2.new(0.5,0,1,0); attLbl.Position = UDim2.new(0,8,0,0)
- PGR.attemptLbls[msi] = attLbl
- local lastLbl = Label(infoRow,"Last: -",9.5,Color3.fromRGB(180,180,180),Enum.Font.GothamBold,Enum.TextXAlignment.Right)
- lastLbl.Size = UDim2.new(0.5,-10,1,0); lastLbl.Position = UDim2.new(0.5,0,0,0)
- PGR.lastLbls[msi] = lastLbl
-
- local divLine = Frame(mCard, C.BG3, UDim2.new(1,0,0,1))
- divLine.LayoutOrder = 3; divLine.BackgroundTransparency = 0.4
-
- local tRow = Frame(mCard, C.BG2, UDim2.new(1,0,0,32))
- tRow.LayoutOrder = 4; Corner(tRow,6)
- local tLbl = Label(tRow,"Target:",11,C.TXT,Enum.Font.GothamBold)
- tLbl.Size = UDim2.new(0,72,1,0); tLbl.Position = UDim2.new(0,8,0,0)
-
- local tDdBtn = Btn(tRow, C.DD_BG, UDim2.new(1,-88,0,24))
- tDdBtn.Position = UDim2.new(0,80,0.5,-12); Corner(tDdBtn,5); Stroke(tDdBtn,C.BORD2, 1.5,0.85)
- local tDdLbl = Label(tDdBtn,"-- pilih grade --",10,C.TXT2,Enum.Font.GothamBold,Enum.TextXAlignment.Left)
- tDdLbl.Size = UDim2.new(1,-20,1,0); tDdLbl.Position = UDim2.new(0,7,0,0)
- tDdLbl.TextTruncate = Enum.TextTruncate.AtEnd
- PGR.sumLbls[msi] = tDdLbl
- local tArrow = Label(tDdBtn,"v",9,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- tArrow.Size = UDim2.new(0,14,1,0); tArrow.Position = UDim2.new(1,-16,0,0)
-
- local tHint = Label(tRow,"(maks 3)",8.5,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
- tHint.Size = UDim2.new(0,0,1,0); tHint.AutomaticSize = Enum.AutomaticSize.X
- tHint.Position = UDim2.new(1,-4,0,0); tHint.AnchorPoint = Vector2.new(1,0)
-
- function onTargetChange()
- local names = {}
- for _, g in ipairs(PG_GRADES_PER_MACHINE[msi_l]) do
- if PGR.targets[msi_l][g.id] then names[#names+1] = g.name end
- end
- if PGR.sumLbls[msi_l] then
- PGR.sumLbls[msi_l].Text = #names > 0 and table.concat(names," / ") or "-- pilih grade --"
- PGR.sumLbls[msi_l].TextColor3 = #names > 0 and C.ACC2 or C.TXT2
- end
- if PGR.running[msi_l] and PGR.statLbls[msi_l] then
- if #names == 0 then
- PGR.statLbls[msi_l].Text = "Target dikosongkan!"
- PGR.statLbls[msi_l].TextColor3 = Color3.fromRGB(255,100,80)
- else
- PGR.statLbls[msi_l].Text = "Target -> "..table.concat(names," / ")
- PGR.statLbls[msi_l].TextColor3 = Color3.fromRGB(255,200,60)
- end
- end
- end
-
- MakeGenericDropdown({
- ddBtn = tDdBtn,
- list = PG_GRADES_PER_MACHINE[msi],
- maxSel = 3,
- selTable = PGR.targets[msi],
- onRefresh = onTargetChange,
- })
-
- local enRow = Frame(mCard, C.BG2, UDim2.new(1,0,0,34))
- enRow.LayoutOrder = 5; Corner(enRow, 10); Stroke(enRow,C.ACC, 1.5,0.7)
-
- local enLbl = Label(enRow,"Fastroll",12,C.TXT,Enum.Font.GothamBold)
- enLbl.Size = UDim2.new(0.55,0,1,0); enLbl.Position = UDim2.new(0,10,0,0)
- local enSub = Label(enRow,"ON = START REROLL",9,C.TXT3,Enum.Font.GothamBold)
- enSub.Size = UDim2.new(0.55,0,0,12); enSub.Position = UDim2.new(0,10,1,-14)
-
- local enToggle = Btn(enRow, C.BG3, UDim2.new(0,40,0,22))
- enToggle.Position = UDim2.new(1,-50,0.5,-11); Corner(enToggle,11)
- local enKnob = Frame(enToggle, C.TXT, UDim2.new(0,18,0,18))
- enKnob.Position = UDim2.new(0,2,0.5,-9); Corner(enKnob,9)
-
- PGR.toggleBtns[msi] = enToggle
- PGR.toggleKnobs[msi] = enKnob
-
- enToggle.MouseButton1Click:Connect(function()
- PGR.enOnFlags[msi_l] = not PGR.enOnFlags[msi_l]
- local enOn = PGR.enOnFlags[msi_l]
- enToggle.BackgroundColor3 = enOn and C.ACC or C.BG3
- enKnob.Position = enOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
- enRow.BackgroundColor3 = enOn and C.SURFACE or C.BG2
- Stroke(enRow, enOn and Color3.fromRGB(255,140,0) or C.ACC, 1, enOn and 0.3 or 0.7)
- DoAutoRollPetGear(msi_l, enOn)
- end)
- end
-
- pgHeader.MouseButton1Click:Connect(function()
- pgOpen = not pgOpen
- pgBody.Visible = pgOpen
- pgIcon.Text = pgOpen and "v" or ">"
- if pgOpen then task.defer(ResizePGBody) end
- end)
-end
-
--- ============================================================
 -- PANEL : AUTO ROLL - HALO
--- ============================================================
 do
  local p = Panels["autoroll"]
  local haloOpen = false
@@ -5328,441 +3820,6 @@ do
  ornIcon.Text = ornOpen and "v" or ">"
  if ornOpen then task.defer(ResizeOrnBody) end
  end)
-end
-
-
-do
- -- [v243] Merge & Use Potion dipindah ke panel MAIN (di bawah Auto Sell HeroEquip)
- local p = Panels["main"]
-
- -- ============================================================
- -- POTION DATA
- -- ============================================================
- local MERGE_POTIONS = {
- {name="Small Attack Potion", id=10048},
- {name="Small Gold Potion", id=10049},
- {name="Small Luck Potion", id=10047},
- {name="Big Potion DMG", id=10051},
- {name="Big Potion Gold", id=10052},
- {name="Big Potion Luck", id=10050},
- }
-
- local USE_POTIONS = {
- {name="Small Potion DMG", id=10048},
- {name="Small Potion Gold", id=10049},
- {name="Small Potion Luck", id=10047},
- {name="Big Potion DMG", id=10051},
- {name="Big Potion Gold", id=10052},
- {name="Big Potion Luck", id=10050},
- {name="Super Potion DMG", id=10060},
- {name="Super Potion Gold", id=10061},
- {name="Super Potion Luck", id=10059},
- }
-
- -- ============================================================
- -- HELPER: Dropdown list (arah ke bawah, single-select)
- -- [v243 FIX] Bug dropdown tidak bisa pilih item:
- -- Root cause: UserInputService.InputBegan terpicu lebih dulu dari
- -- Solusi final: pakai backdrop TextButton transparan di belakang list.
- -- Saat user klik item -> handler item jalan dulu (ZIndex lebih tinggi),
- -- backdrop tidak pernah racing dengan item click sama sekali.
- -- Default sel = nil (kosong) agar user pilih sendiri.
- -- ============================================================
- local _activeDD = nil
-
- local function MakeDropdown(parent, options, onChange)
- -- sel = nil berarti belum ada pilihan (tampil placeholder)
- local sel = nil
- local isOpen = false
-
- local wrap = Frame(parent, C.BLACK, UDim2.new(1,0,0,30))
- wrap.BackgroundTransparency = 1
- wrap.ClipsDescendants = false
-
- local btn = Btn(wrap, C.BG3, UDim2.new(1,0,0,30))
- btn.ZIndex = 10; Corner(btn,7); Stroke(btn,C.BORD, 1.5,0.6)
- local btnLbl = Label(btn, "-- SELECT Item --", 11, C.DIM, Enum.Font.GothamBold)
- btnLbl.Size = UDim2.new(1,-24,1,0); btnLbl.Position = UDim2.new(0,8,0,0); btnLbl.ZIndex = 11
- local arrow = Label(btn,"v",11,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
- arrow.Size = UDim2.new(0,20,1,0); arrow.Position = UDim2.new(1,-22,0,0); arrow.ZIndex = 11
-
- -- Backdrop: menutup seluruh layar di belakang list, klik -> tutup
- local backdrop = Btn(ScreenGui, C.BLACK, UDim2.new(1,0,1,0))
- backdrop.BackgroundTransparency = 1
- backdrop.ZIndex = 19
- backdrop.Visible = false
- backdrop.Active = true
-
- -- List frame overlay langsung di ScreenGui
- local listFrame = Frame(ScreenGui, C.BG2, UDim2.new(0,1,0,1))
- listFrame.Visible = false; listFrame.ZIndex = 20
- Corner(listFrame,7); Stroke(listFrame,C.BORD, 1.5,0.5)
- New("UIListLayout",{Parent=listFrame,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,2)})
- local pad = Instance.new("UIPadding",listFrame)
- pad.PaddingTop=UDim.new(0,4); pad.PaddingBottom=UDim.new(0,4)
- pad.PaddingLeft=UDim.new(0,4); pad.PaddingRight=UDim.new(0,4)
-
- local function closeDD()
- isOpen = false
- listFrame.Visible = false
- backdrop.Visible = false
- arrow.Text = "v"
- if _activeDD == listFrame then _activeDD = nil end
- end
-
- -- Backdrop klik -> tutup (tidak ada race, item ZIndex lebih tinggi)
- backdrop.MouseButton1Click:Connect(closeDD)
-
- -- Buat item list
- local itemLabels = {}
- for oi, opt in ipairs(options) do
- local oi_l = oi
- local item = Btn(listFrame, C.SURFACE, UDim2.new(1,0,0,28))
- item.LayoutOrder = oi; item.ZIndex = 21; Corner(item,5)
- local iLbl = Label(item, opt.label, 11, C.TXT, Enum.Font.GothamBold)
- iLbl.Size = UDim2.new(1,-8,1,0); iLbl.Position = UDim2.new(0,8,0,0); iLbl.ZIndex = 22
- itemLabels[oi] = iLbl
-
- item.MouseButton1Click:Connect(function()
- -- Update pilihan
- sel = oi_l
- btnLbl.Text = options[sel].label
- btnLbl.TextColor3 = C.TXT
- -- Reset warna semua label
- for _, lbl in pairs(itemLabels) do lbl.TextColor3 = C.TXT end
- iLbl.TextColor3 = C.ACC2
- -- Callback
- if onChange then onChange(options[sel].value, sel) end
- -- Tutup
- closeDD()
- end)
- end
-
- btn.MouseButton1Click:Connect(function()
- if isOpen then closeDD(); return end
- -- Tutup dropdown lain
- if _activeDD and _activeDD ~= listFrame then
- _activeDD.Visible = false
- if _activeDD.Parent then
- -- reset backdrop lain
- end
- end
- isOpen = true; _activeDD = listFrame; arrow.Text = "^"
- local abs = btn.AbsolutePosition
- local sz = btn.AbsoluteSize
- local lh = #options * 32 + 12
- listFrame.Position = UDim2.new(0, abs.X, 0, abs.Y + sz.Y + 2)
- listFrame.Size = UDim2.new(0, sz.X, 0, lh)
- listFrame.Visible = true
- backdrop.Visible = true
- end)
-
- local function GetSelected()
- if sel == nil then return nil, nil end
- return options[sel].value, sel
- end
- return wrap, GetSelected
- end
-
- -- ============================================================
- -- HELPER: Slider (min..max, step 1)
- -- ============================================================
- local function MakeSlider(parent, minV, maxV, defaultV, onChange)
- local val = defaultV or minV
- local wrap = Frame(parent, C.BLACK, UDim2.new(1,0,0,32))
- wrap.BackgroundTransparency = 1
-
- local track = Frame(wrap, C.BG3, UDim2.new(1,-50,0,6))
- track.Position = UDim2.new(0,0,0.5,-3); Corner(track,3)
- local fill = Frame(track, C.ACC, UDim2.new((val-minV)/(maxV-minV),0,1,0))
- Corner(fill,3)
- local knob = Btn(track, C.KNOB_ON, UDim2.new(0,16,0,16))
- knob.AnchorPoint = Vector2.new(0.5,0.5)
- knob.Position = UDim2.new((val-minV)/(maxV-minV),0,0.5,0)
- Corner(knob, 10); Stroke(knob,C.ACC, 1.5,0.3)
-
- local valLbl = Label(wrap, tostring(val), 11, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
- valLbl.Size = UDim2.new(0,40,1,0); valLbl.Position = UDim2.new(1,-40,0,0)
-
- local dragging = false
- local function updateFromPos(ax)
- local tAbs = track.AbsolutePosition
- local tSz = track.AbsoluteSize
- local t = math.clamp((ax - tAbs.X) / tSz.X, 0, 1)
- val = math.floor(minV + t * (maxV - minV) + 0.5)
- local tt = (val-minV)/(maxV-minV)
- fill.Size = UDim2.new(tt,0,1,0)
- knob.Position = UDim2.new(tt,0,0.5,0)
- valLbl.Text = tostring(val)
- if onChange then onChange(val) end
- end
-
- knob.InputBegan:Connect(function(i)
- if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then
- dragging = true
- end
- end)
- UserInputService.InputChanged:Connect(function(i)
- if dragging and (i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseMovement) then
- updateFromPos(i.Position.X)
- end
- end)
- UserInputService.InputEnded:Connect(function(i)
- if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then
- dragging = false
- end
- end)
- track.InputBegan:Connect(function(i)
- if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then
- updateFromPos(i.Position.X)
- end
- end)
-
- local function GetVal() return val end
- return wrap, GetVal
- end
-
- -- ============================================================
- -- PANEL: AUTO MERGE POTION
- -- ============================================================
- local mergeOpen = false
- local mergeHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
- mergeHeader.LayoutOrder = 10; Corner(mergeHeader, 10); Stroke(mergeHeader,C.BORD, 1.5,0.88)
- local mergeIcon = Label(mergeHeader,">",12,C.ACC2,Enum.Font.GothamBold)
- mergeIcon.Size = UDim2.new(0,20,1,0); mergeIcon.Position = UDim2.new(0,10,0,0)
- local mergeTitleLbl = Label(mergeHeader,"AUTO MERGE POTION",13,C.TXT,Enum.Font.GothamBold)
- mergeTitleLbl.Size = UDim2.new(1,-40,1,0); mergeTitleLbl.Position = UDim2.new(0,30,0,0)
-
- local mergeBody = Frame(p, C.BG2, UDim2.new(1,0,0,0))
- mergeBody.LayoutOrder = 11; mergeBody.ClipsDescendants = false
- Corner(mergeBody, 10); Stroke(mergeBody,C.BORD, 1.5,0.25); mergeBody.Visible = false
-
- local mergeInner = Frame(mergeBody, C.BLACK, UDim2.new(1,-16,0,0))
- mergeInner.BackgroundTransparency = 1; mergeInner.Position = UDim2.new(0,8,0,8)
- mergeInner.AutomaticSize = Enum.AutomaticSize.Y
- local mergeLayout = New("UIListLayout",{Parent=mergeInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0, 10)})
- Instance.new("UIPadding",mergeInner).PaddingBottom = UDim.new(0,10)
-
- local function ResizeMergeBody()
- mergeLayout:ApplyLayout()
- local h = mergeLayout.AbsoluteContentSize.Y + 28
- mergeInner.Size = UDim2.new(1,0,0,h)
- mergeBody.Size = UDim2.new(1,0,0,h+16)
- end
-
- -- State merge
- local _mergeSelectedId = nil -- nil = belum dipilih user
- local _mergeCount = 1
- local _mergeRunning = false
- local _mergeThread = nil
- local _mergeStatusLbl = nil
-
- -- Status bar
- local mStatusCard = Frame(mergeInner, C.BG3, UDim2.new(1,0,0,26))
- mStatusCard.LayoutOrder = 0; Corner(mStatusCard,6); Stroke(mStatusCard,C.ACC, 1.5,0.4)
- _mergeStatusLbl = Label(mStatusCard,"Idle - SELECT ITEM & ENABLE",9,C.TXT2,Enum.Font.GothamBold)
- _mergeStatusLbl.Size = UDim2.new(1,-10,1,0); _mergeStatusLbl.Position = UDim2.new(0,8,0,0)
- _mergeStatusLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
- -- Row: SELECT ITEM dropdown
- local mSelectRow = Frame(mergeInner, C.SURFACE, UDim2.new(1,0,0,0))
- mSelectRow.LayoutOrder = 1; Corner(mSelectRow, 10); Stroke(mSelectRow,C.BORD, 1.5,0.88)
- mSelectRow.AutomaticSize = Enum.AutomaticSize.Y
- local mSelectPad = Instance.new("UIPadding",mSelectRow)
- mSelectPad.PaddingLeft=UDim.new(0,10); mSelectPad.PaddingRight=UDim.new(0,10)
- mSelectPad.PaddingTop=UDim.new(0, 10); mSelectPad.PaddingBottom=UDim.new(0, 10)
- New("UIListLayout",{Parent=mSelectRow,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
-
- local mSelLabel = Label(mSelectRow,"SELECT ITEM",10,C.TXT3,Enum.Font.GothamBold)
- mSelLabel.Size = UDim2.new(1,0,0,14); mSelLabel.LayoutOrder = 0
-
- local mDDOpts = {}
- for _, pt in ipairs(MERGE_POTIONS) do
- table.insert(mDDOpts, {label=pt.name, value=pt.id})
- end
-
- local mDDWrap, mGetSel = MakeDropdown(mSelectRow, mDDOpts, function(val, idx)
- _mergeSelectedId = val
- if _mergeStatusLbl then _mergeStatusLbl.Text = "ITEM SELECTED: " .. mDDOpts[idx].label end
- end)
- mDDWrap.LayoutOrder = 1
-
- -- Row: COUNT slider 1-5
- local mCountRow = Frame(mergeInner, C.SURFACE, UDim2.new(1,0,0,0))
- mCountRow.LayoutOrder = 2; Corner(mCountRow, 10); Stroke(mCountRow,C.BORD, 1.5,0.88)
- mCountRow.AutomaticSize = Enum.AutomaticSize.Y
- local mCntPad = Instance.new("UIPadding",mCountRow)
- mCntPad.PaddingLeft=UDim.new(0,10); mCntPad.PaddingRight=UDim.new(0,10)
- mCntPad.PaddingTop=UDim.new(0, 10); mCntPad.PaddingBottom=UDim.new(0, 10)
- New("UIListLayout",{Parent=mCountRow,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
-
- local mCntLabel = Label(mCountRow,"COUNT",10,C.TXT3,Enum.Font.GothamBold)
- mCntLabel.Size = UDim2.new(1,0,0,14); mCntLabel.LayoutOrder = 0
-
- local mSliderWrap, mGetCount = MakeSlider(mCountRow, 1, 5, 1, function(v)
- _mergeCount = v
- end)
- mSliderWrap.LayoutOrder = 1; mSliderWrap.Size = UDim2.new(1,0,0,32)
-
- -- Toggle ON/OFF
- local _, _mergeToggleSet = ToggleRow(mergeInner,"Merge Potion","ON = START merge",3,function(on)
- if on then
- if not _mergeSelectedId then
- if _mergeStatusLbl then _mergeStatusLbl.Text = "[!] SELECT ITEM PLEASE!" end
- -- matikan toggle lagi
- if _mergeToggleSet then task.defer(function() _mergeToggleSet(false) end) end
- return
- end
- _mergeRunning = true
- if _mergeThread then pcall(function() task.cancel(_mergeThread) end) end
- _mergeThread = task.spawn(function()
- while _mergeRunning do
- local id = _mergeSelectedId
- local cnt = _mergeCount
- if _mergeStatusLbl then _mergeStatusLbl.Text = "[M] Merging id=" .. id .. " x" .. cnt end
- pcall(function()
- local re = Remotes:FindFirstChild("PotionMerge")
- if re then re:InvokeServer({id=id, count=cnt}) end
- end)
- if _mergeStatusLbl then _mergeStatusLbl.Text = "[OK] Merge DONE x" .. cnt end
- task.wait(0.5)
- end
- if _mergeStatusLbl then _mergeStatusLbl.Text = "Idle - toggle OFF" end
- end)
- else
- _mergeRunning = false
- if _mergeThread then pcall(function() task.cancel(_mergeThread) end); _mergeThread = nil end
- if _mergeStatusLbl then _mergeStatusLbl.Text = "Idle - SELECT ITEM & ENABLE" end
- end
- end)
-
- mergeHeader.MouseButton1Click:Connect(function()
- mergeOpen = not mergeOpen; mergeBody.Visible = mergeOpen
- mergeIcon.Text = mergeOpen and "v" or ">"
- if mergeOpen then task.defer(ResizeMergeBody) end
- end)
- task.defer(ResizeMergeBody)
-
- -- ============================================================
- -- PANEL: AUTO USE POTION
- -- ============================================================
- local useOpen = false
- local useHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
- useHeader.LayoutOrder = 12; Corner(useHeader, 10); Stroke(useHeader,C.BORD, 1.5,0.88)
- local useIcon = Label(useHeader,">",12,C.ACC2,Enum.Font.GothamBold)
- useIcon.Size = UDim2.new(0,20,1,0); useIcon.Position = UDim2.new(0,10,0,0)
- local useTitleLbl = Label(useHeader,"AUTO USE POTION",13,C.TXT,Enum.Font.GothamBold)
- useTitleLbl.Size = UDim2.new(1,-40,1,0); useTitleLbl.Position = UDim2.new(0,30,0,0)
-
- local useBody = Frame(p, C.BG2, UDim2.new(1,0,0,0))
- useBody.LayoutOrder = 13; useBody.ClipsDescendants = false
- Corner(useBody, 10); Stroke(useBody,C.BORD, 1.5,0.25); useBody.Visible = false
-
- local useInner = Frame(useBody, C.BLACK, UDim2.new(1,-16,0,0))
- useInner.BackgroundTransparency = 1; useInner.Position = UDim2.new(0,8,0,8)
- useInner.AutomaticSize = Enum.AutomaticSize.Y
- local useLayout = New("UIListLayout",{Parent=useInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0, 10)})
- Instance.new("UIPadding",useInner).PaddingBottom = UDim.new(0,10)
-
- local function ResizeUseBody()
- useLayout:ApplyLayout()
- local h = useLayout.AbsoluteContentSize.Y + 28
- useInner.Size = UDim2.new(1,0,0,h)
- useBody.Size = UDim2.new(1,0,0,h+16)
- end
-
- -- State use
- local _useSelectedId = nil -- nil = belum dipilih user
- local _useCount = 1
- local _useRunning = false
- local _useThread = nil
- local _useStatusLbl = nil
-
- -- Status bar
- local uStatusCard = Frame(useInner, C.BG3, UDim2.new(1,0,0,26))
- uStatusCard.LayoutOrder = 0; Corner(uStatusCard,6); Stroke(uStatusCard,C.ACC, 1.5,0.4)
- _useStatusLbl = Label(uStatusCard,"Idle - SELECT ITEM & ENABALE",9,C.TXT2,Enum.Font.GothamBold)
- _useStatusLbl.Size = UDim2.new(1,-10,1,0); _useStatusLbl.Position = UDim2.new(0,8,0,0)
- _useStatusLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
- -- Row: SELECT ITEM dropdown
- local uSelectRow = Frame(useInner, C.SURFACE, UDim2.new(1,0,0,0))
- uSelectRow.LayoutOrder = 1; Corner(uSelectRow, 10); Stroke(uSelectRow,C.BORD, 1.5,0.88)
- uSelectRow.AutomaticSize = Enum.AutomaticSize.Y
- local uSelectPad = Instance.new("UIPadding",uSelectRow)
- uSelectPad.PaddingLeft=UDim.new(0,10); uSelectPad.PaddingRight=UDim.new(0,10)
- uSelectPad.PaddingTop=UDim.new(0, 10); uSelectPad.PaddingBottom=UDim.new(0, 10)
- New("UIListLayout",{Parent=uSelectRow,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
-
- local uSelLabel = Label(uSelectRow,"SELECT ITEM",10,C.TXT3,Enum.Font.GothamBold)
- uSelLabel.Size = UDim2.new(1,0,0,14); uSelLabel.LayoutOrder = 0
-
- local uDDOpts = {}
- for _, pt in ipairs(USE_POTIONS) do
- table.insert(uDDOpts, {label=pt.name, value=pt.id})
- end
-
- local uDDWrap, uGetSel = MakeDropdown(uSelectRow, uDDOpts, function(val, idx)
- _useSelectedId = val
- if _useStatusLbl then _useStatusLbl.Text = "Item SELECTED: " .. uDDOpts[idx].label end
- end)
- uDDWrap.LayoutOrder = 1
-
- -- Row: COUNT slider 1-100
- local uCountRow = Frame(useInner, C.SURFACE, UDim2.new(1,0,0,0))
- uCountRow.LayoutOrder = 2; Corner(uCountRow, 10); Stroke(uCountRow,C.BORD, 1.5,0.88)
- uCountRow.AutomaticSize = Enum.AutomaticSize.Y
- local uCntPad = Instance.new("UIPadding",uCountRow)
- uCntPad.PaddingLeft=UDim.new(0,10); uCntPad.PaddingRight=UDim.new(0,10)
- uCntPad.PaddingTop=UDim.new(0, 10); uCntPad.PaddingBottom=UDim.new(0, 10)
- New("UIListLayout",{Parent=uCountRow,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
-
- local uCntLabel = Label(uCountRow,"USE COUNT (1 - 100)",10,C.TXT3,Enum.Font.GothamBold)
- uCntLabel.Size = UDim2.new(1,0,0,14); uCntLabel.LayoutOrder = 0
-
- local uSliderWrap, uGetCount = MakeSlider(uCountRow, 1, 100, 1, function(v)
- _useCount = v
- end)
- uSliderWrap.LayoutOrder = 1; uSliderWrap.Size = UDim2.new(1,0,0,32)
-
- -- Toggle ON/OFF
- local _, _useToggleSet = ToggleRow(useInner,"Use Potion","ON = start use potion",3,function(on)
- if on then
- if not _useSelectedId then
- if _useStatusLbl then _useStatusLbl.Text = "[!] SELECT ITEM PLEASE!" end
- if _useToggleSet then task.defer(function() _useToggleSet(false) end) end
- return
- end
- _useRunning = true
- if _useThread then pcall(function() task.cancel(_useThread) end) end
- _useThread = task.spawn(function()
- while _useRunning do
- local id = _useSelectedId
- local cnt = _useCount
- if _useStatusLbl then _useStatusLbl.Text = "[U] Using id=" .. id .. " x" .. cnt end
- pcall(function()
- local re = Remotes:FindFirstChild("UseItem")
- if re then re:InvokeServer({useCount=cnt, itemId=id}) end
- end)
- if _useStatusLbl then _useStatusLbl.Text = "[OK] Use DONE x" .. cnt end
- task.wait(0.5)
- end
- if _useStatusLbl then _useStatusLbl.Text = "Idle - toggle OFF" end
- end)
- else
- _useRunning = false
- if _useThread then pcall(function() task.cancel(_useThread) end); _useThread = nil end
- if _useStatusLbl then _useStatusLbl.Text = "Idle - SELECT ITEM & ENABLE" end
- end
- end)
-
- useHeader.MouseButton1Click:Connect(function()
- useOpen = not useOpen; useBody.Visible = useOpen
- useIcon.Text = useOpen and "v" or ">"
- if useOpen then task.defer(ResizeUseBody) end
- end)
- task.defer(ResizeUseBody)
-
 end
 
 
@@ -7088,624 +5145,182 @@ function StartRaidLoop()
  RaidStatusUpdate("Siap. Menunggu raid...", Color3.fromRGB(180,180,60))
 
  RAID.thread = task.spawn(function()
- while RAID.running do
+  while RAID.running do
 
- -- [v252] Cek semua interrupt via MODE dispatcher
- -- Dungeon (priority tertinggi) -> Siege -> baru Raid boleh jalan
- if MODE.current == "dungeon" or (DUNGEON and DUNGEON.interrupt) then
- RAID.inMap = false
- RaidStatusUpdate("[||] Dungeon aktif - menunggu...", Color3.fromRGB(255,140,0))
- while (MODE.current == "dungeon" or (DUNGEON and DUNGEON.interrupt)) and RAID.running do
- task.wait(0.5)
- end
- if not RAID.running then break end
- RaidStatusUpdate("> Dungeon selesai - lanjut raid...", C.ACC3)
- task.wait(0.1)
- end
-
-        -- [INDEPENDEN] RAID tidak menunggu SIEGE - biarkan jalan bersamaan
- -- Prioritas: Rune Map + Pick Rank > Rune Map saja > Pick Rank > Difficulty
- -- Selalu baca RAID.runeEnabled / runeGrades / runeMapTarget live
- -- sehingga kalau user ganti setting di tengah, iterasi berikutnya langsung ikut
- local function ResolveEntry()
- if #RAID_ID_LIST == 0 then return nil end
-
- local _now0 = os.time()
- local _pruned0 = false
- for rid, ent in pairs(RAID_LIVE) do
-  if ent.endTime and ent.endTime < (_now0 - 10) then
-   RAID_LIVE[rid] = nil; _pruned0 = true
-  end
- end
- if _pruned0 then
-  if RebuildRaidList then pcall(RebuildRaidList) end
- end
- if #RAID_ID_LIST == 0 then return nil end
-
- local pm        = RAID.pickMode or "default"
- local runeOn    = RAID.runeEnabled
- local runeTarget = runeOn and RAID.runeMapTarget or 0
- local hasPick   = next(RAID.runeGrades) ~= nil
-
- local function pickLowest(list)
-  table.sort(list, function(a, b) return a.mapId < b.mapId end)
-  return list[1]
- end
-
- local function pickByDiff(list)
-  if #list == 0 then return nil end
-  table.sort(list, function(a, b) return a.mapId < b.mapId end)
-  if pm == "default" then
-   _defaultRRIdx = _defaultRRIdx + 1
-   if _defaultRRIdx > #list then _defaultRRIdx = 1 end
-   return list[_defaultRRIdx]
-  end
-  if pm == "easy"   then return list[1] end
-  if pm == "hard"   then return list[#list] end
-  if pm == "byrank" then return list[1] end
-  if pm == "bymap" or pm == "manual" then
-   for _, r in ipairs(list) do
-    if RAID.preferMaps[r.mapId - 50000] then return r end
+   -- [v238 FIX] Cek apakah ada raid yang benar-benar aktif di game sekarang
+   if not IsRaidLiveInGame() then
+    RAID.raidId = nil
+    RAID.raidMapId = nil
+    RAID_LIVE = {}
+    RAID_ID_LIST = {}
+    _defaultRRIdx = 0
+    if RebuildRaidList then pcall(RebuildRaidList) end
    end
-   return list[1]
-  end
-  return list[1]
- end
 
- if not IsRaidLiveInGame() then
-  RAID_LIVE = {}
-  RAID_ID_LIST = {}
-  _defaultRRIdx = 0
-  if RebuildRaidList then pcall(RebuildRaidList) end
-  return nil
- end
+   local raidEntry = ResolveEntry()
 
- if pm == "manual" then
-  local hasPreferMaps = next(RAID.preferMaps) ~= nil
-  local hasPreferRank = hasPick
-  local hasPreferRune = runeOn and runeTarget >= 1 and runeTarget <= 18
-
-  if hasPreferRank then
-   for _, r in ipairs(RAID_ID_LIST) do
-    local mn = r.mapId - 50000
-    local grade = GetBestGrade(mn)
-    local rankMatch = grade and RAID.runeGrades[grade] == true
-
-    if rankMatch then
-     local mapMatch = hasPreferMaps and RAID.preferMaps[mn] == true
-
-     if mapMatch then
-      if hasPreferRune and mn == runeTarget then
-       -- FASE 3: Map + Rank PERSIS cocok. Batalkan Rune, alihkan ke UP/DOWN Rank.
-       RAID.runeEnabled = false
-       return r
-      else
-       -- FASE 2 (Map + Rank match, bukan peta rune target): kunci portal, fire rune.
-       return r
+   while RAID.running and not raidEntry do
+    ForceRescanRaidEnter()
+    raidEntry = ResolveEntry()
+    if not raidEntry then
+     local _now2 = os.time()
+     for rid, ent in pairs(RAID_LIVE) do
+      if ent.endTime and ent.endTime < (_now2 - 10) then
+       RAID_LIVE[rid] = nil
       end
+     end
+     if RebuildRaidList then pcall(RebuildRaidList) end
+
+     local _pm = RAID.pickMode
+     if not IsRaidLiveInGame() then
+      RaidStatusUpdate("Empty RAID - Waiting new RAID", Color3.fromRGB(160,100,60))
      else
-      -- FASE 2: Rank match, map beda. Kunci portal ini, rune override peta.
-      return r
+      RaidStatusUpdate("Waiting raid [" .. (_pm ~= "default" and _pm or RAID.difficulty) .. "]...", Color3.fromRGB(255,200,60))
      end
-    end
-   end
 
-   -- FASE 1: Preferred Rank BELUM ADA di lobby.
-   -- Jangan diam. Cari Preferred Maps dengan ID terkecil untuk farming.
-   if hasPreferMaps then
-    local farmCandidates = {}
-    for _, r in ipairs(RAID_ID_LIST) do
-     if RAID.preferMaps[r.mapId - 50000] then
-      table.insert(farmCandidates, r)
+     local _woken = false
+     local _wConn
+     if _raidWakeup then
+      _wConn = _raidWakeup.Event:Connect(function() _woken = true end)
      end
-    end
-    if #farmCandidates > 0 then
-     return pickLowest(farmCandidates)
-    end
-   end
-
-   -- Preferred Maps juga kosong: farming map terkecil di lobby.
-   return pickLowest(RAID_ID_LIST)
-  end
-
-  if hasPreferMaps then
-   local mapCandidates = {}
-   for _, r in ipairs(RAID_ID_LIST) do
-    if RAID.preferMaps[r.mapId - 50000] then
-     table.insert(mapCandidates, r)
+     local _we = 0
+     while not _woken and _we < 1 and RAID.running do
+      task.wait(0.1); _we = _we + 0.1
+     end
+     if _wConn then pcall(function() _wConn:Disconnect() end) end
     end
    end
-   if #mapCandidates > 0 then return pickLowest(mapCandidates) end
-   return nil
-  end
+   if not RAID.running then break end
 
-  if hasPreferRune then
-   for _, r in ipairs(RAID_ID_LIST) do
-    if (r.mapId - 50000) == runeTarget then return r end
-   end
-   return RAID_ID_LIST[1]
-  end
-
-  return pickByDiff(RAID_ID_LIST)
- end
-
- if runeOn and runeTarget >= 1 and runeTarget <= 18 then
-  if hasPick then
-   local matched = {}
-   for _, r in ipairs(RAID_ID_LIST) do
-    local grade = GetBestGrade(r.mapId - 50000)
-    if grade and RAID.runeGrades[grade] == true then
-     table.insert(matched, r)
+   local _preCheck_ok = true
+   if not raidEntry then
+    _preCheck_ok = false
+   elseif not RAID_LIVE[raidEntry.id] then
+    _preCheck_ok = false
+   elseif not IsRaidLiveInGame() then
+    local _ent = RAID_LIVE[raidEntry.id]
+    if _ent and not _ent.endTime then
+     _preCheck_ok = true
+    else
+     _preCheck_ok = false
     end
    end
-   if #matched > 0 then
-    table.sort(matched, function(a, b)
-     local ga = GetBestGrade(a.mapId - 50000) or "?"
-     local gb = GetBestGrade(b.mapId - 50000) or "?"
-     local ra = GRADE_RANK[ga] or 99
-     local rb = GRADE_RANK[gb] or 99
-     return ra < rb
-    end)
-    return matched[1]
-   end
-  end
-  return RAID_ID_LIST[1]
- end
 
- if pm == "bymap" and next(RAID.preferMaps) ~= nil then
-  local mapMatched = {}
-  for _, r in ipairs(RAID_ID_LIST) do
-   if RAID.preferMaps[r.mapId - 50000] then
-    table.insert(mapMatched, r)
+   if not _preCheck_ok then
+    _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid")
+    RaidStatusUpdate("Raid expired sebelum masuk - tunggu raid baru...", Color3.fromRGB(255,100,60))
+    task.wait(2)
+    continue
    end
-  end
-  if #mapMatched > 0 then return pickLowest(mapMatched) end
-  return nil
- end
 
- if hasPick then
-  local matched2 = {}
-  for _, r in ipairs(RAID_ID_LIST) do
-   local _skipEntry = false
-   if pm == "byrank" then
-    local _isAT = (r.mapId >= 50019 and r.mapId <= 50036) or (r.raidId and r.raidId >= 935001)
-    if _isAT then _skipEntry = true end
-   end
-   if not _skipEntry then
-    local grade = GetBestGrade(r.mapId - 50000)
-    if grade and RAID.runeGrades[grade] == true then
-     table.insert(matched2, r)
+   _raidInterrupt = true 
+   RAID.raidId = raidEntry.id
+   RAID.raidMapId = raidEntry.mapId
+   RAID.inMap = true
+   if RAID.updateActiveLabel then pcall(RAID.updateActiveLabel) end
+   
+   if MA.running then
+    local _wma = 0
+    while MA.running and _raidInterrupt and _wma < 1 do
+     task.wait(0.05); _wma = _wma + 0.05
     end
    end
-  end
-  if #matched2 > 0 then
-   local chosen = pickByDiff(matched2)
-   if chosen then return chosen end
-  end
-  if pm == "byrank" then return nil end
- end
+   RAID.slotIndex = 2
+   if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
 
- return pickByDiff(RAID_ID_LIST)
- end
+   local mn = raidEntry.mapId - 50000
+   local mapLabel = MAP_NAMES[mn] or ("Map " .. mn)
 
- -- [v238 FIX] Cek apakah ada raid yang benar-benar aktif di game sekarang
- -- Jika tidak, langsung masuk waiting loop tanpa coba masuk
- -- Ini mencegah "tindakan palsu" (TP ke enemy random, loop tak berguna)
- -- ketika Rune Map/Pick Rank di-OFF lalu di-ON lagi saat raid sudah habis
- if not IsRaidLiveInGame() then
- RAID.raidId = nil
- RAID.raidMapId = nil
- raidEntry = nil
- -- Paksa reset RAID_LIVE agar ResolveEntry tidak pakai data stale
- RAID_LIVE = {}
- RAID_ID_LIST = {}
- _defaultRRIdx = 0 -- reset RR saat RAID habis
- if RebuildRaidList then pcall(RebuildRaidList) end
- end
+   local _liveEntry = RAID_LIVE[RAID.raidId]
+   if not _liveEntry then
+    _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid")
+    task.wait(1); continue
+   end
 
- local raidEntry = ResolveEntry()
+   RAID.serverMapId = nil
+   if not RAID.running then break end
 
- while RAID.running and not raidEntry do
- -- [INDEPENDEN] tidak pause saat siege di waiting loop
- -- [FIX v256] Agresif: manual scan workspace tiap cycle
- ForceRescanRaidEnter()
- raidEntry = ResolveEntry()
- if not raidEntry then
- -- Prune expired entries
- local _now2 = os.time()
- local _pruned2 = 0
- for rid, ent in pairs(RAID_LIVE) do
- if ent.endTime and ent.endTime < (_now2 - 10) then
- RAID_LIVE[rid] = nil; _pruned2 = _pruned2 + 1
- end
- end
- if _pruned2 > 0 then
- if RebuildRaidList then pcall(RebuildRaidList) end
- end
- -- [v262 FIX] Status label sesuai mode aktif (pickMode aware)
- local _pm = RAID.pickMode
- if not IsRaidLiveInGame() then
- RaidStatusUpdate("Empty RAID - Waiting new RAID", Color3.fromRGB(160,100,60))
- elseif _pm == "byrank" and next(RAID.runeGrades) ~= nil then
- local _gr = {}
- for _,g in ipairs(GRADE_LIST) do if RAID.runeGrades[g] then table.insert(_gr,g) end end
- RaidStatusUpdate("Waiting Rank: ["..table.concat(_gr,"] [").."]...", Color3.fromRGB(200,120,255))
- elseif _pm == "bymap" and next(RAID.preferMaps) ~= nil then
- local _ms = {}
- for mn in pairs(RAID.preferMaps) do table.insert(_ms,"Map "..mn) end
- table.sort(_ms)
- RaidStatusUpdate("Waiting Map: "..table.concat(_ms,", ").."...", Color3.fromRGB(100,200,100))
- elseif RAID.runeEnabled and RAID.runeMapTarget >= 1 and RAID.runeMapTarget <= 18 and next(RAID.runeGrades) ~= nil then
- RaidStatusUpdate("Waiting grade cocok -> override Map " .. RAID.runeMapTarget .. "...", Color3.fromRGB(200,140,255))
- elseif RAID.runeEnabled and RAID.runeMapTarget >= 1 and RAID.runeMapTarget <= 18 then
- RaidStatusUpdate("Waiting raid apapun -> override Map " .. RAID.runeMapTarget .. "...", Color3.fromRGB(147,197,253))
- elseif next(RAID.runeGrades) ~= nil then
- RaidStatusUpdate("Waiting grade cocok [" .. RAID.difficulty .. "]...", Color3.fromRGB(200,255,150))
- else
- RaidStatusUpdate("Waiting raid [" .. (_pm ~= "default" and _pm or RAID.difficulty) .. "]...", Color3.fromRGB(255,200,60))
- end
- -- [FIX v256] Wakeup CEPAT: poll 0.05s, max 0.5s (bukan 1s)
- if _raidInterrupt and not RAID.running then _raidInterrupt = false end
- local _woken = false
- local _wConn
- if _raidWakeup then
- _wConn = _raidWakeup.Event:Connect(function() _woken = true end)
- end
- local _we = 0
- while not _woken and _we < 1 and RAID.running do
- task.wait(0.1); _we = _we + 0.1
- end
- if _wConn then pcall(function() _wConn:Disconnect() end) end
- end
- end
- if not RAID.running then break end
+   -- STEP 2: NORMAL ENTER
+   RaidStatusUpdate("Enter Map " .. mn .. " Now...", C.ACC2)
+   if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
 
+   if RE.CreateRaidTeam then
+    pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end)
+   end
+   task.wait(0.2)
+   if not RAID.running then break end
 
- -- [v238 FIX] Double-check sebelum masuk: apakah raid di raidEntry
- -- masih valid di server saat ini?
- -- [v245 FIX] Longgarkan: kalau raidEntry ada di RAID_LIVE dan tidak ada endTime
- -- (server tidak kirim endTime), anggap masih valid - jangan blokir masuk
- local _preCheck_ok = true
- if not raidEntry then
- _preCheck_ok = false
- elseif not RAID_LIVE[raidEntry.id] then
- _preCheck_ok = false
- elseif not IsRaidLiveInGame() then
- -- Satu kesempatan lagi: kalau entry ada tapi tidak ada endTime, izinkan
- local _ent = RAID_LIVE[raidEntry.id]
- if _ent and not _ent.endTime then
- _preCheck_ok = true -- server tidak kirim endTime = anggap valid
- else
- _preCheck_ok = false
- end
- end
+   local _targetMapId = RAID.raidMapId + 100
+   if _targetMapId < 50101 then _targetMapId = 50101 end
+   if _targetMapId > 50118 then _targetMapId = 50118 end
 
- if not _preCheck_ok then
- _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid")
- RaidStatusUpdate("Raid expired sebelum masuk - tunggu raid baru...", Color3.fromRGB(255,100,60))
- task.wait(2)
- continue
- end
-
- -- [v252] Pause Mass Attack via MODE dispatcher
- -- Siege cek tetap pakai flag lama (siege sudah pakai MODE juga via alias)
-            -- Tunggu siege selesai (SIEGE.inMap = source of truth)
-            -- [INDEPENDEN] tidak tunggu siege
- _raidInterrupt = true -- sync flag lama
- -- [v262 FIX] JANGAN set inMap=true dulu sebelum raidMapId di-assign
- -- Assign id + mapId dulu, baru inMap=true agar Active Raid label akurat
- RAID.raidId = raidEntry.id
- RAID.raidMapId = raidEntry.mapId
- RAID.inMap = true
- -- Update label langsung tanpa tunggu polling
- if RAID.updateActiveLabel then pcall(RAID.updateActiveLabel) end
- -- [FIX v256] Tunggu MA pause max 1s (bukan 2s)
- if MA.running then
- local _wma = 0
- while MA.running and _raidInterrupt and _wma < 1 do
- task.wait(0.05); _wma = _wma + 0.05
- end
- end
- RAID.slotIndex = 2
- if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
-
- local mn = raidEntry.mapId - 50000
- if RAID.runeEnabled and RAID.runeMapTarget >= 1 and RAID.runeMapTarget <= 18 then
- mn = RAID.runeMapTarget
- end
- local mapLabel = MAP_NAMES[mn] or ("Map " .. mn)
-
- -- Validasi raidId masih ada dan belum expired
- local _liveEntry = RAID_LIVE[RAID.raidId]
- if not _liveEntry then
- _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid")
- task.wait(1); continue
- end
-
- RAID.serverMapId = nil
- if not RAID.running then break end
-
- -- 
- -- STEP 2A: NORMAL MODE
- -- 
- if RAID.runeEnabled and RAID.runeMapTarget >= 1 and RAID.runeMapTarget <= 18 then
- -- STEP 2B: RUNE MAP MODE
- -- LOGIKA A: Ada raid di GAME yang mapId-nya sama dengan runeMapTarget
- -- -> masuk langsung pakai CreateRaidTeam (tidak perlu UseRaidItem)
- -- LOGIKA B: Tidak ada raid yang cocok -> pakai UseRaidItem untuk override map
- -- FALLBACK: Jika material habis (UseRaidItem gagal, serverMapId nil setelah 10s)
- -- -> jalankan STEP 2A biasa (mode difficulty) sampai user ganti MAP TUJUAN
- local targetMap = RAID.runeMapTarget
-
- -- [v258-FIX] PICK RANK + RUNE MAP: saat hasPick aktif,
- -- _runeDirectEntry harus cocok GRADE dulu, bukan hanya mapId.
- local _hasPick2 = next(RAID.runeGrades) ~= nil
- local _runeDirectEntry = nil
- if _hasPick2 then
- -- Prioritas: grade cocok + mapId sama dengan runeTarget (LOGIKA A sempurna)
- for _, r in ipairs(RAID_ID_LIST) do
- if (r.mapId - 50000) == targetMap then
- local _g = GetBestGrade(r.mapId - 50000)
- if _g and RAID.runeGrades[_g] == true then
- _runeDirectEntry = r; break
- end
- end
- end
- -- Jika tidak ada yang grade+map cocok, _runeDirectEntry tetap nil
- -- -> masuk LOGIKA B UseRaidItem dengan raidEntry dari ResolveEntry
- -- yang sudah difilter grade oleh ResolveEntry (hasPick path)
- else
- -- Tidak ada Pick Rank: cari berdasarkan mapId saja (perilaku lama)
- for _, r in ipairs(RAID_ID_LIST) do
- if (r.mapId - 50000) == targetMap then
- _runeDirectEntry = r; break
- end
- end
- end
-
- local RUNE_IDS = {
- [1]=10265,[2]=10266,[3]=10267,[4]=10268,[5]=10269,
- [6]=10314,[7]=10315,[8]=10316,
- [9]=10357,[10]=10358,[11]=10359,[12]=10360,[13]=10361,
- [14]=10362,[15]=10363,[16]=10364,[17]=10365,[18]=10366,
- }
-
- if _runeDirectEntry then
- --  LOGIKA A: Raid yang sama tersedia di GAME -> CreateRaidTeam langsung 
- -- Gunakan raidEntry dari raid yang cocok (override raidId)
- RAID.raidId = _runeDirectEntry.id
- RAID.raidMapId = _runeDirectEntry.mapId
- local _targetMapId = _runeDirectEntry.mapId + 100
- if _targetMapId < 50101 then _targetMapId = 50101 end
- if _targetMapId > 50118 then _targetMapId = 50118 end
- RaidStatusUpdate("Enter Map " .. targetMap .. " Now...", C.ACC2)
-
- if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
-
- if RE.CreateRaidTeam then
- pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end)
- end
- task.wait(0.2)
- if not RAID.running then break end
-
-
-    -- [UP/DOWN RANK] UseRaidItem naik/turun rank (byrank/manual only)
-    if RAID.updownEnabled and RE.UseRaidItem then  -- aktif di semua mode selama updownEnabled ON
-     local _udId = RAID.updownDir == "up" and 10270 or 10271
-     RaidStatusUpdate("[~] Rank "..(RAID.updownDir=="up" and "UP ↑" or "DOWN ↓").."...", Color3.fromRGB(200,140,255))
-     pcall(function() RE.UseRaidItem:FireServer(_udId) end)
-     task.wait(0.2)
-     if not RAID.running then break end
-    end
    local _cfailA = false
- local _cfConnA
- local _cfReA = Remotes:FindFirstChild("ChallengeRaidsFail")
- if _cfReA then
- _cfConnA = _cfReA.OnClientEvent:Connect(function()
- _cfailA = true
- end)
- end
- if RE.StartChallengeRaidMap then
- pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = _targetMapId}) end)
- end
- local _wA = 0
- while RAID.serverMapId == nil and _wA < 5 and RAID.running and not _cfailA do
- task.wait(0.05); _wA = _wA + 0.05
- end
- if _cfConnA then pcall(function() _cfConnA:Disconnect() end) end
- if _cfailA then
- RAID_LIVE[RAID.raidId] = nil; RebuildRaidList()
- _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid"); RAID.fromMapId = nil; MODE:Release("raid")
- task.wait(1); continue
- end
- if not RAID.running then break end
- else
- --  LOGIKA B: Tidak ada raid cocok di GAME -> pakai UseRaidItem (override) 
- RaidStatusUpdate("Enter Map " .. targetMap .. "...", C.ACC2)
+   local _cfConnA
+   local _cfReA = Remotes:FindFirstChild("ChallengeRaidsFail")
+   if _cfReA then
+    _cfConnA = _cfReA.OnClientEvent:Connect(function()
+     _cfailA = true
+    end)
+   end
+   if RE.StartChallengeRaidMap then
+    pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = _targetMapId}) end)
+   end
+   local _wA = 0
+   while RAID.serverMapId == nil and _wA < 5 and RAID.running and not _cfailA do
+    task.wait(0.05); _wA = _wA + 0.05
+   end
+   if _cfConnA then pcall(function() _cfConnA:Disconnect() end) end
+   if _cfailA then
+    RAID_LIVE[RAID.raidId] = nil; RebuildRaidList()
+    _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid"); RAID.fromMapId = nil
+    task.wait(1); continue
+   end
 
- if RE.CreateRaidTeam then
- pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end)
- end
- task.wait(0.2)
- if not RAID.running then break end
+   if not RAID.running then break end
 
+   -- 
+   -- STEP 3: Tunggu masuk map (max 10s)
+   -- 
+   RaidStatusUpdate("[~] Waiting...", Color3.fromRGB(180,100,255))
+   local _tpOk = false
+   local _tpWait = 0
+   while not _tpOk and _tpWait < 10 and RAID.running do
+    task.wait(0.3); _tpWait = _tpWait + 0.3
+    pcall(function()
+     local wMapId = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
+     if wMapId then
+      if RAID.serverMapId and wMapId == RAID.serverMapId then
+       _tpOk = true
+      elseif (wMapId >= 50101 and wMapId <= 50118) or (wMapId >= 50301 and wMapId <= 50318) then
+       _tpOk = true
+      end
+     end
+    end)
+    if not _tpOk and #GetEnemies() > 0 then _tpOk = true end
+   end
 
-    -- [UP/DOWN RANK] UseRaidItem naik/turun rank (byrank/manual only)
-    if RAID.updownEnabled and RE.UseRaidItem then  -- aktif di semua mode selama updownEnabled ON
-     local _udId = RAID.updownDir == "up" and 10270 or 10271
-     RaidStatusUpdate("[~] Rank "..(RAID.updownDir=="up" and "UP ↑" or "DOWN ↓").."...", Color3.fromRGB(200,140,255))
-     pcall(function() RE.UseRaidItem:FireServer(_udId) end)
-     task.wait(0.2)
-     if not RAID.running then break end
-    end
-   local itemId = RUNE_IDS[targetMap] or (10264 + targetMap)
- local _useItemOk = false
- if RE.UseRaidItem then
- local ok, res = pcall(function() return RE.UseRaidItem:FireServer(itemId) end)
- _useItemOk = ok
- -- [FIX v247] Tangkap respons gagal material kosong dari server
- -- Jika server kirim event error / tidak ada respons = material habis
- end
- task.wait(0.3)
- if not RAID.running then break end
+   if not _tpOk and RAID.running then
+    RAID_LIVE[RAID.raidId] = nil; RebuildRaidList()
+    _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid"); RAID.fromMapId = nil
+    task.wait(1); continue
+   end
 
- if RE.StartChallengeRaidMap then
- local _runeMapId = 50100 + targetMap
- pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = _runeMapId}) end)
- end
-
- -- Timeout 10s + fallback workspace MapId
- local _wR = 0
- while RAID.serverMapId == nil and _wR < 10 and RAID.running do
- task.wait(0.1); _wR = _wR + 0.1
- if RAID.serverMapId == nil then
- pcall(function()
- local wm = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
- if type(wm)=="number" and ((wm>=50101 and wm<=50118) or (wm>=50301 and wm<=50318)) then
- RAID.serverMapId = wm
- end
- end)
- end
- end
-
- --  FALLBACK: serverMapId nil setelah 10s 
- if RAID.serverMapId == nil and RAID.running then
- -- [v272 FIX] Cek dulu apakah raidEntry ini masih valid di game
- -- Kalau RAID_LIVE sudah kosong = raid expired, bukan material habis
- local _raidStillLive = false
- if RAID.raidId and RAID_LIVE[RAID.raidId] then
- _raidStillLive = true
- elseif IsRaidLiveInGame() then
- _raidStillLive = true
- end
- if not _raidStillLive then
- -- Raid sudah berakhir di game - bukan masalah material
- RaidStatusUpdate("[i] Raid Expired - Waiting...", Color3.fromRGB(160,160,160))
- break -- keluar dari rune block, masuk waiting loop
- end
- RaidStatusUpdate("[!] Failed " .. RAID.difficulty .. "...", Color3.fromRGB(255,140,0))
- -- Jalankan STEP 2A normal dengan raidEntry yang ada
- local _entry = RAID_LIVE[RAID.raidId]
- local _isAT = _entry and _entry.isAT
- local _fbTargetMapId
- if _isAT then
- _fbTargetMapId = raidEntry.mapId + 300
- if _fbTargetMapId < 50301 then _fbTargetMapId = 50301 end
- if _fbTargetMapId > 50310 then _fbTargetMapId = 50310 end
- else
- _fbTargetMapId = raidEntry.mapId + 100
- if _fbTargetMapId < 50101 then _fbTargetMapId = 50101 end
- if _fbTargetMapId > 50118 then _fbTargetMapId = 50118 end
- end
- if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
- if RE.CreateRaidTeam then
- pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end)
- end
- task.wait(0.2)
- if not RAID.running then break end
- if RE.StartChallengeRaidMap then
- pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = _fbTargetMapId}) end)
- end
- local _wFb = 0
- while RAID.serverMapId == nil and _wFb < 5 and RAID.running do
- task.wait(0.05); _wFb = _wFb + 0.05
- end
- if not RAID.running then break end
- end
- end
- else
- -- STEP 2A: NORMAL / AT
- -- [FIX] AT entry: isAT=true -> battle mapId = lobby+300, bukan +100
- local _entry = RAID_LIVE[RAID.raidId]
- local _isAT = _entry and _entry.isAT
- local targetMapId
- if _isAT then
- targetMapId = raidEntry.mapId + 300
- if targetMapId < 50301 then targetMapId = 50301 end
- if targetMapId > 50310 then targetMapId = 50310 end
- RaidStatusUpdate("Enter Map " .. (targetMapId-50300) .. "...", C.ACC2)
- else
- targetMapId = raidEntry.mapId + 100
- if targetMapId < 50101 then targetMapId = 50101 end
- if targetMapId > 50118 then targetMapId = 50118 end
- RaidStatusUpdate("Enter Map " .. (targetMapId-50100) .. "...", C.ACC3)
- end
-
- -- Simpan fromMapId sebelum masuk
- if not RAID.fromMapId then
- RAID.fromMapId = RAID.raidMapId
- end
-
- if RE.CreateRaidTeam then
- pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end)
- end
- task.wait(0.2)
- if not RAID.running then break end
-
- -- [UP/DOWN RANK] Fire UseRaidItem naik/turun rank - aktif di semua mode
- if RAID.updownEnabled and RE.UseRaidItem then
- local _udId = RAID.updownDir == "up" and 10270 or 10271
- local _udLbl = RAID.updownDir == "up" and "UP ↑" or "DOWN ↓"
- RaidStatusUpdate("[~] Rank ".._udLbl.." ...", Color3.fromRGB(200,140,255))
- pcall(function() RE.UseRaidItem:FireServer(_udId) end)
- task.wait(0.2)
- if not RAID.running then break end
- end
-
- local _cfail = false
- local _cfConn
- local _cfRe = Remotes:FindFirstChild("ChallengeRaidsFail")
- if _cfRe then
- _cfConn = _cfRe.OnClientEvent:Connect(function()
- _cfail = true
- end)
- end
- if RE.StartChallengeRaidMap then
- -- [FIX] Tambah mapId agar server tahu map mana yang dituju
- pcall(function() RE.StartChallengeRaidMap:FireServer() end)
- end
- local _wE = 0
- while RAID.serverMapId == nil and _wE < 5 and RAID.running and not _cfail do
- task.wait(0.05); _wE = _wE + 0.05
- end
- if _cfConn then pcall(function() _cfConn:Disconnect() end) end
- if _cfail then
- RAID_LIVE[RAID.raidId] = nil; RebuildRaidList()
- _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid"); RAID.fromMapId = nil; MODE:Release("raid")
- task.wait(1); continue
- end
- if not RAID.running then break end
- end
-
- -- 
- -- STEP 3: Tunggu masuk map (max 10s)
- -- 
- RaidStatusUpdate("[~] Waiting...", Color3.fromRGB(180,100,255))
- local _tpOk = false
- local _tpWait = 0
- while not _tpOk and _tpWait < 10 and RAID.running do
- task.wait(0.3); _tpWait = _tpWait + 0.3
- pcall(function()
- local wMapId = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
- if wMapId then
- if RAID.serverMapId and wMapId == RAID.serverMapId then
- _tpOk = true
- elseif RAID.runeEnabled then
- local ok = (wMapId >= 50101 and wMapId <= 50118) or (wMapId >= 50301 and wMapId <= 50318)
- if ok then RAID.serverMapId = wMapId; _tpOk = true end
- elseif (wMapId >= 50101 and wMapId <= 50118) or (wMapId >= 50301 and wMapId <= 50318) then
- _tpOk = true
- end
- end
- end)
- if not _tpOk and #GetEnemies() > 0 then _tpOk = true end
- end
-
- if not _tpOk and RAID.running then
- RAID_LIVE[RAID.raidId] = nil; RebuildRaidList()
- _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid"); RAID.fromMapId = nil; MODE:Release("raid")
- task.wait(1); continue
- end
+   -- Recovery HERO_GUIDS kalau kosong
+   if #HERO_GUIDS == 0 then
+    pcall(function()
+     local hf = RS:FindFirstChild("HeroData") or RS:FindFirstChild("Heroes")
+     if hf then
+      for _, h in ipairs(hf:GetChildren()) do
+       local g = h:GetAttribute("heroGuid") or h:GetAttribute("guid")
+       if type(g) == "string" and IsValidUUID(g) then
+        local dup = false
+        for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
+        if not dup then table.insert(HERO_GUIDS, g) end
+       end
+      end
+     end
+    end)
+   end
 
  -- [FIX] Equip hero ke map ini agar hero spawn di sebelah player
  -- Tanpa ini hero tidak muncul di map raid meski GUID sudah ada
@@ -7765,22 +5380,20 @@ function StartRaidLoop()
  end) end
 
  -- [FIX v256] Reduced wait: 3s untuk map load, SAMBIL cari boss
- -- Sebelumnya: diam 7s -> baru cari boss -> TP -> 2s -> UnEquip -> Equip -> serang
  -- Sekarang: cari boss sejak detik ke-2 -> TP player+hero bareng -> Equip -> langsung serang
  RaidStatusUpdate("[..] Enter Map - loading...", Color3.fromRGB(160,148,135))
  local _loadWait = 0
  local _earlyBoss = nil
  while _loadWait < 3 and RAID.running and not RAID._raidDone do
- task.wait(0.5); _loadWait = _loadWait + 0.5
- -- Mulai cari boss dari detik ke-2
- if _loadWait >= 2 and not _earlyBoss then
- for _, e in ipairs(GetRaidEnemies()) do
- local n = e.model.Name:lower()
- if n:find("king",1,true) or n:find("arachnid",1,true) or n:find("buryura",1,true) or n:find("igris",1,true) or n:find("arch lich",1,true) or n:find("baran",1,true) or n:find("monarch",1,true) or n:find("boss",1,true) or n:find("beru",1,true) or n:find("legia",1,true) or n:find("ashborn",1,true) or n:find("antares",1,true) then
- _earlyBoss = e; break
- end
- end
- end
+  task.wait(0.5); _loadWait = _loadWait + 0.5
+  if _loadWait >= 2 and not _earlyBoss then
+   for _, e in ipairs(GetRaidEnemies()) do
+    local n = e.model.Name:lower()
+    if n:find("king",1,true) or n:find("arachnid",1,true) or n:find("buryura",1,true) or n:find("igris",1,true) or n:find("arch lich",1,true) or n:find("baran",1,true) or n:find("monarch",1,true) or n:find("boss",1,true) or n:find("beru",1,true) or n:find("legia",1,true) or n:find("ashborn",1,true) or n:find("antares",1,true) then
+     _earlyBoss = e; break
+    end
+   end
+  end
  end
 
  if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
@@ -7980,6 +5593,18 @@ function StartRaidLoop()
  -- 
  task.spawn(function() pcall(RaidCollectAll) end)
  RaidStatusUpdate("[FLa] Go Out raid...", Color3.fromRGB(100,200,255))
+
+ -- Hide reward panel
+ task.spawn(function()
+ task.wait(0.3)
+ pcall(function()
+ for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
+ if obj.Name == "RewardsFrame" and obj:IsA("Frame") and obj.Visible then
+ obj.Visible = false
+ end
+ end
+ end)
+ end)
 
  RAID_LIVE[RAID.raidId] = nil
  RebuildRaidList()
@@ -8251,40 +5876,21 @@ do
  end)
 
  --  PICK MODE 
- -- Default/By Rank/By Map/Hard/Easy/Manual
- local PM_OPTS = {"Default","By Rank","By Map","Hard","Easy","Manual"}
- local PM_KEYS = {"default","byrank","bymap","hard","easy","manual"}
+ -- Default/Hard/Easy
+ local PM_OPTS = {"Default","Hard","Easy"}
+ local PM_KEYS = {"default","hard","easy"}
  local PM_COLORS = {
- Color3.fromRGB(148,195,255), -- Default: biru es
- Color3.fromRGB(200,120,255), -- By Rank: ungu
- Color3.fromRGB(100,200,100), -- By Map: hijau
- Color3.fromRGB(255,80,80), -- Hard: merah
- Color3.fromRGB(80,220,80), -- Easy: hijau muda
- Color3.fromRGB(255,180,50), -- Manual: kuning
+  Color3.fromRGB(148,195,255), -- Default: biru es
+  Color3.fromRGB(255,80,80),   -- Hard: merah
+  Color3.fromRGB(80,220,80),   -- Easy: hijau muda
  }
  local PM_DESC = {
- "Join a random raid without filters",
- "Filter by preferred rank",
- "Filter by selected map",
- "Always choose the largest map",
- "Always choose the smallest map",
- "Manually set up your map, rank, and runes",
+  "Join a random raid without filters",
+  "Always choose the largest map",
+  "Always choose the smallest map",
  }
  local PM_TO_DIFF = {
- default="easy", byrank="easy", bymap="easy",
- hard="hard", easy="easy", manual="easy"
- }
- -- Unlock rule per mode:
- -- mapUnlock : bymap, manual
- -- rankUnlock : byrank, manual
- -- runeUnlock : manual
- local PM_UNLOCK = {
- default = {map=false, rank=false, rune=false},
- byrank = {map=false, rank=true, rune=false},
- bymap = {map=true, rank=false, rune=false},
- hard = {map=false, rank=false, rune=false},
- easy = {map=false, rank=false, rune=false},
- manual = {map=true, rank=true, rune=true},
+  default="easy", hard="hard", easy="easy"
  }
  local curPM = 1
  RAID.pickMode = PM_KEYS[curPM]
@@ -8304,486 +5910,41 @@ do
  local pmDescLbl = Label(raidInner,PM_DESC[curPM],10,C.TXT3,Enum.Font.GothamBold)
  pmDescLbl.LayoutOrder=7; pmDescLbl.Size=UDim2.new(1,0,0,14)
 
- local ApplyPickModeLock -- forward declare
- local prefCard, rankCard, runeCard -- forward declare untuk lock function
-
  pmDDBtn.MouseButton1Click:Connect(function()
- CloseActiveDD()
- local aP=pmDDBtn.AbsolutePosition; local aS=pmDDBtn.AbsoluteSize; local IH=28
- local popup=Instance.new("Frame")
- popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
- popup.Size=UDim2.new(0,aS.X+10,0,#PM_OPTS*(IH+2)+12)
- popup.Position=UDim2.new(0,aP.X,0,aP.Y+aS.Y+3)
- popup.ZIndex=9999; Corner(popup, 10); Stroke(popup,C.BORD2, 1.5,0.85)
- local ll=Instance.new("UIListLayout",popup)
- ll.Padding=UDim.new(0,2); ll.SortOrder=Enum.SortOrder.LayoutOrder
- Instance.new("UIPadding",popup).PaddingTop=UDim.new(0,4)
- for i,opt in ipairs(PM_OPTS) do
- local item=Instance.new("TextButton",popup)
- item.Size=UDim2.new(1,-8,0,IH); item.LayoutOrder=i
- item.BackgroundColor3=i==curPM and C.SURFACE or C.BG3
- item.BackgroundTransparency=i==curPM and 0.18 or 0.42
- item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
- Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
- local iL=Instance.new("TextLabel",item)
- iL.Size=UDim2.new(1,-8,1,0); iL.Position=UDim2.new(0,8,0,0)
- iL.BackgroundTransparency=1; iL.Text=opt; iL.TextSize=12
- iL.Font=Enum.Font.Gotham; iL.TextColor3=PM_COLORS[i]
- iL.TextXAlignment=Enum.TextXAlignment.Left; iL.ZIndex=9999
- local ii=i
- item.MouseButton1Click:Connect(function()
- CloseActiveDD()
- curPM=ii; RAID.pickMode=PM_KEYS[ii]
- RAID.difficulty=PM_TO_DIFF[PM_KEYS[ii]]; RAID.snapshotMapId=nil
- pmDDLbl.Text=" "..PM_OPTS[ii]; pmDDLbl.TextColor3=PM_COLORS[ii]
- pmDescLbl.Text=PM_DESC[ii]
- ApplyPickModeLock(); task.defer(ResizeRaidBody)
- end)
- end
- DDLayer.Visible=true
- _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
- end)
-
- --  PREFERRED MAPS 
- local prefHdr=Label(raidInner,"PREFERRED MAPS",10,C.TXT3,Enum.Font.GothamBold)
- prefHdr.LayoutOrder=8; prefHdr.Size=UDim2.new(1,0,0,14)
- prefCard=Frame(raidInner,C.SURFACE,UDim2.new(1,0,0,40))
- prefCard.LayoutOrder=9; Corner(prefCard, 10); Stroke(prefCard,C.BORD, 1.5,0.3); Padding(prefCard,6,6,10,10)
- -- Row dalam satu frame: kunci + label + btn
- local prefRow=Frame(prefCard,C.BLACK,UDim2.new(1,0,1,0)); prefRow.BackgroundTransparency=1
- local _prefLockLbl=Label(prefRow,LOCK_ICON,11,Color3.fromRGB(255,200,80),Enum.Font.GothamBold)
- _prefLockLbl.Size=UDim2.new(0,16,1,0); _prefLockLbl.Visible=true -- default locked
- local _prefKeyL=Label(prefRow,"Preferred Maps",11,C.TXT3,Enum.Font.GothamBold)
- _prefKeyL.Size=UDim2.new(0,90,1,0); _prefKeyL.Position=UDim2.new(0,18,0,0)
- local prefDDBtn=Btn(prefRow,C.BG3,UDim2.new(1,-112,0,28))
- prefDDBtn.Position=UDim2.new(0,110,0.5,-14); Corner(prefDDBtn,6); Stroke(prefDDBtn,C.BORD, 1.5,0.25)
- local prefDDLbl=Label(prefDDBtn," -- SELECT MAP --",10,C.TXT3,Enum.Font.GothamBold)
- prefDDLbl.Size=UDim2.new(1,-22,1,0); prefDDLbl.TextTruncate=Enum.TextTruncate.AtEnd
- local prefArr=Label(prefDDBtn,"v",10,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- prefArr.Size=UDim2.new(0,18,1,0); prefArr.Position=UDim2.new(1,-20,0,0)
-
- local _prefLocked = true -- state lock
-
- local function UpdatePrefLabel()
- local n=0; for _ in pairs(RAID.preferMaps) do n=n+1 end
- if n==0 then prefDDLbl.Text=" -- SELECT MAP --"; prefDDLbl.TextColor3=C.TXT3
- else
- local ns={}
- for mn in pairs(RAID.preferMaps) do table.insert(ns,"Map "..mn) end
- table.sort(ns); prefDDLbl.Text=" "..table.concat(ns,", ")
- prefDDLbl.TextColor3=Color3.fromRGB(100,180,255)
- end
- end
-
- prefDDBtn.MouseButton1Click:Connect(function()
- if _prefLocked then return end
- CloseActiveDD()
- local aP=prefDDBtn.AbsolutePosition; local aS=prefDDBtn.AbsoluteSize
- local IH=26
- local scrollH=math.min(18*(IH+2)+8,_isSmallScreen and 180 or 220)
- local HDR=32
- local popup=Instance.new("Frame")
- popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
- popup.Size=UDim2.new(0,aS.X+20,0,HDR+scrollH)
- popup.Position=UDim2.new(0,aP.X,0,aP.Y+aS.Y+3)
- popup.ZIndex=9999; popup.ClipsDescendants=true
- Corner(popup, 10); Stroke(popup,Color3.fromRGB(100,180,255),1,0.2)
- -- Header
- local hdr=Frame(popup,C.BG3,UDim2.new(1,0,0,HDR)); hdr.ZIndex=9999
- local cntL=Label(hdr,"0/18 Selected",10.5,Color3.fromRGB(100,180,255),Enum.Font.GothamBold)
- cntL.Size=UDim2.new(0.6,0,1,0); cntL.Position=UDim2.new(0,8,0,0); cntL.ZIndex=9999
- local clrB=Btn(hdr,Color3.fromRGB(120,30,30),UDim2.new(0,48,0,20))
- clrB.Position=UDim2.new(1,-54,0.5,-10); Corner(clrB,5); clrB.ZIndex=9999
- local clrL=Label(clrB,"Clear",10,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- clrL.Size=UDim2.new(1,0,1,0); clrL.ZIndex=9999
- -- Scroll list
- local sf=Instance.new("ScrollingFrame"); sf.Parent=popup
- sf.BackgroundTransparency=1; sf.BorderSizePixel=0
- sf.Position=UDim2.new(0,0,0,HDR); sf.Size=UDim2.new(1,0,0,scrollH)
- sf.CanvasSize=UDim2.new(0,0,0,18*(IH+2)+8)
- sf.ScrollBarThickness=5; sf.ScrollBarImageColor3=Color3.fromRGB(100,180,255)
- sf.ZIndex=9999
- local sfl=Instance.new("UIListLayout",sf); sfl.SortOrder=Enum.SortOrder.LayoutOrder
- local sfp=Instance.new("UIPadding",sf)
- sfp.PaddingTop=UDim.new(0,4); sfp.PaddingLeft=UDim.new(0,4); sfp.PaddingRight=UDim.new(0,6)
- -- Build rows
- local rr={}
- local function UpdCnt()
- local n=0; for _ in pairs(RAID.preferMaps) do n=n+1 end
- cntL.Text=n.."/18 Selected"
- end
- for mn=1,18 do
- local it=Instance.new("TextButton",sf)
- it.Size=UDim2.new(1,-4,0,IH); it.LayoutOrder=mn
- it.BackgroundColor3=RAID.preferMaps[mn] and C.BORD or C.BG3
- it.BackgroundTransparency=0.25; it.BorderSizePixel=0
- it.Text=""; it.AutoButtonColor=false; it.ZIndex=9999
- Instance.new("UICorner",it).CornerRadius=UDim.new(0,5)
- local tk=Instance.new("TextLabel",it)
- tk.Size=UDim2.new(0,18,1,0); tk.BackgroundTransparency=1
- tk.Text=RAID.preferMaps[mn] and "[v]" or ""; tk.TextSize=13
- tk.Font=Enum.Font.GothamBold; tk.TextColor3=Color3.fromRGB(100,180,255); tk.ZIndex=9999
- local il=Instance.new("TextLabel",it)
- il.Size=UDim2.new(1,-24,1,0); il.Position=UDim2.new(0,20,0,0)
- il.BackgroundTransparency=1
- il.Text=" Map "..mn.." - "..(MAP_NAMES[mn] or "Map "..mn)
- il.TextSize=11; il.Font=Enum.Font.GothamBold
- il.TextColor3=RAID.preferMaps[mn] and Color3.fromRGB(100,180,255) or C.TXT
- il.TextXAlignment=Enum.TextXAlignment.Left; il.ZIndex=9999
- il.TextTruncate=Enum.TextTruncate.AtEnd
- rr[mn]={btn=it,tick=tk,lbl=il}
- local ml=mn
- it.MouseButton1Click:Connect(function()
- RAID.preferMaps[ml]=not RAID.preferMaps[ml] or nil
- rr[ml].tick.Text=RAID.preferMaps[ml] and "[v]" or ""
- rr[ml].btn.BackgroundColor3=RAID.preferMaps[ml] and C.BORD or C.BG3
- rr[ml].lbl.TextColor3=RAID.preferMaps[ml] and Color3.fromRGB(100,180,255) or C.TXT
- UpdCnt(); UpdatePrefLabel()
- end)
- end
- UpdCnt()
- clrB.MouseButton1Click:Connect(function()
- for mn=1,18 do
- RAID.preferMaps[mn]=nil
- if rr[mn] then
- rr[mn].tick.Text=""
- rr[mn].btn.BackgroundColor3=C.BG3
- rr[mn].lbl.TextColor3=C.TXT
- end
- end
- UpdCnt(); UpdatePrefLabel()
- end)
- DDLayer.Visible=true
- _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
- end)
-
- --  PREFERRED RANK 
- local rankHdr=Label(raidInner,"PREFERRED RANK",10,C.TXT3,Enum.Font.GothamBold)
- rankHdr.LayoutOrder=10; rankHdr.Size=UDim2.new(1,0,0,14)
- local GRADE_COLORS_UI={
- ["E"]=Color3.fromRGB(150,150,150),["D"]=Color3.fromRGB(100,200,100),
- ["C"]=Color3.fromRGB(80,200,120), ["B"]=Color3.fromRGB(100,140,255),
- ["A"]=Color3.fromRGB(180,100,255),["S"]=Color3.fromRGB(255,180,50),
- ["SS"]=Color3.fromRGB(255,220,0), ["G"]=Color3.fromRGB(255,120,40),
- ["N"]=Color3.fromRGB(255,80,80), ["M"]=Color3.fromRGB(255,60,120),
- ["M+"]=Color3.fromRGB(220,40,180),["M++"]=Color3.fromRGB(200,30,255),
- ["XM"]=Color3.fromRGB(255,80,200),["ULT"]=Color3.fromRGB(255,215,0),
- }
- local GRADE_VALUE_UI={
- ["E"]=1,["D"]=2,["C"]=3,["B"]=4,["A"]=5,["S"]=6,["SS"]=7,
- ["G"]=8,["N"]=9,["M"]=10,["M+"]=11,["M++"]=12,["XM"]=15,["ULT"]=17,
- }
- rankCard=Frame(raidInner,C.SURFACE,UDim2.new(1,0,0,40))
- rankCard.LayoutOrder=11; Corner(rankCard, 10); Stroke(rankCard,C.BORD, 1.5,0.3); Padding(rankCard,6,6,10,10)
- local rankRow=Frame(rankCard,C.BLACK,UDim2.new(1,0,1,0)); rankRow.BackgroundTransparency=1
- local _rankLockLbl=Label(rankRow,LOCK_ICON,11,Color3.fromRGB(255,200,80),Enum.Font.GothamBold)
- _rankLockLbl.Size=UDim2.new(0,16,1,0); _rankLockLbl.Visible=true
- local _rankKeyL=Label(rankRow,"Preferred Rank",11,C.TXT3,Enum.Font.GothamBold)
- _rankKeyL.Size=UDim2.new(0,96,1,0); _rankKeyL.Position=UDim2.new(0,18,0,0)
- local rankDDWrap=Btn(rankRow,C.BG3,UDim2.new(1,-118,0,28))
- rankDDWrap.Position=UDim2.new(0,116,0.5,-14); Corner(rankDDWrap,6); Stroke(rankDDWrap,C.BORD, 1.5,0.25)
- local rankDDVal=Label(rankDDWrap," -- All rank --",10,C.TXT3,Enum.Font.GothamBold)
- rankDDVal.Size=UDim2.new(1,-22,1,0); rankDDVal.TextXAlignment=Enum.TextXAlignment.Left
- rankDDVal.TextTruncate=Enum.TextTruncate.AtEnd
- local rankArr=Label(rankDDWrap,"v",10,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- rankArr.Size=UDim2.new(0,18,1,0); rankArr.Position=UDim2.new(1,-20,0,0)
-
- local _rankLocked = true
-
- local function RefreshRankDDLabel()
- local act={}
- for _,g in ipairs(GRADE_LIST) do if RAID.runeGrades[g] then table.insert(act,g) end end
- if #act==0 then
- rankDDVal.Text=" -- All rank --"; rankDDVal.TextColor3=C.TXT3
- else
- local pts={}
- for _,g in ipairs(act) do table.insert(pts,g) end
- rankDDVal.Text=" "..table.concat(pts," | "); rankDDVal.TextColor3=Color3.fromRGB(200,120,255)
- end
- end
-
- rankDDWrap.MouseButton1Click:Connect(function()
- if _rankLocked then return end
- CloseActiveDD()
- -- Hitung tinggi popup: 1 reset btn + 14 grade = 15 item
- local IH=30
- local SFH=math.min(#GRADE_LIST*(IH+4)+44,280)
- -- Posisi popup: muncul di atas tombol jika layar kecil
- local ab=rankDDWrap.AbsolutePosition; local sz=rankDDWrap.AbsoluteSize
- local cam=workspace.CurrentCamera
- local vpH=cam and cam.ViewportSize.Y or 800
- local goUp=(ab.Y+SFH+44 > vpH*0.85)
-
- local popup=Instance.new("Frame")
- popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
- popup.Size=UDim2.new(0,sz.X,0,SFH+8)
- if goUp then
- popup.Position=UDim2.new(0,ab.X,0,ab.Y-SFH-12)
- else
- popup.Position=UDim2.new(0,ab.X,0,ab.Y+sz.Y+4)
- end
- popup.ZIndex=9999; Corner(popup, 10); Stroke(popup,C.BORD, 1.5,0.3)
-
- local sf=Instance.new("ScrollingFrame",popup)
- sf.Size=UDim2.new(1,0,0,SFH); sf.BackgroundTransparency=1; sf.BorderSizePixel=0
- sf.ScrollBarThickness=4; sf.CanvasSize=UDim2.new(0,0,0,#GRADE_LIST*(IH+4)+44)
- sf.ZIndex=9999
- local sfp=Instance.new("UIPadding",sf)
- sfp.PaddingTop=UDim.new(0,4); sfp.PaddingBottom=UDim.new(0,4)
- sfp.PaddingLeft=UDim.new(0,4); sfp.PaddingRight=UDim.new(0,4)
- local sfLayout=Instance.new("UIListLayout",sf)
- sfLayout.SortOrder=Enum.SortOrder.LayoutOrder; sfLayout.Padding=UDim.new(0,4)
-
- -- Reset btn
- local rb=Instance.new("TextButton",sf); rb.Size=UDim2.new(1,-8,0,IH); rb.LayoutOrder=0
- rb.BackgroundColor3=C.RED; rb.BackgroundTransparency=0.55; rb.BorderSizePixel=0
- rb.Text=""; rb.AutoButtonColor=false; rb.ZIndex=9999
- Instance.new("UICorner",rb).CornerRadius=UDim.new(0,6)
- local rl=Instance.new("TextLabel",rb)
- rl.Size=UDim2.new(1,-8,1,0); rl.Position=UDim2.new(0,8,0,0)
- rl.BackgroundTransparency=1; rl.Text="x Reset ALL"; rl.TextSize=10
- rl.Font=Enum.Font.GothamBold; rl.TextColor3=C.RED
- rl.TextXAlignment=Enum.TextXAlignment.Left; rl.ZIndex=9999
- rb.MouseButton1Click:Connect(function()
- for _,g in ipairs(GRADE_LIST) do RAID.runeGrades[g]=nil end
- CloseActiveDD(); RefreshRankDDLabel()
- if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
- end)
- -- Grade rows
- for i,grade in ipairs(GRADE_LIST) do
- local gl=grade; local col=GRADE_COLORS_UI[grade] or C.ACC
- local gv=GRADE_VALUE_UI[grade] or "?"; local isSel=RAID.runeGrades[gl]==true
- local item=Instance.new("TextButton",sf)
- item.Size=UDim2.new(1,-8,0,IH); item.LayoutOrder=i
- item.BackgroundColor3=isSel and C.SURFACE or C.DD_BG
- item.BackgroundTransparency=isSel and 0.18 or 0.42
- item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
- Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
- -- Centang
- local ck=Instance.new("TextLabel",item)
- ck.Size=UDim2.new(0,20,1,0); ck.Position=UDim2.new(0,4,0,0)
- ck.BackgroundTransparency=1; ck.Text=isSel and "v" or ""; ck.TextSize=11
- ck.Font=Enum.Font.GothamBold; ck.TextColor3=col
- ck.TextXAlignment=Enum.TextXAlignment.Center; ck.ZIndex=9999
- -- Nama rank
- local nl=Instance.new("TextLabel",item)
- nl.Size=UDim2.new(0,56,1,0); nl.Position=UDim2.new(0,26,0,0)
- nl.BackgroundTransparency=1; nl.Text="Rank "..grade; nl.TextSize=11
- nl.Font=Enum.Font.GothamBold
- nl.TextColor3=isSel and Color3.fromRGB(255,255,255) or col
- nl.TextXAlignment=Enum.TextXAlignment.Left; nl.ZIndex=9999
- -- Grade value
- local vl=Instance.new("TextLabel",item)
- vl.Size=UDim2.new(1,-86,1,0); vl.Position=UDim2.new(0,84,0,0)
- vl.BackgroundTransparency=1; vl.Text="Grade "..tostring(gv)
- vl.TextSize=9; vl.Font=Enum.Font.Gotham
- vl.TextColor3=isSel and C.TXT2 or C.TXT3
- vl.TextXAlignment=Enum.TextXAlignment.Left; vl.ZIndex=9999
- item.MouseButton1Click:Connect(function()
- local ac=0
- for _,g in ipairs(GRADE_LIST) do if RAID.runeGrades[g] then ac=ac+1 end end
- local cs=RAID.runeGrades[gl]==true
- if cs then RAID.runeGrades[gl]=nil
- elseif ac<3 then RAID.runeGrades[gl]=true
- else
- rankDDVal.Text="MAX 3 rank! Deselect PLEASE."
- rankDDVal.TextColor3=C.RED
- task.delay(1.5,function() RefreshRankDDLabel() end)
- return
- end
- local ns=RAID.runeGrades[gl]==true
- item.BackgroundColor3=ns and C.SURFACE or C.DD_BG
- item.BackgroundTransparency=ns and 0.18 or 0.42
- ck.Text=ns and "v" or ""
- nl.TextColor3=ns and Color3.fromRGB(255,255,255) or col
- vl.TextColor3=ns and C.TXT2 or C.TXT3
- RefreshRankDDLabel()
- if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
- end)
- end
- DDLayer.Visible=true
- _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
- end)
-
- --  PREFERRED RUNE 
- local runeHdr=Label(raidInner,"PREFERRED RUNE",10,C.TXT3,Enum.Font.GothamBold)
- runeHdr.LayoutOrder=12; runeHdr.Size=UDim2.new(1,0,0,14)
- runeCard=Frame(raidInner,C.SURFACE,UDim2.new(1,0,0,40))
- runeCard.LayoutOrder=13; Corner(runeCard, 10); Stroke(runeCard,C.BORD, 1.5,0.3); Padding(runeCard,6,6,10,10)
- local runeRow=Frame(runeCard,C.BLACK,UDim2.new(1,0,1,0)); runeRow.BackgroundTransparency=1
- local _runeLockLbl=Label(runeRow,LOCK_ICON,11,Color3.fromRGB(255,200,80),Enum.Font.GothamBold)
- _runeLockLbl.Size=UDim2.new(0,16,1,0); _runeLockLbl.Visible=true
- local _runeKeyL=Label(runeRow,"Preferred Rune",11,C.TXT3,Enum.Font.GothamBold)
- _runeKeyL.Size=UDim2.new(0,96,1,0); _runeKeyL.Position=UDim2.new(0,18,0,0)
- local runeDDBtn=Btn(runeRow,C.BG3,UDim2.new(1,-118,0,28))
- runeDDBtn.Position=UDim2.new(0,116,0.5,-14); Corner(runeDDBtn,6); Stroke(runeDDBtn,C.BORD, 1.5,0.25)
- local runeDDVal=Label(runeDDBtn," -- PLEASE SELECT --",10,C.TXT3,Enum.Font.GothamBold)
- runeDDVal.Size=UDim2.new(1,-22,1,0); runeDDVal.TextXAlignment=Enum.TextXAlignment.Left
- runeDDVal.TextTruncate=Enum.TextTruncate.AtEnd
- local runeArr=Label(runeDDBtn,"v",10,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- runeArr.Size=UDim2.new(0,18,1,0); runeArr.Position=UDim2.new(1,-20,0,0)
-
- local _runeLocked = true
-
- local function SyncRuneState()
- RAID.runeEnabled=(RAID.runeMapTarget>=1 and RAID.runeMapTarget<=18)
- if not RAID.runeEnabled then RAID.runeMapTarget=0 end
- end
-
- runeDDBtn.MouseButton1Click:Connect(function()
- if _runeLocked then return end
- CloseActiveDD()
- local aP=runeDDBtn.AbsolutePosition; local aS=runeDDBtn.AbsoluteSize
- local IH=28; local VI=7
- local cam=workspace.CurrentCamera
- local vpH=cam and cam.ViewportSize.Y or 800
- local popH=VI*(IH+2)+12
- local goUp=(aP.Y+popH > vpH*0.85)
- local popup=Instance.new("Frame")
- popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
- popup.Size=UDim2.new(0,aS.X+10,0,popH)
- if goUp then
- popup.Position=UDim2.new(0,aP.X,0,aP.Y-popH-4)
- else
- popup.Position=UDim2.new(0,aP.X,0,aP.Y+aS.Y+4)
- end
- popup.ZIndex=9999; popup.ClipsDescendants=true
- Corner(popup, 10); Stroke(popup,C.BORD2, 1.5,0.2)
- local sf=Instance.new("ScrollingFrame",popup)
- sf.Size=UDim2.new(1,0,1,0); sf.BackgroundTransparency=1; sf.BorderSizePixel=0
- sf.ScrollBarThickness=4; sf.ScrollBarImageColor3=C.ACC; sf.ZIndex=9999
- sf.CanvasSize=UDim2.new(0,0,0,19*(IH+2)+8)
- local sfl=Instance.new("UIListLayout",sf)
- sfl.Padding=UDim.new(0,2); sfl.SortOrder=Enum.SortOrder.LayoutOrder
- Instance.new("UIPadding",sf).PaddingTop=UDim.new(0,4)
- -- Opsi 0: tidak dipilih
- local i0=Instance.new("TextButton",sf)
- i0.Size=UDim2.new(1,-8,0,IH); i0.LayoutOrder=0
- local s0=(RAID.runeMapTarget==0)
- i0.BackgroundColor3=s0 and C.SURFACE or C.DD_BG
- i0.BackgroundTransparency=s0 and 0.18 or 0.42
- i0.BorderSizePixel=0; i0.Text=""; i0.AutoButtonColor=false; i0.ZIndex=9999
- Instance.new("UICorner",i0).CornerRadius=UDim.new(0,6)
- local l0=Instance.new("TextLabel",i0)
- l0.Size=UDim2.new(1,-8,1,0); l0.Position=UDim2.new(0,8,0,0)
- l0.BackgroundTransparency=1; l0.Text="-- NOT SELECTED --"; l0.TextSize=10
- l0.Font=Enum.Font.GothamBold
- l0.TextColor3=s0 and C.ACC2 or C.TXT3
- l0.TextXAlignment=Enum.TextXAlignment.Left; l0.ZIndex=9999
- i0.MouseButton1Click:Connect(function()
- CloseActiveDD(); RAID.runeMapTarget=0; SyncRuneState()
- runeDDVal.Text=" -- NOT SELECTED --"; runeDDVal.TextColor3=C.TXT3
- end)
- -- Map 1-18
- for mn=1,18 do
- local ml=mn; local mnm=MAP_NAMES[mn] or ("Map "..mn)
- local it=Instance.new("TextButton",sf)
- it.Size=UDim2.new(1,-8,0,IH); it.LayoutOrder=mn
- local iS=(RAID.runeMapTarget==mn)
- it.BackgroundColor3=iS and C.SURFACE or C.DD_BG
- it.BackgroundTransparency=iS and 0.18 or 0.42
- it.BorderSizePixel=0; it.Text=""; it.AutoButtonColor=false; it.ZIndex=9999
- Instance.new("UICorner",it).CornerRadius=UDim.new(0,6)
- local il=Instance.new("TextLabel",it)
- il.Size=UDim2.new(1,-8,1,0); il.Position=UDim2.new(0,8,0,0)
- il.BackgroundTransparency=1
- il.Text="Map "..mn.." - "..mnm; il.TextSize=10; il.Font=Enum.Font.GothamBold
- il.TextColor3=iS and C.ACC2 or C.TXT
- il.TextXAlignment=Enum.TextXAlignment.Left; il.ZIndex=9999
- il.TextTruncate=Enum.TextTruncate.AtEnd
- it.MouseButton1Click:Connect(function()
- CloseActiveDD(); RAID.runeMapTarget=ml; SyncRuneState()
- runeDDVal.Text=" Map "..ml.." - "..mnm
- runeDDVal.TextColor3=C.ACC2
- end)
- end
- DDLayer.Visible=true
- _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
- end)
-
- --  AUTO BOSS KILL TOGGLE 
- -- UP/DOWN RANK UI (LayoutOrder 14) - di bawah Preferred Rune, di atas AUTO KILL BOSS
- local udHdr = Label(raidInner, "UP/DOWN RANK", 10, C.TXT3, Enum.Font.GothamBold)
- udHdr.LayoutOrder = 15; udHdr.Size = UDim2.new(1,0,0,14)
-
- local udCard = Frame(raidInner, C.SURFACE, UDim2.new(1,0,0,44))
- udCard.LayoutOrder = 15; Corner(udCard,10); Stroke(udCard,C.BORD, 1.5,0.3)
-
- -- Toggle ON/OFF
- local udPill = Btn(udCard, C.PILL_OFF, UDim2.new(0,52,0,30))
- udPill.AnchorPoint = Vector2.new(1,0.5); udPill.Position = UDim2.new(1,-12,0.5,0); Corner(udPill,13)
- local udKnob = Frame(udPill, C.KNOB_OFF, UDim2.new(0,24,0,24))
- udKnob.AnchorPoint = Vector2.new(0,0.5); udKnob.Position = UDim2.new(0,3,0.5,0); Corner(udKnob,10)
-
- -- Label kiri
- local udLbl = Label(udCard, "UP/DOWN Rank", 14, C.TXT, Enum.Font.GothamBold)
- udLbl.Size = UDim2.new(0,110,0,20); udLbl.Position = UDim2.new(0,12,0.5,-10)
-
- -- Dropdown UP/DOWN
- local udDDBtn = Btn(udCard, C.BG3, UDim2.new(0,80,0,28))
- udDDBtn.AnchorPoint = Vector2.new(1,0.5)
- udDDBtn.Position = UDim2.new(1,-72,0.5,0)
- Corner(udDDBtn,7); Stroke(udDDBtn,C.BORD, 1.5,0.3)
- local udDDLbl = Label(udDDBtn, " UP  ↑", 11, C.ACC2, Enum.Font.GothamBold)
- udDDLbl.Size = UDim2.new(1,-18,1,0); udDDLbl.TextXAlignment = Enum.TextXAlignment.Left
- local udArr = Label(udDDBtn, "v", 10, C.TXT3, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
- udArr.Size = UDim2.new(0,16,1,0); udArr.Position = UDim2.new(1,-18,0,0)
-
- -- Sync toggle UI
- local function SyncUDPill(on)
-  TweenService:Create(udPill,TweenInfo.new(0.16),{BackgroundColor3=on and C.PILL_ON or C.PILL_OFF}):Play()
-  TweenService:Create(udKnob,TweenInfo.new(0.16),{
-   Position=on and UDim2.new(1,-27,0.5,0) or UDim2.new(0,3,0.5,0),
-   BackgroundColor3=on and C.KNOB_ON or C.KNOB_OFF,
-  }):Play()
- end
-
- udPill.MouseButton1Click:Connect(function()
-  RAID.updownEnabled = not RAID.updownEnabled
-  SyncUDPill(RAID.updownEnabled)
- end)
-
- -- Dropdown popup UP/DOWN
- udDDBtn.MouseButton1Click:Connect(function()
   CloseActiveDD()
-  local aP = udDDBtn.AbsolutePosition; local aS = udDDBtn.AbsoluteSize
-  local IH = 32
-  local popup = Instance.new("Frame")
-  popup.Parent = DDLayer; popup.BackgroundColor3 = C.DD_BG; popup.BorderSizePixel = 0
-  popup.Size = UDim2.new(0, aS.X+10, 0, IH*2+12)
-  popup.Position = UDim2.new(0, aP.X-5, 0, aP.Y+aS.Y+4)
-  popup.ZIndex = 9999; Corner(popup, 10); Stroke(popup,C.BORD2, 1.5,0.2)
-  local sfL = Instance.new("UIListLayout",popup)
-  sfL.Padding = UDim.new(0,2); sfL.SortOrder = Enum.SortOrder.LayoutOrder
-  Instance.new("UIPadding",popup).PaddingTop = UDim.new(0,4)
-
-  local opts = {
-   {dir="up",  label=" UP  ↑", col=Color3.fromRGB(100,220,100)},
-   {dir="down", label=" DOWN ↓", col=Color3.fromRGB(255,140,80)},
-  }
-  for i, opt in ipairs(opts) do
-   local row = Instance.new("TextButton",popup)
-   row.Size = UDim2.new(1,-8,0,IH); row.LayoutOrder = i
-   local isSel = RAID.updownDir == opt.dir
-   row.BackgroundColor3 = isSel and C.SURFACE or C.DD_BG
-   row.BackgroundTransparency = isSel and 0.18 or 0.42
-   row.BorderSizePixel = 0; row.Text = ""; row.AutoButtonColor = false; row.ZIndex = 9999
-   Instance.new("UICorner",row).CornerRadius = UDim.new(0,6)
-   local lbl = Instance.new("TextLabel",row)
-   lbl.Size = UDim2.new(1,-8,1,0); lbl.Position = UDim2.new(0,8,0,0)
-   lbl.BackgroundTransparency = 1; lbl.Text = opt.label; lbl.TextSize = 11
-   lbl.Font = Enum.Font.GothamBold; lbl.TextColor3 = isSel and opt.col or C.TXT
-   lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.ZIndex = 9999
-   local d = opt.dir; local c2 = opt.col; local lb2 = opt.label
-   row.MouseButton1Click:Connect(function()
-    RAID.updownDir = d
-    udDDLbl.Text = lb2:sub(1,7)
-    udDDLbl.TextColor3 = c2
+  local aP=pmDDBtn.AbsolutePosition; local aS=pmDDBtn.AbsoluteSize; local IH=28
+  local popup=Instance.new("Frame")
+  popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
+  popup.Size=UDim2.new(0,aS.X+10,0,#PM_OPTS*(IH+2)+12)
+  popup.Position=UDim2.new(0,aP.X,0,aP.Y+aS.Y+3)
+  popup.ZIndex=9999; Corner(popup, 10); Stroke(popup,C.BORD2, 1.5,0.85)
+  local ll=Instance.new("UIListLayout",popup)
+  ll.Padding=UDim.new(0,2); ll.SortOrder=Enum.SortOrder.LayoutOrder
+  Instance.new("UIPadding",popup).PaddingTop=UDim.new(0,4)
+  for i,opt in ipairs(PM_OPTS) do
+   local item=Instance.new("TextButton",popup)
+   item.Size=UDim2.new(1,-8,0,IH); item.LayoutOrder=i
+   item.BackgroundColor3=i==curPM and C.SURFACE or C.BG3
+   item.BackgroundTransparency=i==curPM and 0.18 or 0.42
+   item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
+   Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
+   local iL=Instance.new("TextLabel",item)
+   iL.Size=UDim2.new(1,-8,1,0); iL.Position=UDim2.new(0,8,0,0)
+   iL.BackgroundTransparency=1; iL.Text=opt; iL.TextSize=12
+   iL.Font=Enum.Font.Gotham; iL.TextColor3=PM_COLORS[i]
+   iL.TextXAlignment=Enum.TextXAlignment.Left; iL.ZIndex=9999
+   local ii=i
+   item.MouseButton1Click:Connect(function()
     CloseActiveDD()
+    curPM=ii; RAID.pickMode=PM_KEYS[ii]
+    RAID.difficulty=PM_TO_DIFF[PM_KEYS[ii]]; RAID.snapshotMapId=nil
+    pmDDLbl.Text=" "..PM_OPTS[ii]; pmDDLbl.TextColor3=PM_COLORS[ii]
+    pmDescLbl.Text=PM_DESC[ii]
+    task.defer(ResizeRaidBody)
    end)
   end
-  DDLayer.Visible = true
-  _activeDDClose = function() popup:Destroy(); DDLayer.Visible = false end
+  DDLayer.Visible=true
+  _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
  end)
 
  --  AUTO BOSS KILL TOGGLE 
@@ -9176,7 +6337,7 @@ local function SiegeBlindFire()
  pcall(function()
  if RE.HeroUseSkill then
  RE.HeroUseSkill:FireServer({
- heroGuid=hGuid, attackType=1,attackType=2,attackType=3,
+ heroGuid=hGuid, attackType=1,
  userId=MY_USER_ID, enemyGuid=pseudoGuid,
  })
  end
@@ -9517,6 +6678,53 @@ StartSiegeLoop = function()
             -- secara alami saat Siege benar-benar SUCCES/FAIL.
             -- qRe:FireServer({d.cityRaidId})
             task.wait(0.3)
+
+            -- Auto-close popup reward
+            task.spawn(function()
+                local _w = 0
+                local POPUP = {"CityFightPanel","RewardsFrame","ResultFrame","RewardPanel"}
+                local KEYS  = {"close","tutup","ok","selesai","done","claim","lanjut"}
+                while _w < 4 do
+                    task.wait(0.3); _w = _w + 0.3
+                    local found = false
+                    pcall(function()
+                        for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
+                            if obj:IsA("TextButton") and obj.Visible and obj.Text ~= "" then
+                                local low = obj.Text:lower():gsub("%s+","")
+                                for _, k in ipairs(KEYS) do
+                                    if low:find(k,1,true) then
+                                        local r = obj
+                                        while r.Parent and r.Parent ~= LP.PlayerGui do
+                                            r=r.Parent
+                                        end
+                                        for _, pn in ipairs(POPUP) do
+                                            if r.Name == pn then
+                                                pcall(function() obj.Activated:Fire() end)
+                                                pcall(function() obj.MouseButton1Click:Fire() end)
+                                                found = true; break
+                                            end
+                                        end
+                                    end
+                                    if found then break end
+                                end
+                            end
+                            if found then break end
+                        end
+                        if not found then
+                            for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
+                                if (obj:IsA("Frame") or obj:IsA("ScreenGui")) and obj.Visible then
+                                    for _, pn in ipairs(POPUP) do
+                                        if obj.Name == pn then obj.Visible=false; found=true; break end
+                                    end
+                                end
+                                if found then break end
+                            end
+                        end
+                    end)
+                    if found then break end
+                end
+            end)
+
             -- Tandai selesai
             SIEGE.live[d.cityRaidId] = nil
             if _siegeChatOpen then _siegeChatOpen[targetMap] = false end
@@ -9755,1166 +6963,7 @@ end
 -- Prioritas tertinggi di Automation (di atas MA, Raid, Siege)
 -- ============================================================
 
-DUNGEON = {
- running = false,
- inMap = false,
- thread = nil,
- -- State dari server
- towerState = 1, -- 1=Wait 2=Prep(Open) 3=Battle
- endTimestamp = 0, -- UTC timestamp kapan fase berakhir
- -- Statistik
- count = 0, -- berapa kali sukses masuk
- killed = 0,
- -- UI
- statusLbl = nil,
- dot = nil,
- -- Timing: simpan os.time() saat terakhir dungeon BUKA, untuk re-entry cooldown
- lastOpenTime = 0,
- lastEntryTime = 0,
- -- Flag interrupt (pause semua fitur lain saat dalam dungeon)
- interrupt = false,
-}
--- wakeup event (difire saat ChangeTowerState masuk)
-local _dungeonWakeup = nil
-
--- Konstanta
-local DUNGEON_MAP_ID = 50303 -- MapId dalam dungeon
-local DUNGEON_LOBBY_ID = 50005 -- MapId Map 5 (lobby dungeon)
-local DUNGEON_WAIT_ENEMY = 30 -- detik tunggu enemy muncul setelah masuk
-local DUNGEON_MAX_TIME = 3600 -- 60 menit max di dalam dungeon
-local DUNGEON_KILL_TIMEOUT = 120 -- 2 menit: kalau 1 enemy tidak mati -> TP keluar
-local DUNGEON_COOLDOWN = 3600 -- 60 menit cooldown setelah keluar
-
-DungeonStatus = function(msg, color)
- if DUNGEON.statusLbl then
- DUNGEON.statusLbl.Text = msg
- DUNGEON.statusLbl.TextColor3 = color or C.TXT2
- end
- if DUNGEON.dot then
- DUNGEON.dot.BackgroundColor3 = color or Color3.fromRGB(100,100,100)
- end
-end
-
-local function IsInDungeonMap()
- local ok, wm = pcall(function()
- return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
- end)
- if ok and type(wm) == "number" then
- if wm == DUNGEON_MAP_ID then return true, wm end
- end
- -- Fallback: cek folder Map di workspace
- local ok2, hasMap = pcall(function()
- local mf = workspace:FindFirstChild("Map")
- return mf and mf:FindFirstChild("MessageBoard") ~= nil
- end)
- if ok2 and hasMap then return true, nil end
- if DUNGEON and DUNGEON.inMap then return true, nil end
- return false, nil
-end
-
--- Listener ChangeTowerState dari server
--- Dipasang satu kali setelah GUI load
-local _dungeonListenerReady = false
-local function ConnectDungeonListener()
- if _dungeonListenerReady then return end
- _dungeonListenerReady = true
-
- -- Method 1: coba lewat NotifyManager event (nama: ChangeTowerState)
- -- Method 2: hook OnClientEvent di semua RemoteEvent bernama relevan
- -- Karena game pakai internal event bus, kita hook via __namecall + polling workspace
-
- -- Coba pasang via Remotes (kalau ada ChangeTowerState sebagai RemoteEvent)
- local re = Remotes:FindFirstChild("ChangeTowerState") or Remotes:FindFirstChild("UpdateTowerState") or Remotes:FindFirstChild("TowerStateUpdate")
- if re and re:IsA("RemoteEvent") then
- re.OnClientEvent:Connect(function(data)
- if type(data) ~= "table" then return end
- local ts = data.towerState or data.state
- local et = data.endTimestamp or data.timestamp
- if ts then
- DUNGEON.towerState = ts
- if et then DUNGEON.endTimestamp = et end
- if _dungeonWakeup then pcall(function() _dungeonWakeup:Fire() end) end
- end
- end)
- return
- end
-
- -- Fallback: hook __namecall untuk tangkap FireClient/OnClientEvent dari game
- -- Sambil itu, poll workspace.Map.MessageBoard setiap 2s sebagai fallback state detector
- task.spawn(function()
- while ScreenGui and ScreenGui.Parent do
- task.wait(2)
- pcall(function()
- -- Deteksi PreparatoryPhase via TowerUnlock effect di workspace
- local mf = workspace:FindFirstChild("Map")
- local tp = mf and mf:FindFirstChild("TeleportPoints")
- local tower= tp and tp:FindFirstChild("Tower")
- if tower then
- local unlocked = tower:FindFirstChild("TowerUnlock") ~= nil
- local locked = tower:FindFirstChild("TowerLock") ~= nil
- if unlocked and not locked then
- if DUNGEON.towerState ~= 2 then
- DUNGEON.towerState = 2
- if _dungeonWakeup then pcall(function() _dungeonWakeup:Fire() end) end
- end
- elseif locked and not unlocked then
- if DUNGEON.towerState ~= 1 then
- DUNGEON.towerState = 1
- end
- end
- end
- end)
- end
- end)
-end
-
-StopDungeon = function()
- DUNGEON.running = false
- DUNGEON.inMap = false
- DUNGEON.interrupt = false
- _siegeInterrupt = false -- [v252] sync flag lama
- _raidInterrupt = false -- [v252] sync flag lama
- MODE:Release("dungeon") -- [v252]
- if DUNGEON.thread then
- pcall(function() task.cancel(DUNGEON.thread) end)
- DUNGEON.thread = nil
- end
- DungeonStatus("[.] Idle", Color3.fromRGB(100,100,100))
-end
-
--- Attack loop dalam dungeon (sama persis Mass Attack / Siege fake-TP)
-local function DungeonAttackLoop(onStatus)
- _deadG = {}
- local totalTime = 0
- local singleKillTimer = 0
- local lastAliveCount = 0
- local GRACE = 2
-
- while DUNGEON.running and DUNGEON.inMap do
- totalTime = totalTime + 0.1
-
- -- Cek apakah masih di dalam dungeon map
- if totalTime > 3 and math.floor(totalTime * 10) % 5 == 0 then
- local inDungeon, _ = IsInDungeonMap()
- if not inDungeon then
- DUNGEON.inMap = false; DUNGEON.interrupt = false; MODE:Release("dungeon")
- return "exited_by_server"
- end
- end
-
- -- Timeout total 60 menit
- if totalTime >= DUNGEON_MAX_TIME then
- DUNGEON.inMap = false; DUNGEON.interrupt = false; MODE:Release("dungeon")
- return "timeout"
- end
-
- -- Scan enemy (pakai GetSiegeEnemies - sama, karena enemy ada di workspace.Enemys)
- local rawEnemies = GetSiegeEnemies()
- local alive = 0
- local targets = {}
- for _, e in ipairs(rawEnemies) do
- local dead = _deadG[e.guid] or not e.model or not e.model.Parent
- if not dead then
- local hum = e.model:FindFirstChildOfClass("Humanoid")
- if hum and hum.Health > 0 then
- alive = alive + 1
- table.insert(targets, e)
- end
- end
- end
-
- -- Kill timeout: kalau 1 enemy tidak mati dalam DUNGEON_KILL_TIMEOUT detik
- if alive > 0 then
- if alive >= lastAliveCount then
- singleKillTimer = singleKillTimer + 0.1
- else
- singleKillTimer = 0 -- ada yang mati, reset timer
- end
- lastAliveCount = alive
-
- if singleKillTimer >= DUNGEON_KILL_TIMEOUT then
- if onStatus then onStatus("[!] LESS DAMAGE - TP to Map 5...", Color3.fromRGB(255,100,60)) end
- DUNGEON.inMap = false; DUNGEON.interrupt = false; MODE:Release("dungeon")
- return "low_damage"
- end
-
- if onStatus then
- local remaining = math.max(0, DUNGEON_KILL_TIMEOUT - singleKillTimer)
- onStatus("[S] " .. alive .. " enemy | kill timeout: " .. math.floor(remaining) .. "s | total: " .. math.floor(totalTime) .. "s")
- end
-
- -- Serang semua enemy secara agresif (v285 FIX)
- for _, e in ipairs(targets) do
-  if e.model and e.model.Parent then
-  local hrp = e.model:FindFirstChild("HumanoidRootPart")
-  if hrp then
-  local g, p2 = e.guid, hrp.Position
-  task.spawn(function()
-  -- Gunakan semua remote serangan sekaligus (sama dengan ST2)
-  pcall(function() FireAttack(g, p2) end)
-  pcall(function() FireAllDamage(g, p2) end)
-  if #HERO_GUIDS > 0 then
-  pcall(function() FireHeroRemotes(g, p2) end)
-  end
-  end)
-  end
-  end
- end
-
- elseif alive == 0 and #rawEnemies == 0 then
- -- Tidak ada enemy sama sekali
- if totalTime < DUNGEON_WAIT_ENEMY then
- if onStatus then onStatus("[~] Waiting Enemy... (" .. math.floor(totalTime) .. "/" .. DUNGEON_WAIT_ENEMY .. "s)") end
- else
- -- Sudah 30 detik tidak ada enemy, tunggu server keluarkan
- if onStatus then onStatus("[OK] Clear - Waiting exit...") end
- local _waitOut = 0
- while DUNGEON.running and _waitOut < 30 do
- task.wait(0.5); _waitOut = _waitOut + 0.5
- local inDungeon, _ = IsInDungeonMap()
- if not inDungeon then
- DUNGEON.inMap = false; DUNGEON.interrupt = false; MODE:Release("dungeon")
- return "exited_by_server"
- end
- end
- DUNGEON.inMap = false; DUNGEON.interrupt = false; MODE:Release("dungeon")
- return "done"
- end
- end
-
- task.wait(0.1)
- end
- return "loop_ended"
-end
-
--- TP keluar dungeon ke Map 5
-local function DungeonTpOut()
- local startTpRe = Remotes:FindFirstChild("StartLocalPlayerTeleport")
- if startTpRe then
- pcall(function() startTpRe:FireServer({mapId = DUNGEON_LOBBY_ID}) end)
- end
- task.wait(0.3)
- -- Konfirmasi
- local ltpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
- if ltpSucc then
- task.spawn(function()
- pcall(function() ltpSucc:InvokeServer() end)
- end)
- end
-end
-
--- Masuk dungeon
-local function DungeonTpIn()
- local startTpRe = Remotes:FindFirstChild("StartLocalPlayerTeleport")
- if startTpRe then
- pcall(function() startTpRe:FireServer({mapId = DUNGEON_MAP_ID}) end)
- end
- task.wait(0.3)
- local ltpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
- if ltpSucc then
- task.spawn(function()
- pcall(function() ltpSucc:InvokeServer() end)
- end)
- end
-end
-
-StartDungeonLoop = function()
- if DUNGEON.running then StopDungeon() end
- DUNGEON.running = true
- DUNGEON.inMap = false
- DUNGEON.interrupt = false
-
- if _dungeonWakeup then pcall(function() _dungeonWakeup:Destroy() end) end
- _dungeonWakeup = Instance.new("BindableEvent")
-
- ConnectDungeonListener()
-
- DUNGEON.thread = task.spawn(function()
- while DUNGEON.running do
-
- -- 
- -- STEP 1: Cek cooldown sejak entry terakhir
- -- Cooldown 60 menit - tapi timing SYNC dengan server (os.time)
- -- 
- local now = os.time()
- local elapsed = now - DUNGEON.lastEntryTime
- local cooldownLeft = DUNGEON_COOLDOWN - elapsed
-
- if DUNGEON.lastEntryTime > 0 and cooldownLeft > 0 then
- local mm = math.floor(cooldownLeft / 60)
- local ss = cooldownLeft % 60
- DungeonStatus(string.format("[..] Cooldown %02d:%02d - Waiting Dungeon OPEN", mm, ss), Color3.fromRGB(255,200,60))
- if DUNGEON.dot then DUNGEON.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
-
- -- Tunggu cooldown habis atau wakeup event (ChangeTowerState)
- local _wt = 0
- while DUNGEON.running and _wt < cooldownLeft do
- -- Cek apakah server beri sinyal OPEN (PreparatoryPhase)
- if DUNGEON.towerState == 2 then
- break
- end
- local _rem = DUNGEON_COOLDOWN - (os.time() - DUNGEON.lastEntryTime)
- if _rem <= 0 then break end
- local _mm = math.floor(_rem/60)
- local _ss = _rem % 60
- DungeonStatus(string.format("[..] Cooldown %02d:%02d | Dungeon state=%d", _mm, _ss, DUNGEON.towerState), Color3.fromRGB(255,200,60))
- local conn = _dungeonWakeup.Event:Connect(function() end)
- task.wait(1); conn:Disconnect()
- _wt = _wt + 1
- end
- if not DUNGEON.running then break end
- end
-
- -- 
- -- STEP 2: Tunggu state PreparatoryPhase (dungeon OPEN)
- -- Window hanya 30 detik! Harus masuk segera.
- -- 
- if DUNGEON.towerState ~= 2 then
- DungeonStatus("[..] Waiting Dungeon OPEN (PreparatoryPhase)...", Color3.fromRGB(255,200,60))
- if DUNGEON.dot then DUNGEON.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
- local _wt2 = 0
- while DUNGEON.running and DUNGEON.towerState ~= 2 do
- local conn = _dungeonWakeup.Event:Connect(function() end)
- task.wait(1); conn:Disconnect()
- _wt2 = _wt2 + 1
- if _wt2 % 10 == 0 then
- -- Periodic check setiap 10 detik
- end
- end
- if not DUNGEON.running then break end
- end
-
- -- 
- -- STEP 3: PRIORITAS - Interrupt MA + Raid + Siege
- -- [v252] Dungeon priority max -> ForceSet override semua
- -- 
- MODE:ForceSet("dungeon") -- override apapun yang sedang jalan
- DUNGEON.interrupt = true -- sync flag lama
- _siegeInterrupt = true
- _raidInterrupt = true
-
- -- Tunggu sebentar agar MA/Raid/Siege pause (mereka cek MODE.current)
- task.wait(0.5)
- if not DUNGEON.running then
- DUNGEON.interrupt = false; _siegeInterrupt = false; _raidInterrupt = false
- MODE:Release("dungeon")
- break
- end
-
- -- 
- -- STEP 4: Cek apakah sudah di dalam dungeon
- -- 
- local alreadyIn, _ = IsInDungeonMap()
- if not alreadyIn then
- DungeonStatus("[>>] ENTER dungeon...", Color3.fromRGB(180,120,255))
- if DUNGEON.dot then DUNGEON.dot.BackgroundColor3 = Color3.fromRGB(180,120,255) end
-
- DungeonTpIn()
-
- -- Tunggu konfirmasi masuk max 15 detik
- local _entered = false
- local _entWait = 0
- while not _entered and _entWait < 15 and DUNGEON.running do
- task.wait(0.3); _entWait = _entWait + 0.3
- local inD, _ = IsInDungeonMap()
- if inD then _entered = true; break end
- -- Fallback: cek ada enemy di workspace.Enemys
- if #GetSiegeEnemies() > 0 then _entered = true; break end
- end
-
- if not _entered then
- DungeonStatus("[!] Failure Enter - Waiting Next DUNGEON", Color3.fromRGB(255,100,60))
- DUNGEON.towerState = 1
- DUNGEON.interrupt = false
- _siegeInterrupt = false
- _raidInterrupt = false
- MODE:Release("dungeon") -- [v252]
- task.wait(3); continue
- end
- else
- end
-
- -- 
- -- STEP 5: Attack loop
- -- 
- DUNGEON.inMap = true
- DUNGEON.lastEntryTime = os.time()
- DUNGEON.count = DUNGEON.count + 1
- DungeonStatus("[FLa] Dungeon - Attack ALL Enemy!", Color3.fromRGB(80,220,80))
- if DUNGEON.dot then DUNGEON.dot.BackgroundColor3 = Color3.fromRGB(80,220,80) end
-
- local result = DungeonAttackLoop(function(msg)
- DungeonStatus(msg, Color3.fromRGB(80,220,80))
- end)
- -- 
- -- STEP 6: Keluar dungeon
- -- Kalau low_damage atau timeout: TP manual ke Map 5
- -- Kalau exited_by_server: server sudah handle
- -- 
- DUNGEON.inMap = false
-
- if result == "low_damage" or result == "timeout" then
- DungeonStatus("[TP] Go to Map 5...", Color3.fromRGB(255,140,0))
- DungeonTpOut()
- task.wait(1.5)
- end
-
- -- Auto hide reward popup
- DungeonHideRewardPopup()
-
- -- Reset towerState ke WaitPhase (server akan update via ChangeTowerState)
- DUNGEON.towerState = 1
-
- -- [v252] Release MODE dispatcher + sync flag lama
- DUNGEON.interrupt = false
- _siegeInterrupt = false
- _raidInterrupt = false
- MODE:Release("dungeon")
-
- -- Status: cooldown menunggu dungeon berikutnya
- local _cd = DUNGEON_COOLDOWN
- local _mm = math.floor(_cd/60)
- DungeonStatus(string.format("[OK] Dungeon #%d DONE (%s) - Cooldown %dm", DUNGEON.count, result, _mm), Color3.fromRGB(100,255,150))
- if DUNGEON.dot then DUNGEON.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
-
- task.wait(2)
-
- end -- while DUNGEON.running
-
- DUNGEON.interrupt = false
- DUNGEON.running = false
- DUNGEON.inMap = false
- _siegeInterrupt = false
- _raidInterrupt = false
- MODE:Release("dungeon") -- [v252] safety release
- DungeonStatus("[.] Idle", Color3.fromRGB(100,100,100))
- if DUNGEON.dot then DUNGEON.dot.BackgroundColor3 = Color3.fromRGB(100,100,100) end
- end)
-end
-
---  Tambahkan DUNGEON.interrupt ke WaitRaidDone agar MA juga pause saat dungeon aktif 
--- [v252] WaitRaidDone override dihapus - versi v252 sudah handle dungeon check via MODE dispatcher
-
-
-
---  PANEL UI: AUTO DUNGEON 
-do
- local p = Panels["autoraid"]
- if not p then return end
-
- local dungeonOpen = false
-
- local dungeonHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,42))
- dungeonHeader.LayoutOrder = 22; Corner(dungeonHeader,10); Stroke(dungeonHeader,C.BORD, 1.5,0.88)
- local dungeonArrow = Label(dungeonHeader,">",13,C.ACC,Enum.Font.GothamBold)
- dungeonArrow.Size = UDim2.new(0,22,1,0); dungeonArrow.Position = UDim2.new(0,10,0,0)
- local dungeonHeaderLbl = Label(dungeonHeader,"Auto Dungeon",14,C.TXT,Enum.Font.GothamBold)
- dungeonHeaderLbl.Size = UDim2.new(1,-50,1,0); dungeonHeaderLbl.Position = UDim2.new(0,34,0,0)
- -- Badge "PRIORITY" kecil
- local prioBadge = Frame(dungeonHeader, Color3.fromRGB(252,211,77), UDim2.new(0,52,0,16))
- prioBadge.AnchorPoint = Vector2.new(1,0.5); prioBadge.Position = UDim2.new(1,-10,0.5,0)
- Corner(prioBadge,5)
- local prioLbl = Label(prioBadge,"EXLUSIVE",8,Color3.fromRGB(10,10,10),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- prioLbl.Size = UDim2.new(1,0,1,0)
-
- local dungeonBody = Frame(p, C.BG2, UDim2.new(1,0,0,0))
- dungeonBody.LayoutOrder = 23; dungeonBody.ClipsDescendants = true
- Corner(dungeonBody,10); Stroke(dungeonBody,C.BORD, 1.5,0.25); dungeonBody.Visible = false
-
- local dungeonInner = Frame(dungeonBody, C.BLACK, UDim2.new(1,-16,0,0))
- dungeonInner.BackgroundTransparency = 1; dungeonInner.Position = UDim2.new(0,8,0,8)
- local dungeonLayout = New("UIListLayout",{Parent=dungeonInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
-
- local function ResizeDungeonBody()
- dungeonLayout:ApplyLayout()
- local h = dungeonLayout.AbsoluteContentSize.Y + 16
- dungeonInner.Size = UDim2.new(1,0,0,h)
- dungeonBody.Size = UDim2.new(1,0,0,h+16)
- end
-
- dungeonHeader.MouseButton1Click:Connect(function()
- dungeonOpen = not dungeonOpen; dungeonBody.Visible = dungeonOpen
- dungeonArrow.Text = dungeonOpen and "v" or ">"
- if dungeonOpen then task.defer(ResizeDungeonBody) end
- end)
-
- local p2 = dungeonInner -- alias
-
- -- Status bar
- local statusCard = Frame(p2, C.BG3, UDim2.new(1,0,0,32))
- statusCard.LayoutOrder = 0; Corner(statusCard, 10); Stroke(statusCard,C.ACC, 1.5,0.3)
- DUNGEON.dot = Frame(statusCard, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
- DUNGEON.dot.Position = UDim2.new(0,8,0.5,-4); Corner(DUNGEON.dot,4)
- DUNGEON.statusLbl = Label(statusCard,"Idle - Enable to RUN",10,C.TXT2,Enum.Font.GothamBold)
- DUNGEON.statusLbl.Size = UDim2.new(1,-24,1,0)
- DUNGEON.statusLbl.Position = UDim2.new(0,22,0,0)
- DUNGEON.statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
- -- Info bar
- local infoCard = Frame(p2, C.SURFACE, UDim2.new(1,0,0,28))
- infoCard.LayoutOrder = 1; Corner(infoCard, 10); Stroke(infoCard,C.BORD, 1.5,0.88)
- local infoLbl = Label(infoCard,"Map 5 -> Dungeon| Cooldown: 60m | KillTimeout: 2m",9,C.TXT3,Enum.Font.GothamBold)
- infoLbl.Size = UDim2.new(1,-8,1,0); infoLbl.Position = UDim2.new(0,8,0,0)
-
- -- Toggle utama
- ToggleRow(p2,"Auto Dungeon","PRIORITY",2,function(on)
- if on then
- StartDungeonLoop()
- -- Pasang listener saat ON (safety)
- task.spawn(ConnectDungeonListener)
- else
- StopDungeon()
- -- Listener tetap jalan untuk tracking state - hanya loop yang berhenti
- DungeonStatus("[.] OFF - Waiting", Color3.fromRGB(160,148,135))
- end
- end)
-
- -- Counter row
- local countCard = Frame(p2, C.SURFACE, UDim2.new(1,0,0,28))
- countCard.LayoutOrder = 3; Corner(countCard, 10); Stroke(countCard,C.BORD, 1.5,0.88)
- local _dungeonCountLbl = Label(countCard,"SUCCES ENTER: 0x",10,C.TXT2,Enum.Font.GothamBold)
- _dungeonCountLbl.Size = UDim2.new(0.5,0,1,0); _dungeonCountLbl.Position = UDim2.new(0,8,0,0)
- local _dungeonStateLbl = Label(countCard,"State: Wait",10,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
- _dungeonStateLbl.Size = UDim2.new(0.5,-8,1,0); _dungeonStateLbl.Position = UDim2.new(0.5,0,0,0)
-
- -- Update counter UI setiap 1 detik
- task.spawn(function()
- local STATE_NAMES = {[1]="Wait",[2]="OPEN!",[3]="Battle"}
- local STATE_COLS = {[1]=Color3.fromRGB(180,180,180),[2]=Color3.fromRGB(80,220,80),[3]=Color3.fromRGB(255,140,0)}
- while ScreenGui and ScreenGui.Parent do
- task.wait(1)
- pcall(function()
- _dungeonCountLbl.Text = "SUCCES ENTER: " .. (DUNGEON.count or 0) .. "x"
- local st = DUNGEON.towerState or 1
- _dungeonStateLbl.Text = "State: " .. (STATE_NAMES[st] or "?")
- _dungeonStateLbl.TextColor3 = STATE_COLS[st] or C.TXT3
- end)
- end
- end)
-
- task.defer(ResizeDungeonBody)
-end
-
--- ============================================================
--- AUTO SINGLE TOWER MAP 2 (MapId 50301)
--- Remote: StartLocalPlayerTeleport:FireServer({mapId=50301})
--- Keluar : StartLocalPlayerTeleport:FireServer({mapId=50002})
--- Logic: masuk map -> Mass Attack max 10 menit -> keluar -> delay 2s -> ulang
--- Dropdown: "Non Stop" (tanpa batas wave) atau Wave 1-10 (hitung reset enemy di Workspace.Enemy)
--- ============================================================
-
-ST2 = {
-    running        = false,
-    thread         = nil,
-    inMap          = false,
-    attacking      = false,  -- flag mass attack sedang berjalan
-    waveCount      = 0,      -- 0 = Non Stop, 1-10 = jumlah wave sebelum keluar
-    attackEnabled  = false,   -- toggle Attack ON/OFF (dari UI)
-    statusLbl      = nil,
-    dot            = nil,
-    count          = 0,
-    setAttackToggle= nil,    -- callback untuk sync UI toggle Attack
-}
-
-local function ST2Status(msg, color)
-    if ST2.statusLbl then
-        ST2.statusLbl.Text = msg
-        ST2.statusLbl.TextColor3 = color or C.TXT2
-    end
-    if ST2.dot then
-        ST2.dot.BackgroundColor3 = color or Color3.fromRGB(100,100,100)
-    end
-end
-
--- [v283] ST2: track mapId aktual via EnterRaidsUpdateInfo (sama seperti RAID system)
--- workspace:GetAttribute("MapId") tidak reliable - game update via remote event ini
-local _st2CurrentMapId = nil  -- diisi oleh listener di bawah
-
--- Pasang listener EnterRaidsUpdateInfo untuk ST2 (standalone, tidak ganggu RAID)
-task.spawn(function()
-    local _reEnter = Remotes:FindFirstChild("EnterRaidsUpdateInfo")
-    if not _reEnter then return end
-    _reEnter.OnClientEvent:Connect(function(data)
-        if type(data) ~= "table" then return end
-        if data.mapId then
-            _st2CurrentMapId = data.mapId
-        end
-    end)
-end)
-
--- 
-
-local function ST2IsInMap()
-    -- Sumber 1: cek workspace MapId via attribute (berbagai nama)
-    local ok, wm = pcall(function()
-        return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
-    end)
-    if ok and type(wm) == "number" and wm > 50000 and wm ~= 50001 and wm ~= 50002 then
-        return true
-    end
-    -- Sumber 2: dari EnterRaidsUpdateInfo
-    if type(_st2CurrentMapId) == "number" and _st2CurrentMapId > 50000 and _st2CurrentMapId ~= 50001 and _st2CurrentMapId ~= 50002 then
-        return true
-    end
-    -- Sumber 3 (paling reliable): ada enemy hidup di Enemys folder
-    local FOLDERS = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy"}
-    for _, fname in ipairs(FOLDERS) do
-        local f = workspace:FindFirstChild(fname)
-        if f then
-            for _, e in ipairs(f:GetChildren()) do
-                if e:IsA("Model") and e:GetAttribute("EnemyGuid") then
-                    local hum = e:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health > 0 then return true end
-                end
-            end
-        end
-    end
-    return false
-end
-
-local function ST2TpIn()
-    -- Reset mapId tracker dulu agar ST2ConfirmIn tidak pakai nilai lama
-    _st2CurrentMapId = nil
-    pcall(function()
-        local reStart  = Remotes:FindFirstChild("StartLocalPlayerTeleport")
-        local reGet    = Remotes:FindFirstChild("GetNewSingleTowerData")
-        local reEquip  = Remotes:FindFirstChild("EquipHeroWithData")
-        local reTpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
-
-        -- [v284] Urutan remote baru sesuai SimpleSpy capture:
-        -- Step 1: StartLocalPlayerTeleport mapId 50002 (masuk lobby dulu)
-        if reStart then reStart:FireServer({mapId = 50002}) end
-        task.wait(0.3)
-
-        -- Step 2: GetNewSingleTowerData (invoke)
-        if reGet then pcall(function() reGet:InvokeServer() end) end
-        task.wait(0.3)
-
-        -- Step 3: EquipHeroWithData
-        if reEquip then pcall(function() reEquip:FireServer() end) end
-        task.wait(0.3)
-
-        -- Step 4: LocalPlayerTeleportSuccess (konfirmasi di lobby)
-        if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
-        task.wait(0.3)
-
-        -- Step 5: StartLocalPlayerTeleport mapId 50301 + hostId
-        if reStart then reStart:FireServer({mapId = 50301, hostId = 7098669448}) end
-        task.wait(0.3)
-
-        -- Step 6: EquipHeroWithData (setelah TP ke 50301)
-        if reEquip then pcall(function() reEquip:FireServer() end) end
-        task.wait(0.3)
-
-        -- Step 7: LocalPlayerTeleportSuccess (konfirmasi masuk 50301)
-        if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
-    end)
-end
-
-local function ST2TpOut()
-    -- Keluar ke Lobby (MapId 50002) - Mass Attack harus sudah STOP sebelum ini dipanggil
-    pcall(function()
-        local re = Remotes:FindFirstChild("StartLocalPlayerTeleport")
-        if re then re:FireServer({mapId = 50002}) end
-    end)
-    task.wait(0.3)
-    pcall(function()
-        local re2 = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
-        if re2 then
-            task.spawn(function() pcall(function() re2:InvokeServer() end) end)
-        end
-    end)
-end
-
--- [v282] ST2ConfirmIn tidak lagi dipanggil langsung (ST2TpIn sudah handle confirm)
--- Dipakai sebagai fallback cek MapId saja
-local function ST2ConfirmIn(maxWait)
-    local t = 0
-    while t < maxWait do
-        task.wait(0.3); t = t + 0.3
-        if ST2IsInMap() then return true end
-    end
-    return false
-end
-
-local function ST2ConfirmOut(maxWait)
-    local t = 0
-    while t < maxWait do
-        task.wait(0.3); t = t + 0.3
-        if not ST2IsInMap() then return true end
-    end
-    return false
-end
-
-function StartST2Loop()
-    if ST2.running then
-        ST2.running = false
-        if ST2.thread then pcall(function() task.cancel(ST2.thread) end); ST2.thread = nil end
-    end
-    ST2.running = true
-    ST2.inMap   = false
-    ST2Status("[..] START Auto Single Tower...", Color3.fromRGB(255,200,60))
-
-    ST2.thread = task.spawn(function()
-        while ST2.running do
-
-            -- ══════════════════════════════════════════════════════════════════
-            -- [v285] FLOW BARU:
-            --   Delay 2s → TP ke lobby → TP ke Map 2 → LocalPlayerTeleportSuccess
-            --   → Delay 1s → Attack (jika attackEnabled) → Exit → Delay 2s → Loop
-            -- ══════════════════════════════════════════════════════════════════
-
-            -- ── STEP 0: Delay 2 detik sebelum masuk (info ke user) ──────────
-            ST2Status("[..] Delay 2s Before Enter Single Tower...", Color3.fromRGB(160,148,135))
-            for _i = 1, 20 do
-                if not ST2.running then break end
-                task.wait(0.1)
-            end
-            if not ST2.running then break end
-
-            -- ── STEP 1: TP ke Single Tower Map 2 ────────────────────────────
-            ST2Status("[>>] TP to Single Tower...", Color3.fromRGB(180,120,255))
-            ST2TpIn()
-
-            -- ── STEP 1b: LocalPlayerTeleportSuccess (konfirmasi masuk map) ──
-            pcall(function()
-                local reTpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
-                if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
-            end)
-
-            -- Tunggu konfirmasi MapId 50301, max 15 detik
-            ST2Status("[..] Waiting to Enter...", Color3.fromRGB(180,120,255))
-            local entered = ST2ConfirmIn(15)
-            if not entered then
-                ST2Status("[!] Failure Enter - retry...", Color3.fromRGB(255,100,60))
-                task.wait(3)
-                continue
-            end
-
-            ST2Status("[OK] ENTER", Color3.fromRGB(80,220,80))
-
-            -- ── STEP 2: Delay 1 detik setelah masuk ─────────────────────────
-            ST2Status("[..] Delay 1s Before Attack...", Color3.fromRGB(180,120,255))
-            task.wait(1)
-            if not ST2.running then break end
-
-            -- ── STEP 3: Cek toggle Attack ────────────────────────────────────
-            if not ST2.attackEnabled then
-                ST2Status("[||] Attack OFF - Waiting...", Color3.fromRGB(255,140,0))
-                -- Tunggu sampai attackEnabled ON atau running = false
-                while ST2.running and not ST2.attackEnabled do
-                    task.wait(0.3)
-                end
-                if not ST2.running then break end
-            end
-
-            -- [v285 FIX] HERO_GUIDS scan yang lebih luas (GUI + Workspace)
-            if #HERO_GUIDS == 0 then
-                ST2Status("[~] Scan HERO_GUIDS...", Color3.fromRGB(255,200,60))
-                local function addHero(g)
-                    if type(g) == "string" and #g > 0 then
-                        local dup = false
-                        for _, ex in ipairs(HERO_GUIDS) do if ex == g then dup = true; break end end
-                        if not dup then table.insert(HERO_GUIDS, g) end
-                    end
-                end
-                -- Scan 1: PlayerGui (Data dari server)
-                pcall(function()
-                    for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
-                        addHero(obj:GetAttribute("heroGuid") or obj:GetAttribute("guid") or obj:GetAttribute("GUID"))
-                    end
-                end)
-                -- Scan 2: Workspace (Objek fisik hero)
-                local hFolder = workspace:FindFirstChild("Heros")
-                if hFolder then
-                    for _, h in ipairs(hFolder:GetChildren()) do
-                        addHero(h:GetAttribute("heroGuid") or h:GetAttribute("guid") or h:GetAttribute("GUID"))
-                    end
-                end
-                ST2Status("[~] HERO_GUIDS: "..#HERO_GUIDS.." found", Color3.fromRGB(255,200,60))
-                task.wait(0.3)
-            end
-            ST2.inMap     = true
-            ST2.attacking = true
-            ST2.count     = ST2.count + 1
-            local targetWaves = ST2.waveCount
-            local wavesDone   = 0
-
-            -- Variabel wave detection
-            local _everSawEnemy       = false
-            local _exitConfirm        = 0
-            local _waveDetectCooldown = 0
-            local _lastEnemySet       = {}
-
-            -- [v285 FIX] Scan enemy yang lebih luas (Map 2 Hero support)
-            local function ST2GetCurrentEnemyGuids()
-                local guids = {}
-                local FOLDERS = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy","Heros"}
-                for _, fname in ipairs(FOLDERS) do
-                    local f = workspace:FindFirstChild(fname)
-                    if f then
-                        for _, e in ipairs(f:GetChildren()) do
-                            if e:IsA("Model") then
-                                local g = e:GetAttribute("EnemyGuid") or e:GetAttribute("GUID") or e:GetAttribute("Guid") or e:GetAttribute("guid") or e:GetAttribute("heroGuid")
-                                if type(g) == "string" and #g > 0 then guids[g] = true end
-                            end
-                        end
-                    end
-                end
-                return guids
-            end
-
-            -- [v285 FIX] Scan targets yang lebih luas
-            local function ST2GetTargets()
-                local targets = {}
-                local FOLDERS = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy","Heros"}
-                local seen = {}
-                for _, fname in ipairs(FOLDERS) do
-                    local f = workspace:FindFirstChild(fname)
-                    if f then
-                        for _, e in ipairs(f:GetChildren()) do
-                            if e:IsA("Model") then
-                                local g = e:GetAttribute("EnemyGuid") or e:GetAttribute("GUID") or e:GetAttribute("Guid") or e:GetAttribute("guid") or e:GetAttribute("heroGuid")
-                                if not g or type(g) ~= "string" or #g == 0 then continue end
-                                local hrp = e:FindFirstChild("HumanoidRootPart")
-                                local hum = e:FindFirstChildOfClass("Humanoid")
-                                if hrp and hum and hum.Health > 0 and not seen[g] then
-                                    seen[g] = true
-                                    table.insert(targets, {model=e, guid=g, hrp=hrp})
-                                end
-                            end
-                        end
-                    end
-                end
-                return targets
-            end
-
-            -- Snapshot enemy awal
-            task.wait(0.5)
-            _lastEnemySet = ST2GetCurrentEnemyGuids()
-
-            ST2Status("[S] START Attack! Wave: 0/"..(targetWaves>0 and tostring(targetWaves) or "∞"), Color3.fromRGB(80,220,80))
-
-            -- ── Attack loop ───────────────────────────────────────────────────
-            while ST2.running and ST2.inMap and ST2.attacking do
-
-                -- Pausa jika toggle Attack dimatikan user
-                if not ST2.attackEnabled then
-                    ST2Status("[||] PAUSE Attack...", Color3.fromRGB(255,140,0))
-                    while ST2.running and not ST2.attackEnabled do
-                        task.wait(0.3)
-                    end
-                    if not ST2.running then break end
-                    ST2Status("[S] Attack RESUME!", Color3.fromRGB(80,220,80))
-                end
-
-                -- Cek masih di dalam map (3x berturut false = keluar paksa)
-                if not ST2IsInMap() then
-                    _exitConfirm = _exitConfirm + 1
-                    if _exitConfirm >= 3 then
-                        ST2.inMap     = false
-                        ST2.attacking = false
-                        break
-                    end
-                else
-                    _exitConfirm = 0
-                end
-
-                -- ── Wave detection ─────────────────────────────────────────
-                if targetWaves > 0 and _waveDetectCooldown <= 0 then
-                    local currentSet = ST2GetCurrentEnemyGuids()
-                    local totalCurrent, newCount = 0, 0
-                    for g in pairs(currentSet) do
-                        totalCurrent = totalCurrent + 1
-                        if not _lastEnemySet[g] then newCount = newCount + 1 end
-                    end
-                    local totalLast = 0
-                    for _ in pairs(_lastEnemySet) do totalLast = totalLast + 1 end
-
-                    local oldStillAlive = totalCurrent - newCount
-                    local isNewWave = totalCurrent > 0
-                        and newCount > 0
-                        and (totalLast == 0 or oldStillAlive < math.max(1, math.floor(totalLast * 0.3)))
-
-                    if isNewWave then
-                        wavesDone       = wavesDone + 1
-                        _lastEnemySet   = currentSet
-                        _waveDetectCooldown = 30
-
-                        if wavesDone >= targetWaves then
-                            -- [FIX] Target wave tercapai: LANGSUNG keluar, tidak tunggu kill semua
-                            ST2Status("[W] Wave "..wavesDone.."/"..targetWaves.." DONE! TP OUT...", Color3.fromRGB(100,200,255))
-                            ST2.attacking = false
-                            ST2.inMap     = false
-                            break
-                        else
-                            ST2Status("[W] Wave "..wavesDone.."/"..targetWaves.." - Continue Attack!", Color3.fromRGB(255,200,60))
-                        end
-                    end
-                end
-                if _waveDetectCooldown > 0 then _waveDetectCooldown = _waveDetectCooldown - 1 end
-
-                -- ── Mass Attack: bunuh SEMUA enemy di Workspace.Enemys ──────
-                local targets = ST2GetTargets()
-                if #targets > 0 and ST2.attackEnabled then
-                    _everSawEnemy = true
-                    if next(_lastEnemySet) == nil then
-                        _lastEnemySet = ST2GetCurrentEnemyGuids()
-                    end
-                    for _, e in ipairs(targets) do
-                        local g, pos = e.guid, e.hrp.Position
-                        -- [v285 FIX] Panggil FireAttack DAN FireAllDamage secara agresif
-                        -- untuk memastikan Hero menggunakan skill di Map 2 (Tower)
-                        FireAttack(g, pos)
-                        FireAllDamage(g, pos)
-                        FireHeroRemotes(g, pos)
-                    end
-                    if targetWaves > 0 then
-                        ST2Status("[S] "..#targets.." enemy | Wave "..wavesDone.."/"..targetWaves, Color3.fromRGB(80,220,80))
-                    else
-                        ST2Status("[S] "..#targets.." enemy | NON STOP", Color3.fromRGB(80,220,80))
-                    end
-                else
-                    if _everSawEnemy then
-                        if targetWaves > 0 then
-                            ST2Status("[..] Enemy NOT FOUND - Wait wave ".. (wavesDone+1) .."/"..targetWaves.." spawn...", Color3.fromRGB(160,220,160))
-                        else
-                            ST2Status("[..] Enemy NOT FOUND - Wait spawn...", Color3.fromRGB(160,220,160))
-                        end
-                    else
-                        ST2Status("[..] Waiting enemy Spawn...", Color3.fromRGB(160,148,135))
-                    end
-                end
-
-                task.wait(0.1)
-            end -- attack loop
-
-            if not ST2.running then break end
-
-            -- ── STEP 5: Attack STOP → Keluar ke Lobby (50002) ───────────────
-            ST2.attacking = false
-            ST2.inMap     = false
-            ST2Status("[<] DONE - Go to Lobby...", Color3.fromRGB(100,200,255))
-            ST2TpOut()
-            ST2ConfirmOut(8)
-
-            -- ── STEP 6: Delay 2 detik sebelum loop kembali ──────────────────
-            ST2Status("[..] Delay 2s...", Color3.fromRGB(160,148,135))
-            for _i = 1, 20 do
-                if not ST2.running then break end
-                task.wait(0.1)
-            end
-            if not ST2.running then break end
-
-        end -- while ST2.running
-
-        ST2.inMap     = false
-        ST2.attacking = false
-        ST2.running   = false
-        ST2Status("[.] Idle", Color3.fromRGB(100,100,100))
-    end)
-end
-
-function StopST2()
-    ST2.running   = false
-    ST2.inMap     = false
-    ST2.attacking = false
-    if ST2.thread then
-        pcall(function() task.cancel(ST2.thread) end)
-        ST2.thread = nil
-    end
-    ST2Status("[.] Idle", Color3.fromRGB(100,100,100))
-end
-
--- ============================================================
--- PANEL : AUTO SINGLE TOWER MAP 2 (UI)
--- ============================================================
-do
-    local p = Panels["autoraid"]
-    if not p then return end
-
-    local st2Open = false
-
-    local st2Header = Btn(p, C.SURFACE, UDim2.new(1,0,0,42))
-    st2Header.LayoutOrder = 24; Corner(st2Header,10); Stroke(st2Header,C.BORD, 1.5,0.88)
-    local st2Arrow = Label(st2Header,">",13,C.ACC,Enum.Font.GothamBold)
-    st2Arrow.Size = UDim2.new(0,22,1,0); st2Arrow.Position = UDim2.new(0,10,0,0)
-    local st2HeaderLbl = Label(st2Header,"Auto Single Tower Map 2",14,C.TXT,Enum.Font.GothamBold)
-    st2HeaderLbl.Size = UDim2.new(1,-50,1,0); st2HeaderLbl.Position = UDim2.new(0,34,0,0)
-
-    local st2Body = Frame(p, C.BG2, UDim2.new(1,0,0,0))
-    st2Body.LayoutOrder = 25; st2Body.ClipsDescendants = true
-    Corner(st2Body,10); Stroke(st2Body,C.BORD, 1.5,0.25); st2Body.Visible = false
-
-    local st2Inner = Frame(st2Body, C.BLACK, UDim2.new(1,-16,0,0))
-    st2Inner.BackgroundTransparency = 1; st2Inner.Position = UDim2.new(0,8,0,8)
-    local st2Layout = New("UIListLayout",{Parent=st2Inner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
-
-    local function ResizeST2Body()
-        st2Layout:ApplyLayout()
-        local h = st2Layout.AbsoluteContentSize.Y + 16
-        st2Inner.Size = UDim2.new(1,0,0,h)
-        st2Body.Size = UDim2.new(1,0,0,h+16)
-    end
-
-    st2Header.MouseButton1Click:Connect(function()
-        st2Open = not st2Open; st2Body.Visible = st2Open
-        st2Arrow.Text = st2Open and "v" or ">"
-        if st2Open then task.defer(ResizeST2Body) end
-    end)
-
-    local inner = st2Inner
-
-    -- Status bar
-    local statusCard = Frame(inner, C.BG3, UDim2.new(1,0,0,32))
-    statusCard.LayoutOrder = 0; Corner(statusCard, 10); Stroke(statusCard,C.ACC, 1.5,0.3)
-    ST2.dot = Frame(statusCard, Color3.fromRGB(100,100,100), UDim2.new(0,8,0,8))
-    ST2.dot.Position = UDim2.new(0,8,0.5,-4); Corner(ST2.dot,4)
-    ST2.statusLbl = Label(statusCard,"Idle - Enable To START",10,C.TXT2,Enum.Font.GothamBold)
-    ST2.statusLbl.Size = UDim2.new(1,-24,1,0)
-    ST2.statusLbl.Position = UDim2.new(0,22,0,0)
-    ST2.statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
-    -- Toggle ON/OFF
-    ToggleRow(inner,"Auto Single Tower Map 2","ON = ENTER",1,function(on)
-        if on then StartST2Loop() else StopST2() end
-    end)
-
-    -- Wave dropdown
-    local ddCard = Frame(inner, C.SURFACE, UDim2.new(1,0,0,0))
-    ddCard.LayoutOrder = 2; ddCard.AutomaticSize = Enum.AutomaticSize.Y
-    Corner(ddCard, 10); Stroke(ddCard,C.BORD, 1.5,0.5)
-    New("UIPadding",{Parent=ddCard,PaddingTop=UDim.new(0, 10),PaddingBottom=UDim.new(0, 10),PaddingLeft=UDim.new(0, 10),PaddingRight=UDim.new(0, 10)})
-
-    local ddInner = Frame(ddCard, C.BLACK, UDim2.new(1,0,0,0))
-    ddInner.BackgroundTransparency = 1; ddInner.AutomaticSize = Enum.AutomaticSize.Y
-    New("UIListLayout",{Parent=ddInner,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
-
-    local ddTitleRow = Frame(ddInner, C.BLACK, UDim2.new(1,0,0,16))
-    ddTitleRow.BackgroundTransparency = 1; ddTitleRow.LayoutOrder = 0
-    local ddTitleLbl = Label(ddTitleRow,"Wave (RESET ENEMY):",10,C.TXT3,Enum.Font.GothamBold)
-    ddTitleLbl.Size = UDim2.new(1,0,1,0)
-
-    -- Dropdown button
-    local ddBtn = Btn(ddInner, C.BG3, UDim2.new(1,0,0,32))
-    ddBtn.LayoutOrder = 1; Corner(ddBtn, 10); Stroke(ddBtn,C.BORD, 1.5,0.5)
-    local ddBtnLbl = Label(ddBtn,"  Non Stop (default)",11,C.GRN,Enum.Font.GothamBold,Enum.TextXAlignment.Left)
-    ddBtnLbl.Size = UDim2.new(1,-30,1,0)
-    local ddArrow = Label(ddBtn,"v",11,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
-    ddArrow.Size = UDim2.new(0,24,1,0); ddArrow.Position = UDim2.new(1,-26,0,0)
-
-    -- Dropdown list
-    local ddList = Frame(ddInner, C.BG2, UDim2.new(1,0,0,0))
-    ddList.LayoutOrder = 2; ddList.AutomaticSize = Enum.AutomaticSize.Y
-    ddList.Visible = false; Corner(ddList, 10); Stroke(ddList,C.BORD, 1.5,0.3)
-    New("UIPadding",{Parent=ddList,PaddingTop=UDim.new(0,4),PaddingBottom=UDim.new(0,4),PaddingLeft=UDim.new(0,6),PaddingRight=UDim.new(0,6)})
-    New("UIListLayout",{Parent=ddList,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,3)})
-
-    -- Wave list: Non Stop (default) + Wave 1-10
-    local OPTIONS = {"Non Stop", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
-    local OPTION_VALS = {0,1,2,3,4,5,6,7,8,9,10}
-
-    local ddOpen2 = false
-    local selectedIdx = 1  -- default Non Stop
-
-    local function updateDdBtn()
-        ddBtnLbl.Text = "  "..OPTIONS[selectedIdx]
-        ddBtnLbl.TextColor3 = selectedIdx == 1 and C.GRN or C.ACC2
-        ST2.waveCount = OPTION_VALS[selectedIdx]
-    end
-
-    for i, opt in ipairs(OPTIONS) do
-        local ii = i
-        local row = Btn(ddList, C.SURFACE, UDim2.new(1,0,0,28))
-        row.LayoutOrder = i; Corner(row,6); row.AutoButtonColor = false
-        local rowLbl = Label(row, opt, 11, i==1 and C.GRN or C.TXT, Enum.Font.Gotham, Enum.TextXAlignment.Left)
-        rowLbl.Size = UDim2.new(1,-8,1,0); rowLbl.Position = UDim2.new(0,8,0,0)
-        -- Badge saat dipilih
-        local selDot = Frame(row, C.ACC, UDim2.new(0,6,0,6))
-        selDot.Position = UDim2.new(1,-14,0.5,-3); Corner(selDot,3)
-        selDot.Visible = (i == 1)
-
-        row.MouseButton1Click:Connect(function()
-            -- Deselect all
-            for _, child in ipairs(ddList:GetChildren()) do
-                if child:IsA("TextButton") then
-                    local dot = child:FindFirstChildOfClass("Frame")
-                    if dot then dot.Visible = false end
-                    local lbl = child:FindFirstChildOfClass("TextLabel")
-                    if lbl then lbl.TextColor3 = OPTION_VALS[child.LayoutOrder] == 0 and C.GRN or C.TXT end
-                end
-            end
-            selDot.Visible = true
-            rowLbl.TextColor3 = ii==1 and C.GRN or C.ACC2
-            selectedIdx = ii
-            updateDdBtn()
-            ddOpen2 = false; ddList.Visible = false; ddArrow.Text = "v"
-            task.defer(ResizeST2Body)
-        end)
-    end
-
-    ddBtn.MouseButton1Click:Connect(function()
-        ddOpen2 = not ddOpen2
-        ddList.Visible = ddOpen2
-        ddArrow.Text = ddOpen2 and "^" or "v"
-        task.defer(ResizeST2Body)
-    end)
-
-    -- ── Toggle Attack ─────────────────────────────────────────────────────────
-    -- [v285] Toggle ON/OFF untuk fungsi Attack (Mass Attack Kill All)
-    -- Jika OFF: loop tetap jalan (masuk map, tunggu), tapi tidak menyerang
-    -- Sinkronisasi balik: ST2.setAttackToggle di-set agar logic bisa sync UI
-    local _, setAtkToggle = ToggleRow(inner, "Attack", "ATTACK ALL ENEMY", 3, function(on)
-        ST2.attackEnabled = on
-    end)
-    -- Default ON, sync ke state awal
-    ST2.attackEnabled  = true
-    ST2.setAttackToggle = setAtkToggle
-    -- Langsung set visual ke ON
-    task.defer(function()
-        if setAtkToggle then setAtkToggle(true) end
-    end)
-
-    -- Info card
-    local infoCard = Frame(inner, C.BG3, UDim2.new(1,0,0,0))
-    infoCard.LayoutOrder = 4; infoCard.AutomaticSize = Enum.AutomaticSize.Y
-    Corner(infoCard, 10)
-    New("UIPadding",{Parent=infoCard,PaddingTop=UDim.new(0,6),PaddingBottom=UDim.new(0,6),PaddingLeft=UDim.new(0, 10),PaddingRight=UDim.new(0, 10)})
-    local infoLbl = Label(infoCard,"Delay 2s → TP Map 2 → LocalPlayerTeleportSuccess → Delay 1s → Attack (jika ON) → Exit → Delay 2s → Loop. Attack OFF: loop tetap masuk map tapi tidak menyerang.",10,C.TXT3,Enum.Font.Gotham)
-    infoLbl.Size = UDim2.new(1,0,0,0); infoLbl.AutomaticSize = Enum.AutomaticSize.Y
-    infoLbl.TextWrapped = true
-
-    -- Count label
-    local cntCard = Frame(inner, C.SURFACE, UDim2.new(1,0,0,26))
-    cntCard.LayoutOrder = 5; Corner(cntCard, 10)
-    New("UIPadding",{Parent=cntCard,PaddingLeft=UDim.new(0, 10),PaddingRight=UDim.new(0, 10)})
-    local cntLbl = Label(cntCard,"ENTER: 0x",11,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Left)
-    cntLbl.Size = UDim2.new(1,0,1,0)
-
-    -- Watch count changes
-    task.spawn(function()
-        local last = -1
-        while true do
-            task.wait(1)
-            if ST2 and ST2.count ~= last then
-                last = ST2.count
-                cntLbl.Text = "ENTER: "..ST2.count.."x"
-            end
-        end
-    end)
-
-    task.defer(ResizeST2Body)
-end
-
-
--- Pasang listener dungeon segera setelah GUI load (scan state walau toggle OFF)
-task.spawn(function()
- task.wait(6) -- buffer setelah ConnectUpdateCityRaidListener
- ConnectDungeonListener()
-end)
-
-
--- PANEL : CLAIM REWARD
+--  PANEL : CLAIM REWARD
 -- ============================================================
 do
  local p = NewPanel("claim")
@@ -11018,7 +7067,7 @@ do
  local ever_claimed = false
  status("[] SCAN...", C.YEL)
 
- for id = 1, 200 do
+ for id = 1, 500 do
  local ok, res = pcall(function()
  return RE:InvokeServer({id = tostring(id)})
  end)
@@ -11148,7 +7197,7 @@ do
  if RE1 then
  SetStatus("[G] Online Reward SCAN...", C.YEL)
  local fail, ever = 0, false
- for id = 1, 200 do
+ for id = 1, 500 do
  local ok, res = pcall(function() return RE1:InvokeServer({id = tostring(id)}) end)
  if ok and res == true then
  fail = 0; ever = true
@@ -11198,7 +7247,7 @@ do
  SetStatus("[OK] Claim All DONE!", C.GRN)
  allBtn.BackgroundColor3 = C.GRN
  allLbl.Text = "CLAIM ALL DONE"
- task.wait(1)
+ task.wait(3)
  allBtn.BackgroundColor3 = C.ACC
  allLbl.Text = "CLAIM ALL"
  end)
@@ -11407,9 +7456,9 @@ do
  UpdatePlatformLbl()
  local msg = "[FLa Webhook] Webhook Active! Mode: "..(_webhookMode or "both"):upper()
  testLbl.Text="[..] Sending..."; testLbl.TextColor3=Color3.fromRGB(255,220,60)
- -- [FIX] Timeout UI 1s: kalau tidak ada callback dalam 1s, reset label
+ -- [FIX] Timeout UI 12s: kalau tidak ada callback dalam 12s, reset label
  local _done = false
- task.delay(1, function()
+ task.delay(12, function()
  if not _done then
  _done = true
  testLbl.Text="[!] Timeout"; testLbl.TextColor3=Color3.fromRGB(255,80,60)
@@ -11452,14 +7501,14 @@ do
  function()
  task.spawn(function()
  verLbl.Text="[OK] Link Valid!"; verLbl.TextColor3=Color3.fromRGB(100,255,100)
- task.wait(1)
+ task.wait(2.5)
  verLbl.Text="[] Verify Link"; verLbl.TextColor3=C.TXT
  end)
  end,
  function(err)
  task.spawn(function()
  verLbl.Text=""..err; verLbl.TextColor3=Color3.fromRGB(255,80,60)
- task.wait(1)
+ task.wait(2.5)
  verLbl.Text="[] Verify Link"; verLbl.TextColor3=C.TXT
  end)
  end
@@ -11768,296 +7817,6 @@ do
 end
 
 -- ============================================================
--- AUTO ROLL LOGIC - WEAPON
--- ============================================================
-do
- local LOOPS_WR = {}
-
- local function StopWeaponLoop(si)
- if LOOPS_WR[si] then
- task.cancel(LOOPS_WR[si])
- LOOPS_WR[si] = nil
- end
- end
-
- local function StartWeaponSlot(si)
- StopWeaponLoop(si)
- local list = W_QUIRK_LIST_PER_SLOT[si]
- local targets = _WR_RPT and _WR_RPT.slotTarget and _WR_RPT.slotTarget[si] or {}
- local drawId = {960001, 960002, 960003}
-
- -- Update nama weapon saat slot 1 mulai (cukup sekali)
- if si == 1 and _WR_RPT then _WR_RPT.Refresh() end
-
- local function setSlot(txt, col)
- if _WR_RPT then _WR_RPT.SetSlot(si, txt, col) end
- end
-
- setSlot("Memulai...", Color3.fromRGB(255,200,60))
-
- LOOPS_WR[si] = task.spawn(function()
- local attempt = 0
- while true do
- if not (_WR_RPT and _WR_RPT.guid and _WR_RPT.guid ~= "") then
- setSlot("[..] Click 1x on Reroll Machine", Color3.fromRGB(255,150,50))
- task.wait(1); continue
- end
- local hasTarget = false
- for _ in pairs(targets) do hasTarget = true; break end
- -- Wajib ada target sebelum roll
- if not hasTarget then
- setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- task.wait(1); continue
- end
-
- attempt = attempt + 1
- local tStr = ""
- if hasTarget then
- local names = {}
- for _, q in ipairs(list) do
- if targets[q.id] then table.insert(names, q.name) end
- end
- tStr = table.concat(names, " / ")
- end
- setSlot("Rolling #"..attempt..(tStr~="" and " | "..tStr or ""), Color3.fromRGB(255,200,60))
-
- local ok, res = pcall(function()
- _ourCall = true
- local r = RE.RandomWeaponQuirk:InvokeServer({
- guid = _WR_RPT.guid,
- drawId = drawId[si],
- })
- _ourCall = false
- return r
- end)
- if not ok then task.wait(0.5); continue end
-
- local gotId = nil
- if type(res) == "table" then
- local PRIO = {"finalResultId","quirkId","resultId","id","Id","result","Result"}
- for _, key in ipairs(PRIO) do
- local v = res[key]
- if type(v) == "number" and W_QUIRK_MAP[v] then gotId = v; break end
- end
- if not gotId then
- for _, v in pairs(res) do
- if type(v) == "number" and W_QUIRK_MAP[v] then gotId = v; break end
- end
- end
- end
-
- local gotName = W_QUIRK_MAP[gotId] or (gotId and "ID:"..gotId or "")
- -- [v103] Hanya stop kalau target dipilih DAN hasil cocok
- local hit = gotId and hasTarget and targets[gotId] == true
-
- if hit then
- setSlot("DONE: "..gotName.." (#"..attempt..")", Color3.fromRGB(80,220,80))
- StopWeaponLoop(si)
- local allDone = true
- for i = 1, 3 do if LOOPS_WR[i] then allDone = false; break end end
- if allDone and _WR_RPT then _WR_RPT.SetToggleOff() end
- return
- end
-
- task.wait(0.05)
- end
- end)
- end
-
- DoAutoRollWeapon = function(on)
- for i = 1, 3 do StopWeaponLoop(i) end
- if not on then
- for i = 1, 3 do
- if _WR_RPT then _WR_RPT.SetSlot(i, "Idle", Color3.fromRGB(160,148,135)) end
- end
- -- Reset GUID agar bisa capture ulang saat ganti weapon
- if _WR_RPT then
- _WR_RPT.guid = ""
- _WR_RPT.Refresh()
- end
- return
- end
- -- GUID belum ada -> tampil pesan, tunggu GUID, lalu auto-start
- if not (_WR_RPT and _WR_RPT.guid and _WR_RPT.guid ~= "") then
- for i = 1, 3 do
- if _WR_RPT then _WR_RPT.SetSlot(i, "Click 1x on Reroll Machine", Color3.fromRGB(180,220,255)) end
- end
- task.spawn(function()
- while not (_WR_RPT and _WR_RPT.guid and _WR_RPT.guid ~= "") do
- task.wait(0.5)
- end
- if _WR_RPT and _WR_RPT.running then
- _WR_RPT.Refresh()
- for i = 1, 3 do StartWeaponSlot(i) end
- end
- end)
- return
- end
- for i = 1, 3 do StartWeaponSlot(i) end
- end
-
- --  DoAutoRollPetGear 
- -- drawId fixed: 980001=slot1, 980002=slot2, 980003=slot3
- local PG_DRAW_IDS = {980001, 980002, 980003}
- local LOOPS_PG = {}
-
- local function StopPetGearLoop(si)
- if LOOPS_PG[si] then
- pcall(function() task.cancel(LOOPS_PG[si]) end)
- LOOPS_PG[si] = nil
- end
- end
-
- local function StartPetGearSlot(si)
- StopPetGearLoop(si)
- local guid = PGR.guids[si]
- local drawId = PG_DRAW_IDS[si]
- local targets = PGR.targets[si]
-
- local function setStatus(txt, col)
- if PGR.statLbls[si] then
- PGR.statLbls[si].Text = txt
- PGR.statLbls[si].TextColor3 = col or C.TXT2
- end
- if PGR.dotRefs[si] then
- PGR.dotRefs[si].BackgroundColor3 = col or Color3.fromRGB(100,100,100)
- end
- end
-
- if not guid or guid == "" then
- setStatus("[..] Click 1x on Reroll Machine", Color3.fromRGB(180,220,255))
- -- Tunggu GUID ter-capture lalu auto-start
- task.spawn(function()
- while PGR.enOnFlags[si] do
- if PGR.guids[si] and PGR.guids[si] ~= "" then
- StartPetGearSlot(si)
- return
- end
- task.wait(0.5)
- end
- end)
- return
- end
-
- local attempt = 0
- LOOPS_PG[si] = task.spawn(function()
- while PGR.enOnFlags[si] do
- -- Cek GUID
- if not (PGR.guids[si] and PGR.guids[si] ~= "") then
- setStatus("[..] Click 1x on Reroll Machine", Color3.fromRGB(180,220,255))
- task.wait(1); continue
- end
- -- Cek target - wajib ada sebelum roll
- local hasTarget = false
- for _ in pairs(PGR.targets[si]) do hasTarget = true; break end
- if not hasTarget then
- setStatus("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- task.wait(1); continue
- end
-
- attempt = attempt + 1
- if PGR.attemptLbls[si] then
- PGR.attemptLbls[si].Text = "Attempt: #"..attempt
- end
- setStatus("[~] Roll #"..attempt, Color3.fromRGB(255,160,30))
-
- _ourCall = true
- local ok, res = pcall(function()
- return RE.RandomHeroEquipGrade:InvokeServer({
- guid = PGR.guids[si],
- drawId = PG_DRAW_IDS[si],
- })
- end)
- _ourCall = false
-
- if not ok then
- setStatus("[!] Error - retry...", Color3.fromRGB(255,100,60))
- task.wait(0.5); continue
- end
-
- -- [v216] Parse gradeId rekursif - confirmed ada di res.data.grade
- local gotId = nil
- if type(res) == "table" then
- -- Cara 1: root level
- gotId = res.gradeId or res.grade or res.id or res.resultId
- -- Cara 2: res.data.grade (confirmed dari sniff)
- if type(gotId) ~= "number" and type(res.data) == "table" then
- gotId = res.data.grade or res.data.gradeId or res.data.id
- end
- -- Cara 3: scan rekursif seluruh table
- if type(gotId) ~= "number" then
- local function FindGradeId(t, depth)
- if type(t) ~= "table" or depth > 4 then return nil end
- for k, v in pairs(t) do
- if type(v) == "number" and v >= 990000 and v <= 999999 then
- return v
- elseif type(v) == "table" then
- local found = FindGradeId(v, depth+1)
- if found then return found end
- end
- end
- return nil
- end
- gotId = FindGradeId(res, 1)
- end
- end
-
- -- [v103] Hanya stop kalau target dipilih DAN hasil cocok
- local hit = gotId and hasTarget and PGR.targets[si][gotId] == true
-
- if hit then
- setStatus("[!] Target SUCCES! (#"..attempt..")", Color3.fromRGB(80,255,120))
- if PGR.lastLbls[si] then
- local gradeName = PG_GRADE_MAP[gotId] or "?"
- PGR.lastLbls[si].Text = "Last: "..gradeName.." - TARGET!"
- end
- PGR.enOnFlags[si] = false
- if PGR.toggleBtns[si] then PGR.toggleBtns[si].BackgroundColor3 = C.BG3 end
- if PGR.toggleKnobs[si] then PGR.toggleKnobs[si].Position = UDim2.new(0,2,0.5,-9) end
- break
- else
- setStatus("[OK] Roll #"..attempt.." DONE", Color3.fromRGB(80,180,80))
- if PGR.lastLbls[si] then
- local gradeName = gotId and PG_GRADE_MAP[gotId] or "?"
- PGR.lastLbls[si].Text = "Last: "..gradeName
- end
- end
- task.wait(0.05)
- end
- setStatus("[.] Idle", Color3.fromRGB(160,148,135))
- end)
- end
-
- DoAutoRollPetGear = function(si, on)
- StopPetGearLoop(si)
- if not on then
- -- [v103] Reset GUID saat toggle OFF - wajib Reroll 1x lagi
- PGR.guids[si] = ""
- PGR.captured[si] = false
- if PGR.statLbls[si] then
- PGR.statLbls[si].Text = "Click 1x on Reroll Machine"
- PGR.statLbls[si].TextColor3 = C.TXT2
- end
- if PGR.dotRefs[si] then
- PGR.dotRefs[si].BackgroundColor3 = Color3.fromRGB(100,100,100)
- end
- return
- end
- -- Cek target dipilih dulu
- local hasTarget = false
- for _ in pairs(PGR.targets[si]) do hasTarget = true; break end
- if not hasTarget then
- if PGR.statLbls[si] then
- PGR.statLbls[si].Text = "SELECT TARGET PLEASE!"
- PGR.statLbls[si].TextColor3 = Color3.fromRGB(255,100,60)
- end
- -- Tetap jalankan slot, dia akan loop tunggu target
- end
- StartPetGearSlot(si)
- end
-end
-
--- ============================================================
 -- CAPTURE SYSTEM - __namecall hook + flag _ourCall
 -- IDENTIK dengan v129 yang terbukti tidak crash UI game
 -- ============================================================
@@ -12068,8 +7827,6 @@ do
 
  local _rHero = RE.RandomHeroQuirk
  local _rAuto = RE.AutoHeroQuirk
- local _rWeapon = RE.RandomWeaponQuirk
- local _rPetG = RE.RandomHeroEquipGrade
  local _rHeroSkill = RE.HeroUseSkill
 
  -- Helper capture GUID dari arg
@@ -12085,30 +7842,6 @@ do
  end
  -- Simpan ke _HR_RPT (untuk reroll)
  if _HR_RPT then _HR_RPT.guid = g; _HR_RPT.Refresh() end
- end
-
- local function _captureWeaponGuid(arg1)
- if type(arg1) ~= "table" then return end
- local gv = arg1.guid or arg1.weaponGuid or arg1.id
- if type(gv) ~= "string" or not IsValidUUID(gv) then return end
- if _WR_RPT then _WR_RPT.guid = gv; _WR_RPT.Refresh() end
- end
-
- local function _capturePetGearGuid(arg1)
- if type(arg1) ~= "table" then return end
- local g = arg1.guid
- local dId = arg1.drawId
- if type(g) ~= "string" or not IsValidUUID(g) then return end
- if type(dId) ~= "number" then return end
- local slotMap = {[980001]=1,[980002]=2,[980003]=3}
- local si = slotMap[dId]
- if not si then return end
- PGR.guids[si] = g
- PGR.captured[si] = true
- if PGR.statLbls[si] then
- PGR.statLbls[si].Text = "START NOW"
- PGR.statLbls[si].TextColor3 = Color3.fromRGB(80,220,80)
- end
  end
 
  -- Coba hook via __namecall (Xeno/Delta support)
@@ -12152,7 +7885,7 @@ do
  end
 
  -- Bukan remote reroll target -> pass through
- if self ~= _rHero and self ~= _rAuto and self ~= _rWeapon and self ~= _rPetG then
+ if self ~= _rHero and self ~= _rAuto then
  return _old(self, ...)
  end
 
@@ -12163,10 +7896,6 @@ do
  -- (_m sudah berisi "FireServer" atau "InvokeServer" dari cek atas)
  if self == _rHero or self == _rAuto then
  _captureHeroGuid(arg1)
- elseif self == _rWeapon then
- _captureWeaponGuid(arg1)
- elseif self == _rPetG then
- _capturePetGearGuid(arg1)
  end
 
  return r1, r2, r3, r4, r5
@@ -12203,37 +7932,6 @@ do
  end
  end
  end
- end
- -- Weapon GUID
- local wf = RS:FindFirstChild("WeaponData") or RS:FindFirstChild("Weapons")
- if wf and _WR_RPT and (_WR_RPT.guid == nil or _WR_RPT.guid == "") then
- for _, w in ipairs(wf:GetChildren()) do
- local g = w:GetAttribute("weaponGuid") or w:GetAttribute("guid")
- if type(g) == "string" and IsValidUUID(g) then
- _WR_RPT.guid = g
- if _WR_RPT.Refresh then pcall(_WR_RPT.Refresh) end
- break
- end
- end
- end
- -- PetGear GUID dari PlayerGui
- if PGR then
- pcall(function()
- for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
- local g = obj:GetAttribute("guid") or obj:GetAttribute("petGuid")
- if type(g) == "string" and IsValidUUID(g) then
- local dId = obj:GetAttribute("drawId") or obj:GetAttribute("machineId")
- if type(dId) == "number" then
- local slotMap = {[980001]=1,[980002]=2,[980003]=3}
- local si = slotMap[dId]
- if si and not PGR.captured[si] then
- PGR.guids[si] = g
- PGR.captured[si] = true
- end
- end
- end
- end
- end)
  end
  end)
  end
@@ -12332,7 +8030,7 @@ local function _pollSiegeLive(label)
 end
 
 task.spawn(function()
-    task.wait(1) -- tunggu GUI + game modules ready
+    task.wait(4) -- tunggu GUI + game modules ready
 
     -- SUMBER 1: Listener permanent UpdateCityRaidInfo
     -- Server push ini setiap siege buka/tutup
@@ -12369,11 +8067,11 @@ task.spawn(function()
     task.wait(1)
     _pollSiegeLive("startup")
 
-    -- SUMBER 3: Periodic re-poll setiap 1 detik (keepalive)
+    -- SUMBER 3: Periodic re-poll setiap 30 detik (keepalive)
     -- Sync ulang kalau ada event yang terlewat
     task.spawn(function()
         while true do
-            task.wait(1)
+            task.wait(30)
             if SIEGE then
                 _pollSiegeLive("periodic")
             end
@@ -12385,6 +8083,11 @@ task.spawn(function()
     -- Ini yang handle kasus: siege open sebelum script load, relog, missed event
     -- workspace.Maps.Map.CityRaidEnter berisi folder CityRaidX saat siege open
     local CITY_RAID_FOLDER_MAP = {
+        CityRaid1 = 1000001,  -- Map 3
+        CityRaid2 = 1000002,  -- Map 7
+        CityRaid3 = 1000003,  -- Map 10
+        CityRaid4 = 1000004,  -- Map 13
+        -- Nama alternatif yang mungkin dipakai game
         CityRaidEnter1 = 1000001,
         CityRaidEnter2 = 1000002,
         CityRaidEnter3 = 1000003,
@@ -12498,3 +8201,88 @@ task.spawn(function()
         end
     end
 end)
+
+-- Hook dipasang langsung saat GUI muncul (Remotes sudah ready karena task.wait(3) di atas)
+-- Tidak perlu delay tambahan - makin cepat hook aktif makin baik
+task.spawn(function()
+ task.wait(0.5)
+ InitAllCaptureLayers()
+end)
+
+--  AUTO HIDE REWARD / RESULT PANELS [v273 FIX: AGGRESSIVE]
+-- Berlaku untuk Raid, Garrison Boss, dan Siege
+task.spawn(function()
+    local HIDE_PANELS = {
+        "RewardsFrame", "RaidsFightPanel", "CityFightPanel", 
+        "RaidsPanel", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"
+    }
+
+    local function forceHide(obj)
+        if not obj or not obj.Parent then return end
+        pcall(function()
+            -- [v273] Cek tipe objek untuk menghindari error "Visible is not a valid property"
+            if obj:IsA("GuiObject") then
+                obj.Visible = false
+                if obj:IsA("CanvasGroup") then obj.Alpha = 0 end
+                -- Pindahkan jauh dari layar agar benar-benar tidak terlihat
+                obj.Position = UDim2.new(2, 0, 2, 0)
+            elseif obj:IsA("ScreenGui") then
+                obj.Enabled = false
+            end
+        end)
+    end
+
+    local function checkAndHide(obj)
+        -- Hanya proses objek yang memiliki properti tampilan (GuiObject atau ScreenGui)
+        if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
+        
+        for _, name in ipairs(HIDE_PANELS) do
+            if obj.Name == name or obj.Name:find("GarrisonBoss") then
+                task.wait(0.2)
+                forceHide(obj)
+                
+                -- Pasang listener berdasarkan tipe properti yang sesuai
+                pcall(function()
+                    if obj:IsA("GuiObject") then
+                        obj:GetPropertyChangedSignal("Visible"):Connect(function()
+                            if obj.Visible then forceHide(obj) end
+                        end)
+                    elseif obj:IsA("ScreenGui") then
+                        obj:GetPropertyChangedSignal("Enabled"):Connect(function()
+                            if obj.Enabled then forceHide(obj) end
+                        end)
+                    end
+                end)
+                break
+            end
+        end
+    end
+
+    -- 1. Scan existing
+    for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
+        checkAndHide(obj)
+    end
+
+    -- 2. Watch new ones
+    LP.PlayerGui.DescendantAdded:Connect(function(obj)
+        task.spawn(checkAndHide, obj)
+    end)
+
+    -- 3. Event Listeners (Back-end triggers)
+    local _evts = {
+        "ShowReward", "ChallengeGarrisonBossSuccess", 
+        "ChallengeRaidsSuccess", "ChallengeRaidsFail"
+    }
+    for _, ename in ipairs(_evts) do
+        local re = Remotes:WaitForChild(ename, 10)
+        if re then
+            re.OnClientEvent:Connect(function()
+                task.wait(0.3)
+                for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
+                    checkAndHide(obj)
+                end
+            end)
+        end
+    end
+end)
+

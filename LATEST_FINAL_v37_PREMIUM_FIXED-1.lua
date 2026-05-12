@@ -1979,14 +1979,20 @@ function AttackLoop_Mass(onStatus)
    or (SIEGE and SIEGE.inMap) then
    return "interrupted"
   end
-  -- [FIX GODMODE] Guard: STOP serang jika player bukan di basemap normal (50001-50020)
-  -- Blok Siege (50201+), Raid (50101+), Tower (50300+), dan map lain di luar range
+  -- [v13-FIX SIEGE GUARD] STOP serang jika SIEGE sedang running (aktif atau baru selesai)
+  -- Ini mencegah SiegeMassAttack bablas nyerang musuh di lobby/basemap setelah keluar Siege
+  if SIEGE and SIEGE.running then
+   return "interrupted"
+  end
+  -- [v13-FIX SIEGE GUARD] Cek mapId realtime: jika player ada di Siege map (50201-50210)
+  -- atau mapId tidak valid (0 / nil = transisi) -> stop MA attack
   do
-   local ok, wm = pcall(function()
+   local _ok2, _wm2 = pcall(function()
     return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
    end)
-   if ok and type(wm) == "number" then
-    if wm < 50001 or wm > 50020 then
+   if _ok2 and type(_wm2) == "number" then
+    -- Blok Siege (50201+), Raid (50101+), Tower (50300+), dan mapId di luar range lobby
+    if _wm2 < 50001 or _wm2 > 50020 then
      return "interrupted"
     end
    end
@@ -2288,7 +2294,10 @@ function WaitRaidDone()
         end
         
         -- 2. KASTA BANGSAWAN (Auto Siege) WAJIB PAUSE MASS ATTACK!
-        if MODE.current == "siege" or (SIEGE and SIEGE.inMap) or _siegeInterrupt then 
+        -- [v13-FIX] Tambah SIEGE.running: MA harus pause selama Siege aktif,
+        -- termasuk saat player sudah keluar dari siege map tapi loop siege belum selesai.
+        -- Ini mencegah SiegeMassAttack bablas nyerang musuh di lobby setelah sukses Siege.
+        if MODE.current == "siege" or (SIEGE and SIEGE.inMap) or (SIEGE and SIEGE.running) or _siegeInterrupt then 
             return true, "Auto Siege" 
         end
 
@@ -2389,8 +2398,11 @@ function DoMassAttack(on)
  end
  while MA.running do
  -- [v252] Pause kalau ada fitur prioritas lebih tinggi aktif
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or _ascInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
+ -- [v13-FIX] Tambah SIEGE.running agar MA berhenti saat Siege aktif/baru selesai
+ if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or _ascInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) or (SIEGE and SIEGE.running) then WaitRaidDone() end
  if not MA.running then break end
+ -- [v13-FIX] Double-check SIEGE setelah WaitRaidDone selesai
+ if SIEGE and SIEGE.running then task.wait(0.3); continue end
 
  local mapsToUse = {}
  for i = 1, 20 do if MR.selected[i] then table.insert(mapsToUse, MAPS[i]) end end
@@ -7603,10 +7615,10 @@ local function _WH_resolveGrade(ent)
 end
 local _whBufferTimer   = nil  -- debounce handle
 local _whLastSent      = 0
--- [BUG FIX 4] Cache teks webhook yang sudah pernah dikirim di event server ini.
--- Reset hanya saat RAID_LIVE kosong total (event habis / server baru).
--- Ini cegah spam: ParseChatLine + RebuildRaidList + _onRaidChildAdded semua bisa
--- panggil AddLine untuk teks yang SAMA berkali-kali.
+-- [v13-FIX] _whSentCache: anti-duplikat DALAM SATU BATCH/BUFFER SAJA.
+-- Di-reset otomatis setiap kali _whFlushBuffer dipanggil agar event identik
+-- di batch berikutnya (misalnya Siege/Raid buka lagi dengan notif sama)
+-- tetap terkirim ke Discord. Tidak boleh persistent antar-batch.
 local _whSentCache     = {}
 local function _whResetSentCache()
  _whSentCache = {}
@@ -7648,6 +7660,10 @@ _whFlushBuffer = function(url)
  local lines   = _whBuffer
  _whBuffer     = {}
  _whLastSent   = tick()
+ -- [v13-FIX] Reset sentcache setelah flush agar notif identik di batch BERIKUTNYA
+ -- (Siege/Raid buka lagi dengan konten sama) tetap terkirim ke Discord.
+ -- Anti-duplikat hanya berlaku dalam satu buffer/batch, bukan lintas-batch.
+ _whSentCache  = {}
 
  local reqFunc = _getReqFunc()
  if not reqFunc then return end

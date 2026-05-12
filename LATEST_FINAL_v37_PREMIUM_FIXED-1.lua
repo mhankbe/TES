@@ -7603,7 +7603,6 @@ local function _WH_resolveGrade(ent)
 end
 local _whBufferTimer   = nil  -- debounce handle
 local _whLastSent      = 0
-local _whEventSentAt   = 0   -- [V13-FIX] timestamp pengiriman terakhir per-event (60s cooldown)
 -- [BUG FIX 4] Cache teks webhook yang sudah pernah dikirim di event server ini.
 -- Reset hanya saat RAID_LIVE kosong total (event habis / server baru).
 -- Ini cegah spam: ParseChatLine + RebuildRaidList + _onRaidChildAdded semua bisa
@@ -7611,16 +7610,6 @@ local _whEventSentAt   = 0   -- [V13-FIX] timestamp pengiriman terakhir per-even
 local _whSentCache     = {}
 local function _whResetSentCache()
  _whSentCache = {}
- _whEventSentAt = 0  -- [V13-FIX] reset juga event cooldown saat event baru
-end
-
--- [V13-FIX] Normalisasi key cache: strip bossName dari teks AT agar variasi format
--- "Ascension Tower 4 [E]" vs "Ascension Tower 4 - Grendal+1 [E]" dianggap SAMA.
--- Ini mencegah pesan ASC terpisah yang duplicate.
-local function _whNormKey(text)
- -- Strip bagian " - BossName" sebelum bracket grade di akhir
- local normalized = text:gsub(" %- [^%[]+(%[[^%]]+%]%s*)$", " %1")
- return normalized
 end
 
 local GRADE_COLOR = {
@@ -7769,38 +7758,28 @@ end
 _WH.AddLine = function(text)
  if not _webhookEnabled or not _webhookUrl or _webhookUrl == "" then return end
  if _whSilent then return end
- -- [V13-FIX] Normalisasi key cache: variasi format bossName dianggap sama
- local cacheKey = _whNormKey(text)
  -- [BUG FIX 4] Cek cache global per-event: jika teks ini sudah pernah dikirim di event ini, skip
- if _whSentCache[cacheKey] then return end
+ if _whSentCache[text] then return end
  -- Cek apakah sudah ada baris identik dalam buffer (anti duplikat)
  for _, existing in ipairs(_whBuffer) do
-  if _whNormKey(existing) == cacheKey then return end
+  if existing == text then return end
  end
- _whSentCache[cacheKey] = true  -- [BUG FIX 4] Tandai teks ini sudah masuk (tidak akan kirim lagi)
+ _whSentCache[text] = true  -- [BUG FIX 4] Tandai teks ini sudah masuk (tidak akan kirim lagi)
  table.insert(_whBuffer, text)
- -- [V13-FIX] Reset debounce: tunggu 5 detik (naik dari 3s) setelah baris terakhir baru kirim
- -- Ini memberi waktu lebih agar semua notif batch dari server sempat masuk sebelum flush
+ -- Reset debounce: tunggu 3 detik setelah baris terakhir baru kirim
  if _whBufferTimer then pcall(function() task.cancel(_whBufferTimer) end) end
- _whBufferTimer = task.delay(5, function()
+ _whBufferTimer = task.delay(3, function()
   _whBufferTimer = nil
-  -- [V13-FIX] Event-level cooldown 60 detik: 1 event raid = 1 pesan Discord
-  -- Ini adalah garis pertahanan terakhir mencegah double-send per event
-  local now = tick()
-  if (now - _whEventSentAt) < 60 then return end
-  -- Cooldown 10 detik antar pengiriman (rate limit Discord)
-  if (now - _whLastSent) < 10 then
+  -- Cooldown 10 detik antar pengiriman
+  if (tick() - _whLastSent) < 10 then
    -- Jadwalkan ulang setelah sisa cooldown
-   local sisa = 10 - (now - _whLastSent)
+   local sisa = 10 - (tick() - _whLastSent)
    _whBufferTimer = task.delay(sisa, function()
     _whBufferTimer = nil
-    if (tick() - _whEventSentAt) < 60 then return end  -- [V13-FIX] cek event cooldown lagi
-    _whEventSentAt = tick()
     _whFlushBuffer(_webhookUrl)
    end)
    return
   end
-  _whEventSentAt = tick()  -- [V13-FIX] set event cooldown sebelum flush
   _whFlushBuffer(_webhookUrl)
  end)
 end
@@ -8011,8 +7990,26 @@ RebuildRaidList = function()
  })
  end
  if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
- -- [V13-FIX] Webhook DIHAPUS dari sini. Satu-satunya sumber webhook adalah ParseChatLine
- -- (TipsPanel, sumber paling akurat & pertama). Duplikasi dari RebuildRaidList menyebabkan spam.
+ -- [v_FIX] Kirim notif webhook untuk setiap raid/asc baru
+ if _webhookEnabled and _webhookUrl ~= "" and not _whSilent then
+  task.delay(0.5, function()
+   for _, ent in pairs(RAID_LIVE) do
+    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
+     -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
+     local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
+     if ent.isAscension then
+      local mn = ent.mapId and (ent.mapId - 50300) or "?"
+      local bn = ent.bossName and (" - "..ent.bossName) or ""
+      _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
+     else
+      local mn = ent.mapId and (ent.mapId - 50000) or "?"
+      local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
+      _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
+     end
+    end
+   end
+  end)
+ end
 end
 
 -- Parse satu entry raidInfos
@@ -8183,8 +8180,27 @@ local function _onRaidChildAdded(child, slotName)
  -- [v58] Gunakan debounce terpusat: jangan langsung bangunkan siapapun
  -- TriggerEntryWakeup() akan tunggu 3 detik setelah notif terakhir baru fire RAID & ASC
  if TriggerEntryWakeup then TriggerEntryWakeup() end
- -- [V13-FIX] Webhook DIHAPUS dari sini. Satu-satunya sumber webhook adalah ParseChatLine
- -- (TipsPanel). Duplikasi dari _onRaidChildAdded menyebabkan spam & double message ASC.
+ -- [v_FIX] Webhook langsung dari workspace watcher
+ if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
+  task.spawn(function()
+   task.wait(0.5)
+   for _, ent in pairs(RAID_LIVE) do
+    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
+     -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
+     local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
+     if ent.isAscension then
+      local mn = ent.mapId and (ent.mapId - 50300) or "?"
+      local bn = ent.bossName and (" - "..ent.bossName) or ""
+      _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
+     else
+      local mn = ent.mapId and (ent.mapId - 50000) or "?"
+      local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
+      _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
+     end
+    end
+   end
+  end)
+ end
 end
 
 -- Child RaidEnterX hilang = raid Map X tutup
@@ -8429,7 +8445,24 @@ ConnectRaidListeners = function()
  RebuildRaidList()
  -- [v58] Gunakan debounce terpusat
  if TriggerEntryWakeup then TriggerEntryWakeup() end
- -- [V13-FIX] Webhook DIHAPUS dari sini. Satu-satunya sumber webhook adalah ParseChatLine.
+ -- [v_FIX] Ganti TriggerWebhookDebounce (no-op)
+ if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
+  for _, ent in pairs(RAID_LIVE) do
+   if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
+    -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
+    local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
+    if ent.isAscension then
+     local mn = ent.mapId and (ent.mapId - 50300) or "?"
+     local bn = ent.bossName and (" - "..ent.bossName) or ""
+     _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
+    else
+     local mn = ent.mapId and (ent.mapId - 50000) or "?"
+     local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
+     _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
+    end
+   end
+  end
+ end
  end
  end)
  table.insert(_WH.raidConns, conn)
@@ -10008,7 +10041,21 @@ local function ForceRescanRaidEnter()
             RebuildRaidList()
             -- [v58] Gunakan debounce terpusat
             if TriggerEntryWakeup then TriggerEntryWakeup() end
-            -- [V13-FIX] Webhook DIHAPUS dari sini. Satu-satunya sumber webhook adalah ParseChatLine.
+            -- [v_FIX] Ganti TriggerWebhookDebounce (no-op)
+            if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
+             for _, ent in pairs(RAID_LIVE) do
+              if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
+               if ent.isAscension then
+                local mn = ent.mapId and (ent.mapId - 50300) or "?"
+                _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn).." ["..(ent.grade or "?").."]")
+               else
+                local mn = ent.mapId and (ent.mapId - 50000) or "?"
+                local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
+                _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." ["..(ent.grade or "?").."]")
+               end
+              end
+             end
+            end
         end
     end)
 end

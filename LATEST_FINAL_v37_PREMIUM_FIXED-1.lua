@@ -2293,11 +2293,13 @@ function WaitRaidDone()
             return true, "Auto Dungeon" 
         end
         
-        -- 2. KASTA BANGSAWAN (Auto Siege) WAJIB PAUSE MASS ATTACK!
-        -- [v13-FIX] Tambah SIEGE.running: MA harus pause selama Siege aktif,
-        -- termasuk saat player sudah keluar dari siege map tapi loop siege belum selesai.
-        -- Ini mencegah SiegeMassAttack bablas nyerang musuh di lobby setelah sukses Siege.
-        if MODE.current == "siege" or (SIEGE and SIEGE.inMap) or (SIEGE and SIEGE.running) or _siegeInterrupt then 
+        -- 2. KASTA BANGSAWAN (Auto Siege) PAUSE MASS ATTACK HANYA SAAT DI DALAM MAP SIEGE
+        -- [v14-FIX] SIEGE.running DIHAPUS dari kondisi ini.
+        -- MA boleh jalan bebas saat Siege cooldown/scanning (belum masuk map).
+        -- MA pause HANYA saat: player sudah di dalam map Siege (SIEGE.inMap)
+        -- ATAU sedang proses masuk (_siegeInterrupt / MODE.current == "siege" & inMap).
+        -- Ini mencegah MA ter-pause panjang saat Siege belum ketemu slot terbuka.
+        if (SIEGE and SIEGE.inMap) or _siegeInterrupt then 
             return true, "Auto Siege" 
         end
 
@@ -2399,10 +2401,9 @@ function DoMassAttack(on)
  while MA.running do
  -- [v252] Pause kalau ada fitur prioritas lebih tinggi aktif
  -- [v13-FIX] Tambah SIEGE.running agar MA berhenti saat Siege aktif/baru selesai
- if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or _ascInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) or (SIEGE and SIEGE.running) then WaitRaidDone() end
+ -- [v14-FIX] Cek pause: SIEGE.running dihapus, MA pause hanya saat SIEGE.inMap atau _siegeInterrupt
+ if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or _ascInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) or (SIEGE and SIEGE.inMap) then WaitRaidDone() end
  if not MA.running then break end
- -- [v13-FIX] Double-check SIEGE setelah WaitRaidDone selesai
- if SIEGE and SIEGE.running then task.wait(0.3); continue end
 
  local mapsToUse = {}
  for i = 1, 20 do if MR.selected[i] then table.insert(mapsToUse, MAPS[i]) end end
@@ -7782,9 +7783,11 @@ _WH.AddLine = function(text)
  end
  _whSentCache[text] = true  -- [BUG FIX 4] Tandai teks ini sudah masuk (tidak akan kirim lagi)
  table.insert(_whBuffer, text)
- -- Reset debounce: tunggu 3 detik setelah baris terakhir baru kirim
+ -- [v14-FIX] Perpanjang debounce dari 3s -> 5s agar semua event dari server sempat
+ -- kumpul di buffer sebelum dikirim. Server bisa kirim 10+ event dalam ~3 detik.
+ -- Dengan 5s, semua event masuk ke 1 pesan Discord (tidak ada yang ketinggalan).
  if _whBufferTimer then pcall(function() task.cancel(_whBufferTimer) end) end
- _whBufferTimer = task.delay(3, function()
+ _whBufferTimer = task.delay(5, function()
   _whBufferTimer = nil
   -- Cooldown 10 detik antar pengiriman
   if (tick() - _whLastSent) < 10 then
@@ -8006,26 +8009,10 @@ RebuildRaidList = function()
  })
  end
  if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
- -- [v_FIX] Kirim notif webhook untuk setiap raid/asc baru
- if _webhookEnabled and _webhookUrl ~= "" and not _whSilent then
-  task.delay(0.5, function()
-   for _, ent in pairs(RAID_LIVE) do
-    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-     -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-     local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-     if ent.isAscension then
-      local mn = ent.mapId and (ent.mapId - 50300) or "?"
-      local bn = ent.bossName and (" - "..ent.bossName) or ""
-      _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-     else
-      local mn = ent.mapId and (ent.mapId - 50000) or "?"
-      local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-      _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-     end
-    end
-   end
-  end)
- end
+ -- [v14-FIX] Webhook DIHAPUS dari RebuildRaidList.
+ -- Sumber webhook tunggal = ParseChatLine (TipsPanel) agar tidak ada duplikat/spam.
+ -- RebuildRaidList dipanggil berkali-kali (setiap RAID_LIVE berubah) sehingga
+ -- mengirim dari sini menyebabkan spam per masuk/keluar raid.
 end
 
 -- Parse satu entry raidInfos
@@ -8196,27 +8183,10 @@ local function _onRaidChildAdded(child, slotName)
  -- [v58] Gunakan debounce terpusat: jangan langsung bangunkan siapapun
  -- TriggerEntryWakeup() akan tunggu 3 detik setelah notif terakhir baru fire RAID & ASC
  if TriggerEntryWakeup then TriggerEntryWakeup() end
- -- [v_FIX] Webhook langsung dari workspace watcher
- if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-  task.spawn(function()
-   task.wait(0.5)
-   for _, ent in pairs(RAID_LIVE) do
-    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-     -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-     local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-     if ent.isAscension then
-      local mn = ent.mapId and (ent.mapId - 50300) or "?"
-      local bn = ent.bossName and (" - "..ent.bossName) or ""
-      _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-     else
-      local mn = ent.mapId and (ent.mapId - 50000) or "?"
-      local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-      _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-     end
-    end
-   end
-  end)
- end
+ -- [v14-FIX] Webhook DIHAPUS dari _onRaidChildAdded.
+ -- Webhook hanya dari ParseChatLine (TipsPanel) agar tidak duplikat.
+ -- workspace watcher ini sering terpanggil ulang saat masuk/keluar map
+ -- yang menyebabkan AddLine dipanggil berkali-kali untuk event yang sama.
 end
 
 -- Child RaidEnterX hilang = raid Map X tutup
@@ -8461,24 +8431,8 @@ ConnectRaidListeners = function()
  RebuildRaidList()
  -- [v58] Gunakan debounce terpusat
  if TriggerEntryWakeup then TriggerEntryWakeup() end
- -- [v_FIX] Ganti TriggerWebhookDebounce (no-op)
- if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-  for _, ent in pairs(RAID_LIVE) do
-   if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-    -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-    local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-    if ent.isAscension then
-     local mn = ent.mapId and (ent.mapId - 50300) or "?"
-     local bn = ent.bossName and (" - "..ent.bossName) or ""
-     _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-    else
-     local mn = ent.mapId and (ent.mapId - 50000) or "?"
-     local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-     _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-    end
-   end
-  end
- end
+ -- [v14-FIX] Webhook DIHAPUS dari UpdateRaidInfo listener.
+ -- Webhook hanya dari ParseChatLine (TipsPanel) agar tidak duplikat.
  end
  end)
  table.insert(_WH.raidConns, conn)
@@ -10057,21 +10011,8 @@ local function ForceRescanRaidEnter()
             RebuildRaidList()
             -- [v58] Gunakan debounce terpusat
             if TriggerEntryWakeup then TriggerEntryWakeup() end
-            -- [v_FIX] Ganti TriggerWebhookDebounce (no-op)
-            if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-             for _, ent in pairs(RAID_LIVE) do
-              if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-               if ent.isAscension then
-                local mn = ent.mapId and (ent.mapId - 50300) or "?"
-                _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn).." ["..(ent.grade or "?").."]")
-               else
-                local mn = ent.mapId and (ent.mapId - 50000) or "?"
-                local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-                _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." ["..(ent.grade or "?").."]")
-               end
-              end
-             end
-            end
+            -- [v14-FIX] Webhook DIHAPUS dari ForceRescanRaidEnter.
+            -- Webhook hanya dari ParseChatLine (TipsPanel) agar tidak duplikat.
         end
     end)
 end

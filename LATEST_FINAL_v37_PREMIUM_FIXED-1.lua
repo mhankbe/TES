@@ -7448,21 +7448,26 @@ task.spawn(function()
  -- Scan history awal saat startup (silent, jangan trigger webhook)
  task.wait(5)
  _whSilent = true
- pcall(function()
- for _, ch in ipairs(channels:GetChildren()) do
- if ch:IsA("TextChannel") then
- for _, obj in ipairs(ch:GetChildren()) do
- if obj:IsA("TextChatMessage") then
- local txt = obj.Text or ""
- if #txt < 5 then txt = (obj.PrefixText or "").." "..(obj.Text or "") end
- _processMsg(txt)
- end
- end
- end
- end
+ -- [FIX BUG 1] Gunakan finally pattern agar _whSilent PASTI kembali false meski error
+ local _scanOk, _scanErr = pcall(function()
+  for _, ch in ipairs(channels:GetChildren()) do
+   if ch:IsA("TextChannel") then
+    for _, obj in ipairs(ch:GetChildren()) do
+     if obj:IsA("TextChatMessage") then
+      local txt = obj.Text or ""
+      if #txt < 5 then txt = (obj.PrefixText or "").." "..(obj.Text or "") end
+      _processMsg(txt)
+     end
+    end
+   end
+  end
  end)
+ -- [FIX BUG 1] WAJIB reset ke false meski pcall error sekalipun
  _whSilent = false
  _whResetSentCache() -- [BUG FIX 4] Scan awal selesai, reset cache agar notif server pertama kali bisa kirim
+ if not _scanOk then
+  pcall(function() warn("[ASH Webhook] Scan history error (ignored): "..tostring(_scanErr)) end)
+ end
  end)
 end)
 
@@ -7506,7 +7511,8 @@ end)
 SendWebhookNotif=nil; RebuildRaidList=nil; ParseRaidEntry=nil
 DisconnectRaidConns=nil; ConnectRaidListeners=nil; RaidFireDamage=nil
 
-local _whFlushBuffer = nil -- forward declare agar FlushWebhookPending bisa akses
+-- [FIX BUG 2] Baris "local _whFlushBuffer = nil" DIHAPUS karena men-shadow fungsi asli
+-- _whFlushBuffer sudah didefinisikan di scope luar, jangan re-declare sebagai local
 do -- [FIX] webhook + raid logic wrapped to free top-level locals
 
 -- ============================================================
@@ -16902,11 +16908,16 @@ task.spawn(function()
             elseif action == "OpenCityRaid" then
                 SIEGE.live[id] = mn
                 if _siegeWakeup then pcall(function() _siegeWakeup:Fire() end) end
-                -- [v_FIX] TriggerWebhookDebounce sudah no-op, kirim langsung via _WH.SendSiege
+                -- [FIX BUG 3] Delay diperbesar 1s -> 3s agar SIEGE.live terisi penuh
+                -- + guard hasLive untuk pastikan siege masih aktif saat kirim
                 if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-                    task.delay(1, function()
-                        if _WH and _WH.SendSiege then
-                            pcall(function() _WH.SendSiege(_webhookUrl) end)
+                    task.delay(3, function()
+                        if _WH and _WH.SendSiege and SIEGE and SIEGE.live then
+                            local hasLive = false
+                            for _ in pairs(SIEGE.live) do hasLive = true; break end
+                            if hasLive then
+                                pcall(function() _WH.SendSiege(_webhookUrl) end)
+                            end
                         end
                     end)
                 end

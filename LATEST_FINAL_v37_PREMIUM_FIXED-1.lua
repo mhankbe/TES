@@ -4714,17 +4714,9 @@ do
              "cityraid","city_raid","garrisoncityraid","garrisonboss",
              "siege","cityraidpanel","cityraidenterpanel",
              "raidcityresult","garrisonraidresult","citycount","citytimer",
-             -- [BUG FIX SIEGE COUNT PANEL] Tambah keyword tambahan untuk panel Count/Timer
-             -- yang mungkin memakai nama berbeda di versi game terbaru
-             "siegecount","siegepanel","siegetimer","siegeresult",
-             "cityraidscore","cityraidcount","cityraidscore","countpanel",
-             "siegescore","garrisonscore","raidcount","raidtimer","raidpanel",
          }
          local function _isSiegePanelGui(gui)
-             -- [BUG FIX SIEGE COUNT PANEL] Cek SIEGE.inMap ATAU SIEGE.teleporting/running
-             -- Panel Count di-spawn server sebelum SIEGE.inMap = true (saat TP sedang proses)
-             -- Tanpa cek running/teleporting, panel ter-hide saat masih fase masuk -> reward hilang
-             if not (SIEGE and (SIEGE.inMap or SIEGE.teleporting or SIEGE.running)) then return false end
+             if not (SIEGE and SIEGE.inMap) then return false end
              local n = gui.Name:lower()
              for _, kw in ipairs(_SIEGE_PANEL_KW) do
                  if n:find(kw, 1, true) then return true end
@@ -7448,26 +7440,21 @@ task.spawn(function()
  -- Scan history awal saat startup (silent, jangan trigger webhook)
  task.wait(5)
  _whSilent = true
- -- [FIX BUG 1] Gunakan finally pattern agar _whSilent PASTI kembali false meski error
- local _scanOk, _scanErr = pcall(function()
-  for _, ch in ipairs(channels:GetChildren()) do
-   if ch:IsA("TextChannel") then
-    for _, obj in ipairs(ch:GetChildren()) do
-     if obj:IsA("TextChatMessage") then
-      local txt = obj.Text or ""
-      if #txt < 5 then txt = (obj.PrefixText or "").." "..(obj.Text or "") end
-      _processMsg(txt)
-     end
-    end
-   end
-  end
+ pcall(function()
+ for _, ch in ipairs(channels:GetChildren()) do
+ if ch:IsA("TextChannel") then
+ for _, obj in ipairs(ch:GetChildren()) do
+ if obj:IsA("TextChatMessage") then
+ local txt = obj.Text or ""
+ if #txt < 5 then txt = (obj.PrefixText or "").." "..(obj.Text or "") end
+ _processMsg(txt)
+ end
+ end
+ end
+ end
  end)
- -- [FIX BUG 1] WAJIB reset ke false meski pcall error sekalipun
  _whSilent = false
  _whResetSentCache() -- [BUG FIX 4] Scan awal selesai, reset cache agar notif server pertama kali bisa kirim
- if not _scanOk then
-  pcall(function() warn("[ASH Webhook] Scan history error (ignored): "..tostring(_scanErr)) end)
- end
  end)
 end)
 
@@ -7511,8 +7498,7 @@ end)
 SendWebhookNotif=nil; RebuildRaidList=nil; ParseRaidEntry=nil
 DisconnectRaidConns=nil; ConnectRaidListeners=nil; RaidFireDamage=nil
 
--- [FIX BUG 2] Baris "local _whFlushBuffer = nil" DIHAPUS karena men-shadow fungsi asli
--- _whFlushBuffer sudah didefinisikan di scope luar, jangan re-declare sebagai local
+local _whFlushBuffer = nil -- forward declare agar FlushWebhookPending bisa akses
 do -- [FIX] webhook + raid logic wrapped to free top-level locals
 
 -- ============================================================
@@ -9247,57 +9233,27 @@ function StartAscensionLoop()
     -- [v64 FIX] Watchdog: reset ASC.inMap + _ascBusy jika player terdeteksi keluar Tower
     -- Ini handle kasus race condition: MA/RAID TP player keluar saat ASC masih "inMap=true"
     -- Tanpa ini: ASC stuck "Dalam Tower... Loading" selamanya karena state tidak pernah direset
-    -- [BUG FIX MANUAL] Grace period diperpanjang 3s->8s untuk cover MANUAL mode dengan
-    -- Preferred Rune/Rank/Map: StartChallengeRaidMap ke tower lain butuh lebih lama agar
-    -- workspace MapId stabil. Watchdog TIDAK trigger saat wm==0 (MapId sedang transisi/loading).
     local _watchdogTh = task.spawn(function()
-     -- Beri grace awal 5s sebelum watchdog mulai aktif (cover fase loading pertama)
-     local _wdGrace = 0
-     while _wdGrace < 5 and ASC.inMap and ASC.running do
-      task.wait(0.5); _wdGrace = _wdGrace + 0.5
-     end
      while ASC.inMap and ASC.running do
       task.wait(1)
       local ok, wm = pcall(function()
        return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or 0
       end)
       if ok and type(wm) == "number" then
-       -- Abaikan wm==0: MapId sedang transisi/loading, bukan bukti player keluar
+       -- Jika player tidak di Ascension Tower range, berarti sudah keluar secara paksa
        if wm > 0 and (wm < 50301 or wm > 50326) then
-        -- [BUG FIX MANUAL] Grace diperpanjang 8s (dari 3s) untuk MANUAL mode
-        -- Preferred Rune mengubah target tower -> MapId workspace lebih lambat update
-        local _graceTime = (ASC.pickMode == "manual") and 8 or 5
-        local _graceWait = 0
-        local _stillOut = false
-        while _graceWait < _graceTime and ASC.inMap and ASC.running do
-         task.wait(0.5); _graceWait = _graceWait + 0.5
-         local ok2, wm2 = pcall(function()
-          return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or 0
-         end)
-         -- Jika MapId kembali ke range ASC selama grace -> cancel watchdog trigger
-         if ok2 and type(wm2) == "number" and wm2 >= 50301 and wm2 <= 50326 then
-          _stillOut = false; break
-         end
-         -- Abaikan jika MapId masih 0 (transisi)
-         if ok2 and type(wm2) == "number" and wm2 == 0 then
-          -- masih loading, tunggu terus
-         elseif ok2 and type(wm2) == "number" and wm2 > 0 and (wm2 < 50301 or wm2 > 50326) then
-          _stillOut = true
-         end
-        end
-        if _stillOut and ASC.inMap and ASC.running then
-         -- Verifikasi final sebelum reset
-         local ok3, wm3 = pcall(function()
-          return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or 0
-         end)
-         if ok3 and type(wm3) == "number" and wm3 > 0 and (wm3 < 50301 or wm3 > 50326) then
-          AscStatusUpdate("[!] Watchdog: Player keluar Tower paksa - reset state", Color3.fromRGB(255,80,80))
-          ASC.inMap = false
-          _ascBusy = false
-          _ascInterrupt = false  -- [FIX] reset pada watchdog exit
-          ReleaseMapLock("asc")
-          break
-         end
+        -- Jangan langsung reset jika masih di fase loading awal (beri waktu 3s)
+        task.wait(3)
+        local ok2, wm2 = pcall(function()
+         return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or 0
+        end)
+        if ok2 and type(wm2) == "number" and (wm2 < 50301 or wm2 > 50326) and wm2 > 0 then
+         AscStatusUpdate("[!] Watchdog: Player keluar Tower paksa - reset state", Color3.fromRGB(255,80,80))
+         ASC.inMap = false
+         _ascBusy = false
+         _ascInterrupt = false  -- [FIX] reset pada watchdog exit
+         ReleaseMapLock("asc")
+         break
         end
        end
       end
@@ -13529,10 +13485,6 @@ StartSiegeLoop = function()
                     "cityraid","city_raid","garrisoncityraid","garrisonboss",
                     "siege","cityraidpanel","cityraidenterpanel",
                     "raidcityresult","garrisonraidresult","citycount","citytimer",
-                    -- [BUG FIX SIEGE COUNT PANEL] Sync keyword dengan _SIEGE_PANEL_KW
-                    "siegecount","siegepanel","siegetimer","siegeresult",
-                    "cityraidscore","cityraidcount","countpanel",
-                    "siegescore","garrisonscore","raidcount","raidtimer","raidpanel",
                 }
                 for _, gui in ipairs(PG:GetChildren()) do
                     pcall(function()
@@ -16908,16 +16860,11 @@ task.spawn(function()
             elseif action == "OpenCityRaid" then
                 SIEGE.live[id] = mn
                 if _siegeWakeup then pcall(function() _siegeWakeup:Fire() end) end
-                -- [FIX BUG 3] Delay diperbesar 1s -> 3s agar SIEGE.live terisi penuh
-                -- + guard hasLive untuk pastikan siege masih aktif saat kirim
+                -- [v_FIX] TriggerWebhookDebounce sudah no-op, kirim langsung via _WH.SendSiege
                 if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-                    task.delay(3, function()
-                        if _WH and _WH.SendSiege and SIEGE and SIEGE.live then
-                            local hasLive = false
-                            for _ in pairs(SIEGE.live) do hasLive = true; break end
-                            if hasLive then
-                                pcall(function() _WH.SendSiege(_webhookUrl) end)
-                            end
+                    task.delay(1, function()
+                        if _WH and _WH.SendSiege then
+                            pcall(function() _WH.SendSiege(_webhookUrl) end)
                         end
                     end)
                 end

@@ -1306,7 +1306,7 @@ MODE = {
  current = "idle", -- "idle"|"ma"|"raid"|"siege"|"dungeon"|"asc"|"st2"
  -- PRIORITY: dungeon > siege > raid > asc > st2 > ma > idle
  -- Fitur HANYA boleh masuk jika MODE.current == "idle"
- -- (tidak ada override priority — setiap fitur harus tunggu giliran)
+ -- (tidak ada override priority â€” setiap fitur harus tunggu giliran)
  priority = { dungeon=6, siege=5, raid=4, asc=3, st2=2, ma=1, idle=0 },
  _prev = {}, -- stack: simpan mode yang diinterrupt, untuk resume
 }
@@ -7603,6 +7603,7 @@ local function _WH_resolveGrade(ent)
 end
 local _whBufferTimer   = nil  -- debounce handle
 local _whLastSent      = 0
+local _whEventSentAt   = 0   -- [V13-FIX] timestamp pengiriman terakhir per-event (60s cooldown)
 -- [BUG FIX 4] Cache teks webhook yang sudah pernah dikirim di event server ini.
 -- Reset hanya saat RAID_LIVE kosong total (event habis / server baru).
 -- Ini cegah spam: ParseChatLine + RebuildRaidList + _onRaidChildAdded semua bisa
@@ -7610,6 +7611,16 @@ local _whLastSent      = 0
 local _whSentCache     = {}
 local function _whResetSentCache()
  _whSentCache = {}
+ _whEventSentAt = 0  -- [V13-FIX] reset juga event cooldown saat event baru
+end
+
+-- [V13-FIX] Normalisasi key cache: strip bossName dari teks AT agar variasi format
+-- "Ascension Tower 4 [E]" vs "Ascension Tower 4 - Grendal+1 [E]" dianggap SAMA.
+-- Ini mencegah pesan ASC terpisah yang duplicate.
+local function _whNormKey(text)
+ -- Strip bagian " - BossName" sebelum bracket grade di akhir
+ local normalized = text:gsub(" %- [^%[]+(%[[^%]]+%]%s*)$", " %1")
+ return normalized
 end
 
 local GRADE_COLOR = {
@@ -7641,7 +7652,7 @@ local function _extractGradeLast(t)
 end
 
 -- Kirim buffer ke Discord/Telegram, lalu kosongkan buffer
--- AT dan RAID Normal diperlakukan IDENTIK — satu sumber grade: GetBestGrade
+-- AT dan RAID Normal diperlakukan IDENTIK â€” satu sumber grade: GetBestGrade
 -- AT: isAscension=true, mapNum = towerNum. RAID: isAscension=false, mapNum = mapId-50000
 _whFlushBuffer = function(url)
  if #_whBuffer == 0 then return end
@@ -7655,7 +7666,7 @@ _whFlushBuffer = function(url)
  local isTelegram = url:find("api%.telegram%.org")
  local HS = game:GetService("HttpService")
 
- -- Satu helper grade untuk keduanya — identik cara RAID Normal baca grade
+ -- Satu helper grade untuk keduanya â€” identik cara RAID Normal baca grade
  -- AT   : GetBestGrade(towerNum, true)
  -- RAID : GetBestGrade(mapNum, false)
  local function _gradeFor(mapNum, isAscension)
@@ -7758,28 +7769,38 @@ end
 _WH.AddLine = function(text)
  if not _webhookEnabled or not _webhookUrl or _webhookUrl == "" then return end
  if _whSilent then return end
+ -- [V13-FIX] Normalisasi key cache: variasi format bossName dianggap sama
+ local cacheKey = _whNormKey(text)
  -- [BUG FIX 4] Cek cache global per-event: jika teks ini sudah pernah dikirim di event ini, skip
- if _whSentCache[text] then return end
+ if _whSentCache[cacheKey] then return end
  -- Cek apakah sudah ada baris identik dalam buffer (anti duplikat)
  for _, existing in ipairs(_whBuffer) do
-  if existing == text then return end
+  if _whNormKey(existing) == cacheKey then return end
  end
- _whSentCache[text] = true  -- [BUG FIX 4] Tandai teks ini sudah masuk (tidak akan kirim lagi)
+ _whSentCache[cacheKey] = true  -- [BUG FIX 4] Tandai teks ini sudah masuk (tidak akan kirim lagi)
  table.insert(_whBuffer, text)
- -- Reset debounce: tunggu 3 detik setelah baris terakhir baru kirim
+ -- [V13-FIX] Reset debounce: tunggu 5 detik (naik dari 3s) setelah baris terakhir baru kirim
+ -- Ini memberi waktu lebih agar semua notif batch dari server sempat masuk sebelum flush
  if _whBufferTimer then pcall(function() task.cancel(_whBufferTimer) end) end
- _whBufferTimer = task.delay(3, function()
+ _whBufferTimer = task.delay(5, function()
   _whBufferTimer = nil
-  -- Cooldown 10 detik antar pengiriman
-  if (tick() - _whLastSent) < 10 then
+  -- [V13-FIX] Event-level cooldown 60 detik: 1 event raid = 1 pesan Discord
+  -- Ini adalah garis pertahanan terakhir mencegah double-send per event
+  local now = tick()
+  if (now - _whEventSentAt) < 60 then return end
+  -- Cooldown 10 detik antar pengiriman (rate limit Discord)
+  if (now - _whLastSent) < 10 then
    -- Jadwalkan ulang setelah sisa cooldown
-   local sisa = 10 - (tick() - _whLastSent)
+   local sisa = 10 - (now - _whLastSent)
    _whBufferTimer = task.delay(sisa, function()
     _whBufferTimer = nil
+    if (tick() - _whEventSentAt) < 60 then return end  -- [V13-FIX] cek event cooldown lagi
+    _whEventSentAt = tick()
     _whFlushBuffer(_webhookUrl)
    end)
    return
   end
+  _whEventSentAt = tick()  -- [V13-FIX] set event cooldown sebelum flush
   _whFlushBuffer(_webhookUrl)
  end)
 end
@@ -7990,26 +8011,8 @@ RebuildRaidList = function()
  })
  end
  if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
- -- [v_FIX] Kirim notif webhook untuk setiap raid/asc baru
- if _webhookEnabled and _webhookUrl ~= "" and not _whSilent then
-  task.delay(0.5, function()
-   for _, ent in pairs(RAID_LIVE) do
-    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-     -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-     local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-     if ent.isAscension then
-      local mn = ent.mapId and (ent.mapId - 50300) or "?"
-      local bn = ent.bossName and (" - "..ent.bossName) or ""
-      _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-     else
-      local mn = ent.mapId and (ent.mapId - 50000) or "?"
-      local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-      _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-     end
-    end
-   end
-  end)
- end
+ -- [V13-FIX] Webhook DIHAPUS dari sini. Satu-satunya sumber webhook adalah ParseChatLine
+ -- (TipsPanel, sumber paling akurat & pertama). Duplikasi dari RebuildRaidList menyebabkan spam.
 end
 
 -- Parse satu entry raidInfos
@@ -8180,27 +8183,8 @@ local function _onRaidChildAdded(child, slotName)
  -- [v58] Gunakan debounce terpusat: jangan langsung bangunkan siapapun
  -- TriggerEntryWakeup() akan tunggu 3 detik setelah notif terakhir baru fire RAID & ASC
  if TriggerEntryWakeup then TriggerEntryWakeup() end
- -- [v_FIX] Webhook langsung dari workspace watcher
- if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-  task.spawn(function()
-   task.wait(0.5)
-   for _, ent in pairs(RAID_LIVE) do
-    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-     -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-     local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-     if ent.isAscension then
-      local mn = ent.mapId and (ent.mapId - 50300) or "?"
-      local bn = ent.bossName and (" - "..ent.bossName) or ""
-      _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-     else
-      local mn = ent.mapId and (ent.mapId - 50000) or "?"
-      local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-      _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-     end
-    end
-   end
-  end)
- end
+ -- [V13-FIX] Webhook DIHAPUS dari sini. Satu-satunya sumber webhook adalah ParseChatLine
+ -- (TipsPanel). Duplikasi dari _onRaidChildAdded menyebabkan spam & double message ASC.
 end
 
 -- Child RaidEnterX hilang = raid Map X tutup
@@ -8445,24 +8429,7 @@ ConnectRaidListeners = function()
  RebuildRaidList()
  -- [v58] Gunakan debounce terpusat
  if TriggerEntryWakeup then TriggerEntryWakeup() end
- -- [v_FIX] Ganti TriggerWebhookDebounce (no-op)
- if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-  for _, ent in pairs(RAID_LIVE) do
-   if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-    -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-    local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-    if ent.isAscension then
-     local mn = ent.mapId and (ent.mapId - 50300) or "?"
-     local bn = ent.bossName and (" - "..ent.bossName) or ""
-     _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-    else
-     local mn = ent.mapId and (ent.mapId - 50000) or "?"
-     local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-     _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-    end
-   end
-  end
- end
+ -- [V13-FIX] Webhook DIHAPUS dari sini. Satu-satunya sumber webhook adalah ParseChatLine.
  end
  end)
  table.insert(_WH.raidConns, conn)
@@ -8699,7 +8666,7 @@ function StartAscensionLoop()
  -- ============================================================
  -- ResolveAscEntry: 100% IDENTIK dengan ResolveEntry (Auto Raid Normal)
  -- Satu-satunya perbedaan: pakai ASC.* dan ascList (mapNum) bukan RAID_ID_LIST (mapId)
- -- MapId masuk ke tower tetap 503xx — tidak diubah di sini
+ -- MapId masuk ke tower tetap 503xx â€” tidak diubah di sini
  -- ============================================================
  local function ResolveAscEntry()
   local ascList = GetAscensionList()
@@ -8780,7 +8747,7 @@ function StartAscensionLoop()
   end
 
   -- ============================================================
-  -- MANUAL MODE — identik RAID: 3 tahap, fallback ke terkecil
+  -- MANUAL MODE â€” identik RAID: 3 tahap, fallback ke terkecil
   -- ============================================================
   if pm == "manual" then
    ASC.manualMatchMode = "none"
@@ -9033,8 +9000,8 @@ function StartAscensionLoop()
     ReleaseMapLock("asc")
 
     -- Entry ASC = identik RAID normal, beda hanya mapId dan RUNE_IDS:
-    -- RAID: StartChallengeRaidMap({mapId = raidEntry.mapId + 100}) → 50101-50120
-    -- ASC : StartChallengeRaidMap({mapId = 50300+mn})              → Tower X = 50301-50326
+    -- RAID: StartChallengeRaidMap({mapId = raidEntry.mapId + 100}) â†’ 50101-50120
+    -- ASC : StartChallengeRaidMap({mapId = 50300+mn})              â†’ Tower X = 50301-50326
     -- mapNum sudah di-resolve oleh ResolveAscEntry (termasuk Preferred Map / Rank filter + fallback)
     local targetMapId = ResolveAscTargetMapId(mn)
     local _pm_now = ASC.pickMode or "easy"
@@ -9869,14 +9836,14 @@ function GetRaidEnemies()
  local list = {}
  local seen = {}
 
- -- [v51-FIX] Hapus hard early-return berdasarkan MapId — terlalu agresif.
+ -- [v51-FIX] Hapus hard early-return berdasarkan MapId â€” terlalu agresif.
  -- Guard lama menyebabkan scan gagal saat MapId belum update (race condition Delta Android)
  -- atau saat workspace.MapId pakai attribute name berbeda dari yang di-read.
  -- Sekarang: tetap scan workspace, hanya matikan distFilter jika mapId tidak dikenali.
  local currentMapId = GetCurrentMapId()
  local _inNormalRaid = currentMapId and (currentMapId >= 50101 and currentMapId <= 50120)
  local _inAscTower  = currentMapId and (currentMapId >= 50301 and currentMapId <= 50326)
- -- (tidak ada early return di sini — biarkan scan tetap berjalan)
+ -- (tidak ada early return di sini â€” biarkan scan tetap berjalan)
 
  -- spawnPos hanya relevan untuk Normal Raid (Ascension Tower tidak pakai RAID_SPAWN_POS)
  local activeMapId = (_inNormalRaid and RAID and RAID.serverMapId) or nil
@@ -10041,21 +10008,7 @@ local function ForceRescanRaidEnter()
             RebuildRaidList()
             -- [v58] Gunakan debounce terpusat
             if TriggerEntryWakeup then TriggerEntryWakeup() end
-            -- [v_FIX] Ganti TriggerWebhookDebounce (no-op)
-            if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-             for _, ent in pairs(RAID_LIVE) do
-              if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-               if ent.isAscension then
-                local mn = ent.mapId and (ent.mapId - 50300) or "?"
-                _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn).." ["..(ent.grade or "?").."]")
-               else
-                local mn = ent.mapId and (ent.mapId - 50000) or "?"
-                local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-                _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." ["..(ent.grade or "?").."]")
-               end
-              end
-             end
-            end
+            -- [V13-FIX] Webhook DIHAPUS dari sini. Satu-satunya sumber webhook adalah ParseChatLine.
         end
     end)
 end
@@ -12879,19 +12832,19 @@ do
  -- Label gembok (dibuat di sini, setelah semua card sudah ada)
  local _ascPrefMapLockLbl = Instance.new("TextLabel", ascPrefMapCard)
  _ascPrefMapLockLbl.Size = UDim2.new(1,0,1,0); _ascPrefMapLockLbl.BackgroundTransparency = 1
- _ascPrefMapLockLbl.Text = "🔒 Hanya aktif di Manual mode"; _ascPrefMapLockLbl.TextSize = 10
+ _ascPrefMapLockLbl.Text = "ðŸ”’ Hanya aktif di Manual mode"; _ascPrefMapLockLbl.TextSize = 10
  _ascPrefMapLockLbl.Font = Enum.Font.GothamBold; _ascPrefMapLockLbl.TextColor3 = C.TXT3
  _ascPrefMapLockLbl.ZIndex = 5; _ascPrefMapLockLbl.Visible = false
 
  local _ascRankLockLbl = Instance.new("TextLabel", ascRankCard)
  _ascRankLockLbl.Size = UDim2.new(1,0,1,0); _ascRankLockLbl.BackgroundTransparency = 1
- _ascRankLockLbl.Text = "🔒 Hanya aktif di Manual / By Rank"; _ascRankLockLbl.TextSize = 10
+ _ascRankLockLbl.Text = "ðŸ”’ Hanya aktif di Manual / By Rank"; _ascRankLockLbl.TextSize = 10
  _ascRankLockLbl.Font = Enum.Font.GothamBold; _ascRankLockLbl.TextColor3 = C.TXT3
  _ascRankLockLbl.ZIndex = 5; _ascRankLockLbl.Visible = false
 
  local _ascRuneLockLbl = Instance.new("TextLabel", ascRuneCard)
  _ascRuneLockLbl.Size = UDim2.new(1,0,1,0); _ascRuneLockLbl.BackgroundTransparency = 1
- _ascRuneLockLbl.Text = "🔒 Hanya aktif di Manual mode"; _ascRuneLockLbl.TextSize = 10
+ _ascRuneLockLbl.Text = "ðŸ”’ Hanya aktif di Manual mode"; _ascRuneLockLbl.TextSize = 10
  _ascRuneLockLbl.Font = Enum.Font.GothamBold; _ascRuneLockLbl.TextColor3 = C.TXT3
  _ascRuneLockLbl.ZIndex = 5; _ascRuneLockLbl.Visible = false
 

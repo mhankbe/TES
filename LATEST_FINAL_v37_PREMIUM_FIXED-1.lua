@@ -13248,49 +13248,9 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- [FIX v8] Gunakan _deadG_Siege lokal agar tidak ganggu _deadG global (Mass Attack)
     local _deadG_Siege = {}
 
-    -- ============================================================
-    -- [FIX v9] RACE CONDITION GATE
-    -- Tunggu konfirmasi MapId = 50201-50205 sebelum boleh menyentuh
-    -- enemy apapun. Mencegah script menyerang musuh di basemap/lobby
-    -- (50001-50020) saat player masih dalam animasi transisi masuk Siege.
-    -- ============================================================
-    local _gateWait = 0
-    local _GATE_MAX = 15.0
-    while _gateWait < _GATE_MAX and SIEGE.running do
-        local _ok, _wm = pcall(function()
-            return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
-        end)
-        if _ok and type(_wm) == "number" and _wm >= 50201 and _wm <= 50205 then
-            break
-        end
-        if onStatus then onStatus("[~] Nunggu masuk Siege map... ("..string.format("%.1f", _GATE_MAX - _gateWait).."s)") end
-        task.wait(0.3)
-        _gateWait = _gateWait + 0.3
-    end
-
-    -- Timeout gate atau loop dihentikan → abort, jangan serang apapun
-    if not SIEGE.running then
-        SIEGE.inMap = false
-        _siegeInterrupt = false
-        MODE:Release("siege")
-        return "loop_ended"
-    end
-    do
-        local _ok, _wm = pcall(function()
-            return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
-        end)
-        if not (_ok and type(_wm) == "number" and _wm >= 50201 and _wm <= 50205) then
-            if onStatus then onStatus("[!] Gagal konfirmasi masuk Siege map, abort.") end
-            SIEGE.inMap = false
-            _siegeInterrupt = false
-            MODE:Release("siege")
-            return "gate_timeout"
-        end
-    end
-    -- ============================================================
-
     -- Helper: cek apakah player sudah kembali ke baseMapId (server TP keluar)
-    -- _confirmedInSiege sudah pasti true setelah gate di atas, tidak perlu re-track
+    -- StartSiegeLoop sudah konfirmasi player masuk sebelum fungsi ini dipanggil.
+    -- isBackAtBase hanya dipakai sebagai exit guard saat player keluar dari Siege.
     local function isBackAtBase()
         local ok, wm = pcall(function()
             return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")

@@ -1249,7 +1249,7 @@ _updateSiegeDdLabel = nil  -- diisi oleh Siege exclude-map UI
 _siegeToggleState   = false -- tracking state pill toggle Siege (true=ON)
 _dungeonToggleState = false -- tracking state pill toggle Dungeon (true=ON)
 -- Global Config - expose setter dari setiap panel
-_setAutoHideToggle  = nil  -- Main: Auto Hide Reward
+_setAutoHideToggle  = nil  -- Hide: Auto Hide Reward (dipindah ke tab HIDE)
 _setAutoCollectToggle = nil -- Main: Auto Collect GOLD & ITEM
 _setAnimToggle      = nil  -- Main: Disable All Animations
 _setSellHeroToggle  = nil  -- Main: Auto Sell Hero Equip
@@ -1277,7 +1277,7 @@ _setPotatoToggle    = nil  -- Settings: Potato Mode
 _webhookModeSetIdx  = nil  -- Settings: webhook mode setter
 _webhookUrlBox      = nil  -- Settings: urlBox reference untuk restore text
 -- Visual-only setters (update pill tanpa trigger logic - untuk restore UI saat load config)
-_visAutoHide    = nil  -- Main: Auto Hide Reward visual
+_visAutoHide    = nil  -- Hide: Auto Hide Reward visual (dipindah ke tab HIDE)
 _visAutoCollect = nil  -- Main: Auto Collect GOLD & ITEM visual
 _visDisableAnim = nil  -- Main: Disable Anim visual
 _visSellHero    = nil  -- Main: Sell Hero visual
@@ -3223,71 +3223,6 @@ do
  local _sellToggleCb = nil
 
  -- ============================================================
- -- LOGIKA AUTO HIDE REWARD
- -- ============================================================
- local _autoHideConn = nil
- local _autoHideRemotes = {}
- STATE.autoHideReward = false
-
- local function DoAutoHideReward(on)
-        STATE.autoHideReward = on
-        if on then
-            local HIDE_PANELS = {"RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"}
-            local function forceHide(obj)
-                if not obj or not obj.Parent then return end
-                pcall(function()
-                    if obj:IsA("GuiObject") then
-                        obj.Visible = false
-                        obj.Position = UDim2.new(2, 0, 2, 0)
-                    elseif obj:IsA("ScreenGui") then
-                        obj.Enabled = false
-                    end
-                end)
-            end
-
-         local function checkAndHide(obj)
-             if not STATE.autoHideReward then return end
-             if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
-             
-             for _, name in ipairs(HIDE_PANELS) do
-                 if obj.Name == name or obj.Name:find("GarrisonBoss") then
-                     task.wait(0.1)
-                     if STATE.autoHideReward then forceHide(obj) end
-                     pcall(function()
-                         if obj:IsA("GuiObject") then
-                             obj:GetPropertyChangedSignal("Visible"):Connect(function()
-                                 if STATE.autoHideReward and obj.Visible then forceHide(obj) end
-                             end)
-                         elseif obj:IsA("ScreenGui") then
-                             obj:GetPropertyChangedSignal("Enabled"):Connect(function()
-                                 if STATE.autoHideReward and obj.Enabled then forceHide(obj) end
-                             end)
-                         end
-                     end)
-                     break
-                 end
-             end
-         end
-
-         -- Scan existing
-         for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do checkAndHide(obj) end
-        -- Ghost Polling untuk Auto Hide
-            task.spawn(function()
-                while STATE.autoHideReward do
-                    task.wait(0.5)
-                    pcall(function()
-                        for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
-                            for _, name in ipairs(HIDE_PANELS) do
-                                if obj.Name == name or obj.Name:find("GarrisonBoss") then
-                                    forceHide(obj)
-                                end
-                            end
-                        end
-                    end)
-                end
-            end)
-        end
-    end-- ============================================================
 -- FITUR: DISABLE ALL ANIMATIONS & DAMAGE TEXT (GHOST POLLING)
 -- ============================================================
 local _dmgTextConnWorkspace = nil
@@ -3431,14 +3366,6 @@ end
  _cnt={R=0,Y=0,B=0,other=0,skipped=0}; RefreshCounters()
  SetSellStatus("[OK] DONE RESET", Color3.fromRGB(160,220,160))
  end)
-
---  [NEW] Toggle Auto Hide Reward
- local _autoHideRow, _autoHideSet, _autoHideVis = ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup item", 1, function(on)
-     DoAutoHideReward(on)
- end)
- _setAutoHideToggle = _autoHideSet
- _visAutoHide = _autoHideVis
- _autoHideRow.Name = "ZZZ_AutoHide" -- Trik aman! Memaksa posisinya di bawah Count RYB (LayoutOrder 1) tanpa merusak/menggeser LayoutOrder tombol lain.
 
  --  Toggle Auto Sell (DI BAWAH counter) 
  local _sellToggleRow, _sellToggleSet, _sellVis = ToggleRow(p,"AUTO SELL HERO EQUIP","Auto sell all items (except Locked)",4,function(on)
@@ -4865,6 +4792,117 @@ do
  ToggleRow(p,"HIDE ALL ANIMATION","Matikan animasi, efek, partikel. Restore penuh saat OFF.",3,function(on)
      ApplyHideAnim(on)
  end)
+
+ -- ============================================================
+ -- 4. AUTO HIDE REWARD
+ -- Sembunyikan popup reward (RewardsFrame, ResultFrame, dll)
+ -- saat muncul. Toggle OFF restore semua ke state semula.
+ -- ============================================================
+ local _hideRewardOn    = false
+ local _rewardConn      = nil
+ local _rewardAddConn   = nil
+ local _rewardCache     = {}  -- [obj] = {visible=bool, pos=UDim2, enabled=bool}
+
+ local HIDE_PANELS = {
+     "RewardsFrame","ResultFrame","RewardPanel","ChallengeGarrisonBossSuccess"
+ }
+
+ local function _isRewardPanel(obj)
+     for _, name in ipairs(HIDE_PANELS) do
+         if obj.Name == name or obj.Name:find("GarrisonBoss",1,true) then
+             return true
+         end
+     end
+     return false
+ end
+
+ local function _cacheAndHideReward(obj)
+     if not obj or not obj.Parent then return end
+     if _rewardCache[obj] then return end  -- sudah di-cache, skip
+     pcall(function()
+         if obj:IsA("ScreenGui") then
+             _rewardCache[obj] = {enabled = obj.Enabled}
+             obj.Enabled = false
+         elseif obj:IsA("GuiObject") then
+             _rewardCache[obj] = {visible = obj.Visible, pos = obj.Position}
+             obj.Visible  = false
+             obj.Position = UDim2.new(2, 0, 2, 0)
+         end
+     end)
+ end
+
+ local function _restoreAllReward()
+     for obj, state in pairs(_rewardCache) do
+         pcall(function()
+             if not obj or not obj.Parent then return end
+             if obj:IsA("ScreenGui") then
+                 obj.Enabled = state.enabled
+             elseif obj:IsA("GuiObject") then
+                 obj.Visible  = state.visible
+                 obj.Position = state.pos
+             end
+         end)
+     end
+     _rewardCache = {}
+ end
+
+ local function ApplyHideReward(on)
+     _hideRewardOn = on
+
+     -- Putus koneksi lama
+     if _rewardConn    then _rewardConn:Disconnect();    _rewardConn    = nil end
+     if _rewardAddConn then _rewardAddConn:Disconnect(); _rewardAddConn = nil end
+
+     if on then
+         -- Scan panel yang sudah ada
+         pcall(function()
+             for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
+                 if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
+             end
+         end)
+
+         -- Watch panel baru yang muncul
+         _rewardAddConn = LP.PlayerGui.ChildAdded:Connect(function(obj)
+             task.defer(function()
+                 if not _hideRewardOn then return end
+                 if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
+                 -- Cek juga descendant baru di dalam obj
+                 for _, child in ipairs(obj:GetDescendants()) do
+                     if _isRewardPanel(child) then _cacheAndHideReward(child) end
+                 end
+             end)
+         end)
+
+         -- Ghost polling: pastikan panel yang muncul ulang tetap tersembunyi
+         task.spawn(function()
+             while _hideRewardOn do
+                 task.wait(0.5)
+                 pcall(function()
+                     for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
+                         if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
+                     end
+                 end)
+             end
+         end)
+
+         -- Watch property change: kalau game paksa Visible/Enabled = true, hide lagi
+         _rewardConn = LP.PlayerGui.DescendantAdded:Connect(function(obj)
+             task.defer(function()
+                 if not _hideRewardOn then return end
+                 if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
+             end)
+         end)
+
+     else
+         -- RESTORE PENUH ke state sebelum di-hide
+         _restoreAllReward()
+     end
+ end
+
+ ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup reward. Toggle OFF restore penuh.", 4, function(on)
+     ApplyHideReward(on)
+ end)
+
 
 end -- end do PANEL HIDE
 -- ============================================================
@@ -8701,9 +8739,10 @@ function StartAscensionLoop()
  -- Satu-satunya perbedaan: pakai ASC.* dan ascList (mapNum) bukan RAID_ID_LIST (mapId)
  -- MapId masuk ke tower tetap 503xx — tidak diubah di sini
  -- ============================================================
+ -- Return: entry (match), nil+"no_tower" (tidak ada tower), nil+"no_match" (ada tower tapi filter tidak cocok)
  local function ResolveAscEntry()
   local ascList = GetAscensionList()
-  if #ascList == 0 then return nil end
+  if #ascList == 0 then return nil, "no_tower" end
 
   -- Prune expired entries (sama seperti RAID)
   local _now0 = os.time()
@@ -8715,7 +8754,7 @@ function StartAscensionLoop()
   end
   if _pruned0 then
    ascList = GetAscensionList()
-   if #ascList == 0 then return nil end
+   if #ascList == 0 then return nil, "no_tower" end
   end
 
   local pm = ASC.pickMode or "easy"
@@ -8794,7 +8833,7 @@ function StartAscensionLoop()
      table.insert(valid_asc, r)
     end
    end
-   if #valid_asc == 0 then return nil end
+   if #valid_asc == 0 then return nil, "no_match" end  -- ada tower tapi tidak ada yg cocok preferMaps
 
    -- Helper sort
    local function sortHighestRankLocal(list)
@@ -8823,9 +8862,9 @@ function StartAscensionLoop()
      ASC.manualMatchMode = "primary"
      return matched[1]
     end
-    -- Rank diset tapi tidak ada tower yang cocok -> return nil, tunggu event berikutnya
+    -- Rank diset tapi tidak ada tower yang cocok -> return nil+"no_match" agar RAID bisa fallback
     ASC.manualMatchMode = "none"
-    return nil
+    return nil, "no_match"
    end
 
    -- Tidak ada Preferred Rank diset -> fallback ke tower terkecil dari kandidat
@@ -8847,7 +8886,7 @@ function StartAscensionLoop()
     local chosen = pickByDiff(matched2)
     if chosen then return chosen end
    end
-   if pm == "byrank" then return nil end
+   if pm == "byrank" then return nil, "no_match" end  -- byrank: ada tower tapi rank tidak cocok
   end
 
   if pm == "bymap" and next(ASC.preferMaps or {}) ~= nil then
@@ -8856,7 +8895,7 @@ function StartAscensionLoop()
     if ASC.preferMaps[r.mapNum] then table.insert(mapMatched, r) end
    end
    if #mapMatched > 0 then return pickLowest(mapMatched) end
-   return nil
+   return nil, "no_match"  -- bymap: ada tower tapi map tidak cocok
   end
 
   return pickByDiff(ascList)
@@ -8903,15 +8942,46 @@ function StartAscensionLoop()
     end
 
     -- [v48] Resolve entry berdasarkan Pick Mode
-    local raidEntry = ResolveAscEntry()
+    local raidEntry, _ascReason = ResolveAscEntry()
 
-    -- Waiting loop jika tidak ada Ascension Tower tersedia
+    -- [FALLBACK FIX] Jika ada tower tapi filter tidak match + RAID.running -> fallback ke RAID siklus ini
+    if not raidEntry and _ascReason == "no_match" and RAID and RAID.running then
+     AscStatusUpdate("[Fallback] Filter tidak match - giliran Auto Raid siklus ini...", Color3.fromRGB(140,80,200))
+     if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
+     _eventOwner = "raid"
+     -- Tunggu sampai RAID selesai satu siklus atau ada tower baru yang match
+     local _fbConn
+     local _fbDone = false
+     if _ascWakeup then
+      _fbConn = _ascWakeup.Event:Connect(function()
+       _fbDone = true  -- ada event baru, coba resolve lagi
+      end)
+     end
+     while ASC.running and not _fbDone do
+      task.wait(0.5)
+      -- Cek apakah sekarang ada match (event baru bisa datang)
+      local _recheck, _recheckReason = ResolveAscEntry()
+      if _recheck then _fbDone = true; raidEntry = _recheck end
+     end
+     if _fbConn then pcall(function() _fbConn:Disconnect() end) end
+     if not raidEntry then
+      break  -- kembali ke outer while loop, cek kondisi fresh
+     end
+    end
+
+    -- Waiting loop jika tidak ada Ascension Tower tersedia (no_tower atau ASC-only)
     while ASC.running and not raidEntry do
      local ascList = GetAscensionList()
      local _pm = ASC.pickMode or "easy"
-     -- [v61 CYCLEFIX] Jika RAID sedang fallback di siklus ini, ASC harus standby
-     -- Tidak boleh masuk Tower sampai siklus event baru datang (TriggerEntryWakeup reset flag)
-     if _raidFallbackActive and RAID.running then
+     local _, _curReason = ResolveAscEntry()
+     -- Jika ada tower tapi filter tidak match dan RAID running -> fallback
+     -- (ini handle kasus dimana tower muncul SAAT waiting loop berjalan)
+     if _curReason == "no_match" and RAID and RAID.running then
+      AscStatusUpdate("[Fallback] Filter tidak match - giliran Auto Raid...", Color3.fromRGB(140,80,200))
+      if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
+      _eventOwner = "raid"
+      break
+     elseif _raidFallbackActive and RAID.running then
       AscStatusUpdate("[Standby] RAID fallback aktif siklus ini - tunggu siklus event baru...", Color3.fromRGB(140,80,200))
      elseif #ascList == 0 then
       if RAID.running then
@@ -8977,7 +9047,15 @@ function StartAscensionLoop()
      elseif _raidFallbackActive and RAID.running then
       raidEntry = nil  -- fallback lama (v61 compat)
      else
-      raidEntry = ResolveAscEntry()
+      local _re2, _reason2 = ResolveAscEntry()
+      raidEntry = _re2
+      -- Jika ada tower tapi filter tidak match dan RAID running -> fallback ke RAID
+      if not _re2 and _reason2 == "no_match" and RAID and RAID.running then
+       AscStatusUpdate("[Fallback] Filter tidak match - giliran Auto Raid...", Color3.fromRGB(140,80,200))
+       if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
+       _eventOwner = "raid"
+       break  -- keluar waiting loop, biarkan RAID jalan
+      end
      end
     end
     if not ASC.running then break end

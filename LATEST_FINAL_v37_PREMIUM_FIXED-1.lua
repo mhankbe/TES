@@ -4803,15 +4803,30 @@ do
  local _rewardAddConn   = nil
  local _rewardCache     = {}  -- [obj] = {visible=bool, pos=UDim2, enabled=bool}
 
+ -- Panel reward yang boleh disembunyikan (exact match ONLY)
  local HIDE_PANELS = {
      "RewardsFrame","ResultFrame","RewardPanel","ChallengeGarrisonBossSuccess"
  }
 
+ -- Keyword panel Siege/Raid yang WAJIB dikecualikan dari hide
+ -- (panel count, timer, dan reward trigger server)
+ local _REWARD_WHITELIST_KW = {
+     "cityraid","city_raid","garrisoncityraid","garrisonboss",
+     "siege","cityraidpanel","cityraidenterpanel",
+     "raidcityresult","garrisonraidresult","citycount","citytimer",
+     "raidcount","raidtimer","ascension","bosscount",
+ }
+
  local function _isRewardPanel(obj)
+     local n = obj.Name
+     local nLow = n:lower()
+     -- [FIX] Cek whitelist dulu: kalau nama mengandung keyword siege/raid -> SKIP
+     for _, kw in ipairs(_REWARD_WHITELIST_KW) do
+         if nLow:find(kw, 1, true) then return false end
+     end
+     -- Exact match saja untuk panel reward
      for _, name in ipairs(HIDE_PANELS) do
-         if obj.Name == name or obj.Name:find("GarrisonBoss",1,true) then
-             return true
-         end
+         if n == name then return true end
      end
      return false
  end
@@ -4819,6 +4834,9 @@ do
  local function _cacheAndHideReward(obj)
      if not obj or not obj.Parent then return end
      if _rewardCache[obj] then return end  -- sudah di-cache, skip
+     -- [FIX] Jangan hide saat player sedang di dalam Raid atau Siege
+     -- Panel count/timer di-spawn server saat masuk, wajib tetap visible
+     if (SIEGE and SIEGE.inMap) or (RAID and RAID.inMap) then return end
      pcall(function()
          if obj:IsA("ScreenGui") then
              _rewardCache[obj] = {enabled = obj.Enabled}

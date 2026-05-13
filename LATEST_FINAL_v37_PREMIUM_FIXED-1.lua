@@ -4803,15 +4803,30 @@ do
  local _rewardAddConn   = nil
  local _rewardCache     = {}  -- [obj] = {visible=bool, pos=UDim2, enabled=bool}
 
+ -- Panel reward yang boleh disembunyikan (exact match ONLY)
  local HIDE_PANELS = {
      "RewardsFrame","ResultFrame","RewardPanel","ChallengeGarrisonBossSuccess"
  }
 
+ -- Keyword panel Siege/Raid yang WAJIB dikecualikan dari hide
+ -- (panel count, timer, dan reward trigger server)
+ local _REWARD_WHITELIST_KW = {
+     "cityraid","city_raid","garrisoncityraid","garrisonboss",
+     "siege","cityraidpanel","cityraidenterpanel",
+     "raidcityresult","garrisonraidresult","citycount","citytimer",
+     "raidcount","raidtimer","ascension","bosscount",
+ }
+
  local function _isRewardPanel(obj)
+     local n = obj.Name
+     local nLow = n:lower()
+     -- [FIX] Cek whitelist dulu: kalau nama mengandung keyword siege/raid -> SKIP
+     for _, kw in ipairs(_REWARD_WHITELIST_KW) do
+         if nLow:find(kw, 1, true) then return false end
+     end
+     -- Exact match saja untuk panel reward
      for _, name in ipairs(HIDE_PANELS) do
-         if obj.Name == name or obj.Name:find("GarrisonBoss",1,true) then
-             return true
-         end
+         if n == name then return true end
      end
      return false
  end
@@ -4819,6 +4834,9 @@ do
  local function _cacheAndHideReward(obj)
      if not obj or not obj.Parent then return end
      if _rewardCache[obj] then return end  -- sudah di-cache, skip
+     -- [FIX] Jangan hide saat player sedang di dalam Raid atau Siege
+     -- Panel count/timer di-spawn server saat masuk, wajib tetap visible
+     if (SIEGE and SIEGE.inMap) or (RAID and RAID.inMap) then return end
      pcall(function()
          if obj:IsA("ScreenGui") then
              _rewardCache[obj] = {enabled = obj.Enabled}
@@ -7686,6 +7704,11 @@ _whFlushBuffer = function(url)
  local lines   = _whBuffer
  _whBuffer     = {}
  _whLastSent   = tick()
+ -- [FIX WEBHOOK] Reset _whSentCache setelah flush agar event berikutnya tidak diblok
+ -- Sebelumnya cache hanya di-reset saat RAID_LIVE kosong total, tapi kalau
+ -- RAID_LIVE tidak pernah benar-benar kosong (entry langsung diisi ulang),
+ -- event baru dengan teks identik akan terus diblok selamanya
+ _whSentCache  = {}
 
  local reqFunc = _getReqFunc()
  if not reqFunc then return end
@@ -8589,6 +8612,11 @@ function StopRaid()
   -- Ini memastikan batch notif lama tidak mencemari sesi baru
   for k in pairs(_runeGradeCache) do _runeGradeCache[k] = nil end
  end
+ -- [FIX WEBHOOK] Reset _whSentCache saat RAID_LIVE dikosongkan (event baru/fresh dari server)
+ -- Tanpa ini: event baru dengan teks identik event sebelumnya langsung di-skip karena
+ -- _whSentCache masih penuh teks lama -> notif makin berkurang seiring waktu
+ if _whResetSentCache then pcall(_whResetSentCache) end
+ if _whBuffer then _whBuffer = {} end
  if RebuildRaidList then pcall(RebuildRaidList) end
  -- [FIX] JANGAN reset setting user (difficulty/rune/grades/preferMaps) di sini!
  -- StopRaid dipanggil oleh StartRaidLoop setiap kali Start ditekan
@@ -10071,8 +10099,10 @@ local function ForceRescanRaidEnter()
                         local spawnName = info.spawnName or "RE1001"
                         
                         -- Sinkronisasi Map ID
-                        if mapId >= 50101 and mapId <= 50118 then mapId = mapId - 100 end
-                        if mapId < 50001 or mapId > 50019 then break end
+                        -- [FIX MAP20] batas atas 50118->50120 agar map 19 & 20 ikut normalize
+                        if mapId >= 50101 and mapId <= 50120 then mapId = mapId - 100 end
+                        -- [FIX MAP20] batas atas 50019->50020 agar Map 20 tidak di-break
+                        if mapId < 50001 or mapId > 50020 then break end
                         
                         currentActiveIds[raidId] = true
                         
@@ -13218,21 +13248,56 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- [FIX v8] Gunakan _deadG_Siege lokal agar tidak ganggu _deadG global (Mass Attack)
     local _deadG_Siege = {}
 
+    -- ============================================================
+    -- [FIX v9] RACE CONDITION GATE
+    -- Tunggu konfirmasi MapId = 50201-50205 sebelum boleh menyentuh
+    -- enemy apapun. Mencegah script menyerang musuh di basemap/lobby
+    -- (50001-50020) saat player masih dalam animasi transisi masuk Siege.
+    -- ============================================================
+    local _gateWait = 0
+    local _GATE_MAX = 15.0
+    while _gateWait < _GATE_MAX and SIEGE.running do
+        local _ok, _wm = pcall(function()
+            return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
+        end)
+        if _ok and type(_wm) == "number" and _wm >= 50201 and _wm <= 50205 then
+            break
+        end
+        if onStatus then onStatus("[~] Nunggu masuk Siege map... ("..string.format("%.1f", _GATE_MAX - _gateWait).."s)") end
+        task.wait(0.3)
+        _gateWait = _gateWait + 0.3
+    end
+
+    -- Timeout gate atau loop dihentikan → abort, jangan serang apapun
+    if not SIEGE.running then
+        SIEGE.inMap = false
+        _siegeInterrupt = false
+        MODE:Release("siege")
+        return "loop_ended"
+    end
+    do
+        local _ok, _wm = pcall(function()
+            return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
+        end)
+        if not (_ok and type(_wm) == "number" and _wm >= 50201 and _wm <= 50205) then
+            if onStatus then onStatus("[!] Gagal konfirmasi masuk Siege map, abort.") end
+            SIEGE.inMap = false
+            _siegeInterrupt = false
+            MODE:Release("siege")
+            return "gate_timeout"
+        end
+    end
+    -- ============================================================
+
     -- Helper: cek apakah player sudah kembali ke baseMapId (server TP keluar)
-    -- [FIX] _confirmedInSiege: hanya anggap "balik ke lobby" jika player PERNAH masuk 50201-50205 dulu
-    -- Tanpa ini, cek range 50001-50020 bisa false-positive saat player masih di baseMapId sebelum masuk siege
-    local _confirmedInSiege = false
+    -- _confirmedInSiege sudah pasti true setelah gate di atas, tidak perlu re-track
     local function isBackAtBase()
         local ok, wm = pcall(function()
             return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
         end)
         if ok and type(wm) == "number" then
-            -- Track: player sudah masuk siege map?
-            if wm >= 50201 and wm <= 50205 then _confirmedInSiege = true end
-            -- Prioritas 1: exact baseMapId
-            if baseMapId and wm == baseMapId and _confirmedInSiege then return true end
-            -- Prioritas 2: range lobby 50001-50020 HANYA setelah pernah masuk siege
-            if _confirmedInSiege and wm >= 50001 and wm <= 50020 then return true end
+            if baseMapId and wm == baseMapId then return true end
+            if wm >= 50001 and wm <= 50020 then return true end
         end
         return false
     end
@@ -13260,27 +13325,34 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
         if _deathConn then _deathConn:Disconnect(); _deathConn = nil end
         SIEGE.inMap     = false
         _siegeInterrupt = false
+        -- [FIX v9] Hentikan EnsureHeroAtkThread ghost firing setelah Siege selesai
+        _heroAtkTarget  = nil
+        _skillTarget    = nil
         MODE:Release("siege")
     end
 
     -- ============================================================
-    -- FASE 1: Tunggu musuh muncul (maks 10 detik, sama dengan MA)
+    -- FASE 1: Tunggu musuh muncul
+    -- Gate v9 sudah konfirmasi MapId=50201-50205, jadi _confirmedInSiege
+    -- tidak perlu di-track lagi di sini.
+    -- Timeout dinaikkan 10->20 detik karena enemy spawn siege bisa lambat
+    -- setelah animasi transisi map selesai.
     -- ============================================================
+    local _FASE1_MAX = 10
     local wt = 0
-    while wt < 10 and SIEGE.running and SIEGE.inMap do
-        -- Track konfirmasi masuk siege
-        pcall(function()
-            local wm = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
-            if type(wm) == "number" and wm >= 50201 and wm <= 50205 then _confirmedInSiege = true end
-        end)
+    while wt < _FASE1_MAX and SIEGE.running and SIEGE.inMap do
+        -- Guard: kalau player sudah balik ke basemap di tengah tunggu, abort
+        if isBackAtBase() then
+            if onStatus then onStatus("[!] FASE1: Player balik basemap saat tunggu musuh, abort.") end
+            cleanup(); return "exited_clean"
+        end
         local enemies = GetSiegeEnemies()
-        -- filter dead lokal
         local liveNow = 0
         for _, e in ipairs(enemies) do
             if not _deadG_Siege[e.guid] then liveNow = liveNow + 1 end
         end
         if liveNow > 0 then break end
-        if onStatus then onStatus("[~] Nunggu musuh Siege... ("..math.floor(10-wt).."s)") end
+        if onStatus then onStatus("[~] Nunggu musuh Siege... ("..math.floor(_FASE1_MAX-wt).."s)") end
         task.wait(0.4); wt = wt + 0.4
         totalTime = totalTime + 0.4
     end
@@ -13312,15 +13384,15 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     while SIEGE.running and SIEGE.inMap do
         totalTime = totalTime + 0.08
 
-        -- [FIX GODMODE] Guard realtime: STOP jika player sudah kembali ke basemap (50001-50020)
-        -- Mencegah Siege terus menyerang musuh di portal basemap setelah keluar dari Siege map
+        -- [FIX v9] Guard realtime: STOP jika player sudah kembali ke basemap (50001-50020)
+        -- Gate di atas sudah memastikan kita tidak mulai di basemap,
+        -- guard ini hanya untuk deteksi keluar setelah masuk siege (exit guard)
         do
             local _ok, _wm = pcall(function()
                 return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
             end)
             if _ok and type(_wm) == "number" then
                 if _wm >= 50001 and _wm <= 50020 then
-                    -- Player sudah di basemap, stop attack siege
                     cleanup(); return "exited_clean"
                 end
             end

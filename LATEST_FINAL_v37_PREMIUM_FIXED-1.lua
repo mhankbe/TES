@@ -13261,16 +13261,6 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
         end
         return false
     end
-    local totalTime   = 0
-    local MAX_TIME    = 300
-    local WARMUP      = 3.0
-    local STUCK_LIMIT = 5.0  -- sama dengan Mass Attack: 5 detik tanpa kill = skip
-
-    -- lastKill = jumlah SIEGE.killed saat masuk fungsi ini
-    local lastKill    = SIEGE.killed
-    local stuckT      = 0
-    local _everSawEnemy = false
-
     -- Pasang listener EnemyDeath lokal untuk Siege (tidak ganggu _deadG global)
     local _deathConn = nil
     if RE.Death then
@@ -13314,7 +13304,6 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
         if liveNow > 0 then break end
         if onStatus then onStatus("[~] Nunggu musuh Siege... ("..math.floor(_FASE1_MAX-wt).."s)") end
         task.wait(0.4); wt = wt + 0.4
-        totalTime = totalTime + 0.4
     end
 
     if not SIEGE.running or not SIEGE.inMap then
@@ -13337,91 +13326,28 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- ============================================================
     -- FASE 2: Attack loop - logika identik Mass Attack (Kill All)
     -- Keluar jika:
-    --   A) alive == 0  -> langsung sukses (tanpa timer tambahan)
-    --   B) Tidak ada kill baru dalam STUCK_LIMIT detik -> skip
-    --   C) Timeout MAX_TIME
+    -- Satu-satunya kondisi sukses: server TP player keluar dari Siege
+    -- (isBackAtBase = MapId kembali ke basemap 50001-50020)
     -- ============================================================
     while SIEGE.running and SIEGE.inMap do
-        totalTime = totalTime + 0.08
 
-        -- [FIX v9] Guard realtime: STOP jika player sudah kembali ke basemap (50001-50020)
-        -- Gate di atas sudah memastikan kita tidak mulai di basemap,
-        -- guard ini hanya untuk deteksi keluar setelah masuk siege (exit guard)
-        do
-            local _ok, _wm = pcall(function()
-                return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
-            end)
-            if _ok and type(_wm) == "number" then
-                if _wm >= 50001 and _wm <= 50020 then
-                    cleanup(); return "exited_clean"
-                end
-            end
+        -- KONDISI SUKSES: server TP player keluar → Siege selesai
+        if isBackAtBase() then
+            if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
+            cleanup(); return "exited_clean"
         end
 
-        -- Timeout global
-        if totalTime >= MAX_TIME then
-            if onStatus then onStatus("[!] Timeout "..MAX_TIME.."s - Force OUT") end
-            cleanup(); return "timeout"
-        end
-
-        -- Ambil musuh hidup dari workspace (sama persis logika MA Kill All)
+        -- Ambil musuh dan serang semua
         local rawEnemies = GetSiegeEnemies()
-        local alive = 0
         local targets = {}
         for _, e in ipairs(rawEnemies) do
             if not _deadG_Siege[e.guid] then
-                alive = alive + 1
                 table.insert(targets, e)
             end
         end
 
-        -- -- Kondisi UTAMA: Server sudah TP player keluar ke baseMapId --
-        if isBackAtBase() then
-            if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
-            -- [FIX] Panggil GainRaidsRewards untuk trigger reward dari server
-            if RE.GainRaidsRewards then
-                pcall(function() RE.GainRaidsRewards:InvokeServer(1) end)
-            end
-            cleanup(); return "exited_clean"
-        end
+        if onStatus then onStatus("[S] "..#targets.." musuh") end
 
-        -- -- Kondisi A: musuh habis tapi belum di-TP server (fallback) --
-        if alive == 0 and _everSawEnemy then
-            if onStatus then onStatus("[..] Musuh habis, tunggu server TP keluar...") end
-            -- Tunggu server TP max 2 detik
-            local _waitOut = 0
-            while _waitOut < 2 and SIEGE.running do
-                task.wait(0.3); _waitOut = _waitOut + 0.3
-                if isBackAtBase() then
-                    if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
-                    cleanup(); return "exited_clean"
-                end
-            end
-            -- Timeout tunggu TP -> anggap selesai juga
-            if onStatus then onStatus("[OK] Siege DONE (timeout tunggu TP)") end
-            cleanup(); return "exited_clean"
-        end
-
-        -- Ada musuh -> serang semua
-        _everSawEnemy = true
-        stuckT = 0  -- reset stuck karena masih ada musuh (berarti belum habis)
-
-        -- Cek apakah kill bertambah (dari SIEGE.killed yang di-update oleh EnemyDeath global)
-        if SIEGE.killed > lastKill then
-            lastKill = SIEGE.killed
-            stuckT   = 0
-        else
-            stuckT = stuckT + 0.08
-            -- -- Kondisi B: tidak bisa bunuh 1 musuh dalam STUCK_LIMIT detik -> skip --
-            if stuckT >= STUCK_LIMIT then
-                if onStatus then onStatus("[!] Stuck "..STUCK_LIMIT.."s - Force exit Siege") end
-                cleanup(); return "stuck_exit"
-            end
-        end
-
-        if onStatus then onStatus("[S] "..alive.." musuh ("..math.floor(totalTime).."s) stuck:"..string.format("%.1f",stuckT).."s") end
-
-        -- Serang semua target
         for _, e in ipairs(targets) do
             if e.model and e.model.Parent then
                 local hrp = e.model:FindFirstChild("HumanoidRootPart")

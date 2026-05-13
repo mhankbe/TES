@@ -13302,23 +13302,27 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     end
 
     -- ============================================================
-    -- FASE 1: Tunggu musuh muncul (maks 10 detik, sama dengan MA)
+    -- FASE 1: Tunggu musuh muncul
+    -- Gate v9 sudah konfirmasi MapId=50201-50205, jadi _confirmedInSiege
+    -- tidak perlu di-track lagi di sini.
+    -- Timeout dinaikkan 10->20 detik karena enemy spawn siege bisa lambat
+    -- setelah animasi transisi map selesai.
     -- ============================================================
+    local _FASE1_MAX = 10
     local wt = 0
-    while wt < 10 and SIEGE.running and SIEGE.inMap do
-        -- Track konfirmasi masuk siege
-        pcall(function()
-            local wm = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
-            if type(wm) == "number" and wm >= 50201 and wm <= 50205 then _confirmedInSiege = true end
-        end)
+    while wt < _FASE1_MAX and SIEGE.running and SIEGE.inMap do
+        -- Guard: kalau player sudah balik ke basemap di tengah tunggu, abort
+        if isBackAtBase() then
+            if onStatus then onStatus("[!] FASE1: Player balik basemap saat tunggu musuh, abort.") end
+            cleanup(); return "exited_clean"
+        end
         local enemies = GetSiegeEnemies()
-        -- filter dead lokal
         local liveNow = 0
         for _, e in ipairs(enemies) do
             if not _deadG_Siege[e.guid] then liveNow = liveNow + 1 end
         end
         if liveNow > 0 then break end
-        if onStatus then onStatus("[~] Nunggu musuh Siege... ("..math.floor(10-wt).."s)") end
+        if onStatus then onStatus("[~] Nunggu musuh Siege... ("..math.floor(_FASE1_MAX-wt).."s)") end
         task.wait(0.4); wt = wt + 0.4
         totalTime = totalTime + 0.4
     end

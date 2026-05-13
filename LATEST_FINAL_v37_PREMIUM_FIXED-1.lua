@@ -7704,11 +7704,9 @@ _whFlushBuffer = function(url)
  local lines   = _whBuffer
  _whBuffer     = {}
  _whLastSent   = tick()
- -- [FIX WEBHOOK] Reset _whSentCache setelah flush agar event berikutnya tidak diblok
- -- Sebelumnya cache hanya di-reset saat RAID_LIVE kosong total, tapi kalau
- -- RAID_LIVE tidak pernah benar-benar kosong (entry langsung diisi ulang),
- -- event baru dengan teks identik akan terus diblok selamanya
- _whSentCache  = {}
+ -- _whSentCache TIDAK di-reset di sini.
+ -- Cache hidup selama satu event server, hanya di-reset oleh StopRaid (RAID_LIVE clear).
+ -- Reset di sini menyebabkan spam: setiap flush membuka pintu untuk kirim ulang teks identik.
 
  local reqFunc = _getReqFunc()
  if not reqFunc then return end
@@ -8051,26 +8049,6 @@ RebuildRaidList = function()
  })
  end
  if _raidIdRefreshCb then pcall(_raidIdRefreshCb) end
- -- [v_FIX] Kirim notif webhook untuk setiap raid/asc baru
- if _webhookEnabled and _webhookUrl ~= "" and not _whSilent then
-  task.delay(0.5, function()
-   for _, ent in pairs(RAID_LIVE) do
-    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-     -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-     local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-     if ent.isAscension then
-      local mn = ent.mapId and (ent.mapId - 50300) or "?"
-      local bn = ent.bossName and (" - "..ent.bossName) or ""
-      _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-     else
-      local mn = ent.mapId and (ent.mapId - 50000) or "?"
-      local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-      _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-     end
-    end
-   end
-  end)
- end
 end
 
 -- Parse satu entry raidInfos
@@ -8241,27 +8219,6 @@ local function _onRaidChildAdded(child, slotName)
  -- [v58] Gunakan debounce terpusat: jangan langsung bangunkan siapapun
  -- TriggerEntryWakeup() akan tunggu 3 detik setelah notif terakhir baru fire RAID & ASC
  if TriggerEntryWakeup then TriggerEntryWakeup() end
- -- [v_FIX] Webhook langsung dari workspace watcher
- if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-  task.spawn(function()
-   task.wait(0.5)
-   for _, ent in pairs(RAID_LIVE) do
-    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-     -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-     local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-     if ent.isAscension then
-      local mn = ent.mapId and (ent.mapId - 50300) or "?"
-      local bn = ent.bossName and (" - "..ent.bossName) or ""
-      _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-     else
-      local mn = ent.mapId and (ent.mapId - 50000) or "?"
-      local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-      _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-     end
-    end
-   end
-  end)
- end
 end
 
 -- Child RaidEnterX hilang = raid Map X tutup
@@ -8506,24 +8463,6 @@ ConnectRaidListeners = function()
  RebuildRaidList()
  -- [v58] Gunakan debounce terpusat
  if TriggerEntryWakeup then TriggerEntryWakeup() end
- -- [v_FIX] Ganti TriggerWebhookDebounce (no-op)
- if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-  for _, ent in pairs(RAID_LIVE) do
-   if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-    -- [v_FIX] Gunakan _WH_resolveGrade: formula baru ASC (raidId%100) + fallback TipsPanel
-    local _grade = _WH_resolveGrade and _WH_resolveGrade(ent) or ent.grade or "?"
-    if ent.isAscension then
-     local mn = ent.mapId and (ent.mapId - 50300) or "?"
-     local bn = ent.bossName and (" - "..ent.bossName) or ""
-     _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn)..bn.." [".._grade.."]")
-    else
-     local mn = ent.mapId and (ent.mapId - 50000) or "?"
-     local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-     _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." [".._grade.."]")
-    end
-   end
-  end
- end
  end
  end)
  table.insert(_WH.raidConns, conn)
@@ -10149,21 +10088,6 @@ local function ForceRescanRaidEnter()
             RebuildRaidList()
             -- [v58] Gunakan debounce terpusat
             if TriggerEntryWakeup then TriggerEntryWakeup() end
-            -- [v_FIX] Ganti TriggerWebhookDebounce (no-op)
-            if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
-             for _, ent in pairs(RAID_LIVE) do
-              if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
-               if ent.isAscension then
-                local mn = ent.mapId and (ent.mapId - 50300) or "?"
-                _WH.AddLine("The MaFissure appeared in Ascension Tower "..tostring(mn).." ["..(ent.grade or "?").."]")
-               else
-                local mn = ent.mapId and (ent.mapId - 50000) or "?"
-                local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
-                _WH.AddLine("The MaFissure appeared in "..tostring(mn)..","..nm.." ["..(ent.grade or "?").."]")
-               end
-              end
-             end
-            end
         end
     end)
 end

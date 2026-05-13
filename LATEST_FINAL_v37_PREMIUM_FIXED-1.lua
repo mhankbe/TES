@@ -4803,28 +4803,34 @@ do
  local _rewardAddConn   = nil
  local _rewardCache     = {}  -- [obj] = {visible=bool, pos=UDim2, enabled=bool}
 
- -- Panel reward yang boleh disembunyikan (exact match ONLY)
+ -- Panel reward yang boleh disembunyikan (exact match ONLY pada direct child PlayerGui)
+ -- RewardsFrame, ResultFrame, RewardPanel = panel hasil/reward setelah selesai raid/siege
+ -- ChallengeGarrisonBossSuccess = popup sukses siege
+ -- TIDAK termasuk: TipsFloatingPanel, RaidNoticePanel, PreviewRaid, dll
+ -- karena panel itu dipakai RaidsManager.PreviewRaidNotice + TipsManager.ShowButtonText
  local HIDE_PANELS = {
-     "RewardsFrame","ResultFrame","RewardPanel","ChallengeGarrisonBossSuccess"
+     "RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"
  }
 
- -- Keyword panel Siege/Raid yang WAJIB dikecualikan dari hide
- -- (panel count, timer, dan reward trigger server)
+ -- Keyword yang WAJIB dikecualikan (nama mengandung salah satu = skip)
  local _REWARD_WHITELIST_KW = {
+     -- Siege/CityRaid panels
      "cityraid","city_raid","garrisoncityraid","garrisonboss",
      "siege","cityraidpanel","cityraidenterpanel",
      "raidcityresult","garrisonraidresult","citycount","citytimer",
      "raidcount","raidtimer","ascension","bosscount",
+     -- Tips/Notif panels (dipakai RaidsManager.PreviewRaidNotice & TipsManager)
+     "tips","notice","notif","preview","raid","manager","button",
  }
 
  local function _isRewardPanel(obj)
      local n = obj.Name
      local nLow = n:lower()
-     -- [FIX] Cek whitelist dulu: kalau nama mengandung keyword siege/raid -> SKIP
+     -- Whitelist check dulu: nama mengandung keyword ini -> JANGAN HIDE
      for _, kw in ipairs(_REWARD_WHITELIST_KW) do
          if nLow:find(kw, 1, true) then return false end
      end
-     -- Exact match saja untuk panel reward
+     -- Exact match saja
      for _, name in ipairs(HIDE_PANELS) do
          if n == name then return true end
      end
@@ -4833,10 +4839,12 @@ do
 
  local function _cacheAndHideReward(obj)
      if not obj or not obj.Parent then return end
-     if _rewardCache[obj] then return end  -- sudah di-cache, skip
-     -- [FIX] Jangan hide saat player sedang di dalam Raid atau Siege
-     -- Panel count/timer di-spawn server saat masuk, wajib tetap visible
+     if _rewardCache[obj] then return end
+     -- Jangan hide saat player sedang di dalam Raid atau Siege
      if (SIEGE and SIEGE.inMap) or (RAID and RAID.inMap) then return end
+     -- Hanya sembunyikan ScreenGui atau Frame level atas (direct child PlayerGui)
+     -- JANGAN sentuh descendant lebih dalam - menyebabkan crash RaidsManager/TipsManager
+     if obj.Parent ~= LP.PlayerGui then return end
      pcall(function()
          if obj:IsA("ScreenGui") then
              _rewardCache[obj] = {enabled = obj.Enabled}
@@ -4872,26 +4880,24 @@ do
      if _rewardAddConn then _rewardAddConn:Disconnect(); _rewardAddConn = nil end
 
      if on then
-         -- Scan panel yang sudah ada
+         -- Scan direct children PlayerGui yang sudah ada
+         -- TIDAK scan descendants: terlalu lebar, menyebabkan crash RaidsManager/TipsManager
          pcall(function()
-             for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
+             for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
                  if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
              end
          end)
 
-         -- Watch panel baru yang muncul
+         -- Watch panel baru yang muncul (direct child saja)
          _rewardAddConn = LP.PlayerGui.ChildAdded:Connect(function(obj)
              task.defer(function()
                  if not _hideRewardOn then return end
                  if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
-                 -- Cek juga descendant baru di dalam obj
-                 for _, child in ipairs(obj:GetDescendants()) do
-                     if _isRewardPanel(child) then _cacheAndHideReward(child) end
-                 end
              end)
          end)
 
          -- Ghost polling: pastikan panel yang muncul ulang tetap tersembunyi
+         -- DescendantAdded DIHAPUS: menyebabkan crash saat RaidsManager spawn notif element
          task.spawn(function()
              while _hideRewardOn do
                  task.wait(0.5)
@@ -4901,14 +4907,6 @@ do
                      end
                  end)
              end
-         end)
-
-         -- Watch property change: kalau game paksa Visible/Enabled = true, hide lagi
-         _rewardConn = LP.PlayerGui.DescendantAdded:Connect(function(obj)
-             task.defer(function()
-                 if not _hideRewardOn then return end
-                 if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
-             end)
          end)
 
      else

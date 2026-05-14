@@ -4817,8 +4817,21 @@ do
      "MainPanel","SettingPanel",
  }
 
+ local function _hasWhitelistedAncestor(obj)
+     local p = obj.Parent
+     while p and p ~= LP.PlayerGui do
+         for _, name in ipairs(PANEL_WHITELIST) do
+             if p.Name == name then return true end
+         end
+         p = p.Parent
+     end
+     return false
+ end
+
  local function _forceHide(obj)
      if not obj or not obj.Parent then return end
+     if _isWhitelisted(obj) then return end
+     if _hasWhitelistedAncestor(obj) then return end
      pcall(function()
          if obj:IsA("GuiObject") then
              -- Cache sebelum hide (untuk restore)
@@ -4847,6 +4860,7 @@ do
      if not _hideRewardOn then return end
      if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
      if _isWhitelisted(obj) then return end
+     if _hasWhitelistedAncestor(obj) then return end
      for _, name in ipairs(HIDE_PANELS) do
          -- Exact match + substring match GarrisonBoss (sama persis HIDE_REWARD.lua)
          if obj.Name == name or obj.Name:find("GarrisonBoss") then

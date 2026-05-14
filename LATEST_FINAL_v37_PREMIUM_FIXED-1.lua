@@ -4802,7 +4802,7 @@ do
  local _autoHideConn  = nil
  local _rewardCache   = {}  -- [obj] = {visible, pos, enabled} untuk restore
 
- local HIDE_PANELS = {"RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"}
+ local HIDE_PANELS = {"RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess", "TipsPanel"}
 
  local function _forceHide(obj)
      if not obj or not obj.Parent then return end
@@ -4870,6 +4870,18 @@ do
      if on then
          -- Scan GetDescendants (sama persis HIDE_REWARD.lua)
          for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do _checkAndHide(obj) end
+
+         -- [FIX TipsPanel] TipsPanel sudah exist dari awal, hanya toggle Enabled
+         -- _checkAndHide harus dipanggil langsung untuk pasang property watch
+         pcall(function()
+             local tp = LP.PlayerGui:FindFirstChild("TipsPanel")
+             if tp then
+                 if tp.Enabled then _forceHide(tp) end
+                 tp:GetPropertyChangedSignal("Enabled"):Connect(function()
+                     if _hideRewardOn and tp.Enabled then _forceHide(tp) end
+                 end)
+             end
+         end)
 
          -- Watch child baru masuk PlayerGui
          _autoHideConn = LP.PlayerGui.ChildAdded:Connect(function(obj)

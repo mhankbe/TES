@@ -4795,86 +4795,71 @@ do
 
  -- ============================================================
  -- 4. AUTO HIDE REWARD
- -- Logika 1:1 dari HIDE_REWARD.lua (referensi asli)
- -- + cache restore dipertahankan dari V15 (toggle OFF kembalikan state semula)
+ -- 1:1 dari HIDE_REWARD.lua + cache restore untuk toggle OFF
  -- ============================================================
- local _hideRewardOn  = false
- local _autoHideConn  = nil
- local _rewardCache   = {}  -- [obj] = {visible, pos, enabled} untuk restore
+ local STATE_autoHideReward = false
+ local _autoHideConn        = nil
+ local _rewardCache         = {}  -- cache state sebelum di-hide, untuk restore
 
- local HIDE_PANELS = {"RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess", "TipsPanel"}
+ local HIDE_PANELS = {
+     "RewardsFrame","ResultFrame","RewardPanel",
+     "ChallengeGarrisonBossSuccess","TipsPanel"
+ }
 
- -- Whitelist: panel yang TIDAK BOLEH di-hide (exact match nama ScreenGui)
+ -- Panel game yang WAJIB tidak disentuh sama sekali
  local PANEL_WHITELIST = {
-     -- Panel game utama (inventory, equip, shop, dll)
      "EquipmentPanel","HeroListPanel","ItemsPanel","TeleportPanel",
      "ShopPanel","MountPanel","HeroEquipPanel","HaloPanel",
      "GemsPanel","AntiquePanel","BreathingPanel",
-     -- Panel seasonal/login reward
      "SeasonPassPanel","SevenLoginPanel","OnlineRewardPanel",
      "OldSeasonPassPanel","ChristmasSpinPanel",
-     -- Panel utama & setting
      "MainPanel","SettingPanel",
  }
 
- local function _hasWhitelistedAncestor(obj)
-     local p = obj.Parent
-     while p and p ~= LP.PlayerGui do
-         for _, name in ipairs(PANEL_WHITELIST) do
-             if p.Name == name then return true end
-         end
-         p = p.Parent
+ local function _inWhitelist(name)
+     for _, w in ipairs(PANEL_WHITELIST) do
+         if name == w then return true end
      end
      return false
  end
 
- local function _forceHide(obj)
+ local function forceHide(obj)
      if not obj or not obj.Parent then return end
-     if _isWhitelisted(obj) then return end
-     if _hasWhitelistedAncestor(obj) then return end
+     -- Skip panel whitelist
+     if _inWhitelist(obj.Name) then return end
      pcall(function()
          if obj:IsA("GuiObject") then
-             -- Cache sebelum hide (untuk restore)
+             -- Cache untuk restore
              if not _rewardCache[obj] then
-                 _rewardCache[obj] = {visible = obj.Visible, pos = obj.Position}
+                 _rewardCache[obj] = {visible=obj.Visible, pos=obj.Position}
              end
              obj.Visible  = false
-             obj.Position = UDim2.new(2, 0, 2, 0)
+             obj.Position = UDim2.new(2,0,2,0)
          elseif obj:IsA("ScreenGui") then
              if not _rewardCache[obj] then
-                 _rewardCache[obj] = {enabled = obj.Enabled}
+                 _rewardCache[obj] = {enabled=obj.Enabled}
              end
              obj.Enabled = false
          end
      end)
  end
 
- local function _isWhitelisted(obj)
-     for _, name in ipairs(PANEL_WHITELIST) do
-         if obj.Name == name then return true end
-     end
-     return false
- end
-
- local function _checkAndHide(obj)
-     if not _hideRewardOn then return end
+ local function checkAndHide(obj)
+     if not STATE_autoHideReward then return end
      if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
-     if _isWhitelisted(obj) then return end
-     if _hasWhitelistedAncestor(obj) then return end
+     if _inWhitelist(obj.Name) then return end
      for _, name in ipairs(HIDE_PANELS) do
-         -- Exact match + substring match GarrisonBoss (sama persis HIDE_REWARD.lua)
          if obj.Name == name or obj.Name:find("GarrisonBoss") then
              task.wait(0.1)
-             if _hideRewardOn then _forceHide(obj) end
-             -- Property watch: kalau game paksa visible/enabled lagi, hide ulang
+             if STATE_autoHideReward then forceHide(obj) end
              pcall(function()
                  if obj:IsA("GuiObject") then
                      obj:GetPropertyChangedSignal("Visible"):Connect(function()
-                         if _hideRewardOn and obj.Visible then _forceHide(obj) end
+                         if STATE_autoHideReward and obj.Visible then forceHide(obj) end
                      end)
                  elseif obj:IsA("ScreenGui") then
                      obj:GetPropertyChangedSignal("Enabled"):Connect(function()
-                         if _hideRewardOn and obj.Enabled then _forceHide(obj) end
+                         if STATE_autoHideReward and obj.Enabled then forceHide(obj) end
                      end)
                  end
              end)
@@ -4899,45 +4884,30 @@ do
  end
 
  local function DoAutoHideReward(on)
-     _hideRewardOn = on
+     STATE_autoHideReward = on
      if _autoHideConn then _autoHideConn:Disconnect(); _autoHideConn = nil end
 
      if on then
-         -- TIDAK scan GetDescendants di awal: terlalu agresif, menyebabkan
-         -- crash game internal (EquipmentPanel, UIManager) karena panel
-         -- di-disable sebelum game siap load module-nya.
-         -- Cukup pantau saja - hide hanya saat panel benar-benar muncul.
+         -- Scan existing descendants (sama persis HIDE_REWARD.lua)
+         for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
+             checkAndHide(obj)
+         end
 
-         -- TipsPanel: sudah exist dari awal, pantau via property watch saja
-         -- JANGAN langsung hide meski Enabled=true saat toggle ON
-         pcall(function()
-             local tp = LP.PlayerGui:FindFirstChild("TipsPanel")
-             if tp then
-                 tp:GetPropertyChangedSignal("Enabled"):Connect(function()
-                     if _hideRewardOn and tp.Enabled then
-                         task.wait(0.1)
-                         _forceHide(tp)
-                     end
-                 end)
-             end
-         end)
-
-         -- Watch child baru masuk PlayerGui
-         -- task.wait(0.2): beri game waktu load module sebelum di-hide
+         -- Watch child baru
          _autoHideConn = LP.PlayerGui.ChildAdded:Connect(function(obj)
-             task.delay(0.2, function() _checkAndHide(obj) end)
+             task.defer(function() checkAndHide(obj) end)
          end)
 
          -- Ghost polling tiap 0.5 detik (sama persis HIDE_REWARD.lua)
          task.spawn(function()
-             while _hideRewardOn do
+             while STATE_autoHideReward do
                  task.wait(0.5)
                  pcall(function()
                      for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
-                         if not _isWhitelisted(obj) then
+                         if not _inWhitelist(obj.Name) then
                              for _, name in ipairs(HIDE_PANELS) do
                                  if obj.Name == name or obj.Name:find("GarrisonBoss") then
-                                     _forceHide(obj)
+                                     forceHide(obj)
                                  end
                              end
                          end
@@ -4946,12 +4916,15 @@ do
              end
          end)
      else
-         -- Toggle OFF: restore semua ke state sebelum di-hide
+         -- Toggle OFF: restore semua ke state semula
          _restoreAllReward()
      end
  end
 
  local _autoHideRow, _autoHideSet, _autoHideVis = ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup reward. Toggle OFF restore penuh.", 4, function(on)
+     DoAutoHideReward(on)
+ end)
+
      DoAutoHideReward(on)
  end)
  if _setAutoHideToggle == nil then _setAutoHideToggle = _autoHideSet end

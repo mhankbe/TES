@@ -7843,9 +7843,88 @@ _WH.AddLine = function(text)
  end)
 end
 
--- Alias lama agar kode lain yang memanggil SendWebhookRaid tidak error
-_WH.SendRaid  = function(url) _whFlushBuffer(url) end
-SendWebhookRaid  = function(url) _whFlushBuffer(url) end
+-- SendRaid: build pesan langsung dari RAID_LIVE (tidak bergantung _whBuffer)
+-- Identik dengan SendSiege yang build dari SIEGE.live
+_WH.SendRaid = function(url)
+ if not url or url == "" then return end
+ if not RAID_LIVE or not next(RAID_LIVE) then return end
+ local reqFunc = _getReqFunc()
+ if not reqFunc then return end
+ local HS = game:GetService("HttpService")
+ local isDiscord  = url:find("discord%.com/api/webhooks")
+ local isTelegram = url:find("api%.telegram%.org")
+
+ local entries_normal, entries_at = {}, {}
+ local topGrade = "E"
+ for _, ent in pairs(RAID_LIVE) do
+  local mn, grade
+  if ent.isAscension then
+   mn = ent.mapId and (ent.mapId - 50300)
+   if not mn then continue end
+   grade = (RAID_CONFIG_GRADE and ent.raidId and RAID_CONFIG_GRADE[ent.raidId])
+        or (_runeGradeCache and (_runeGradeCache[-mn] or _runeGradeCache[mn]))
+        or ent.grade or "?"
+   if (GRADE_RANK_W[grade] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = grade end
+   table.insert(entries_at, {mapNum=mn, grade=grade})
+  else
+   mn = ent.mapId and (ent.mapId - 50000)
+   if not mn then continue end
+   grade = (RAID_CONFIG_GRADE and ent.raidId and RAID_CONFIG_GRADE[ent.raidId])
+        or (_runeGradeCache and _runeGradeCache[mn])
+        or ent.grade or "?"
+   local mapName = MAP_NAMES and MAP_NAMES[mn] or ("Map "..mn)
+   if (GRADE_RANK_W[grade] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = grade end
+   table.insert(entries_normal, {mapNum=mn, mapName=mapName, grade=grade})
+  end
+ end
+
+ local total = #entries_normal + #entries_at
+ if total == 0 then return end
+
+ if isDiscord then
+  local fields = {}
+  if #entries_normal > 0 then
+   local valLines = {}
+   for _, e in ipairs(entries_normal) do
+    local gs = e.grade ~= "?" and ("**["..e.grade.."**]") or "[?]"
+    table.insert(valLines, gs.." Map "..e.mapNum.." - "..e.mapName)
+   end
+   table.insert(fields, {name="Normal Raid ("..#entries_normal..")", value=table.concat(valLines,"
+"), inline=false})
+  end
+  if #entries_at > 0 then
+   local valLines = {}
+   for _, e in ipairs(entries_at) do
+    local gs = e.grade ~= "?" and ("**["..e.grade.."**]") or "[?]"
+    table.insert(valLines, gs.." Tower "..e.mapNum)
+   end
+   table.insert(fields, {name="Ascension Tower ("..#entries_at..")", value=table.concat(valLines,"
+"), inline=false})
+  end
+  local color = GRADE_COLOR[topGrade] or GRADE_COLOR["E"]
+  local payload = {embeds={{
+   title="[RAID OPEN] Rank "..topGrade,
+   description="Total: **"..total.."** raid aktif",
+   color=color, fields=fields,
+   footer={text="ASH GUI FLa Project"},
+  }}}
+  pcall(function()
+   reqFunc({Url=url, Method="POST", Headers={["Content-Type"]="application/json"}, Body=HS:JSONEncode(payload)})
+  end)
+ elseif isTelegram then
+  local out = {"[RAID OPEN] Rank "..topGrade}
+  for _, e in ipairs(entries_normal) do
+   table.insert(out, "["..e.grade.."] Map "..e.mapNum.." - "..e.mapName)
+  end
+  for _, e in ipairs(entries_at) do
+   table.insert(out, "["..e.grade.."] Tower "..e.mapNum)
+  end
+  _doSend(url, table.concat(out, "
+"))
+ end
+ _whLastSent = tick()
+end
+SendWebhookRaid = function(url) _WH.SendRaid(url) end
 _WH.SendSiege = function(url)
  -- Siege tetap pakai SIEGE.live (tidak ada TipsPanel untuk Siege)
  local SIEGE_NAMES = {
@@ -7930,15 +8009,25 @@ TriggerEntryWakeup = function()
         end
 
         if _hasAscEntry then
-            -- ASC dipanggil. RAID tetap duduk.
             _eventOwner = "asc"
             _raidFallbackActive = false
             if _ascWakeup then pcall(function() _ascWakeup:Fire() end) end
         else
-            -- RAID dipanggil. ASC tetap duduk.
             _eventOwner = "raid"
             _raidFallbackActive = true
             if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
+        end
+
+        -- Auto-send webhook saat event masuk (setelah debounce 3 detik data stabil)
+        if _webhookEnabled and _webhookUrl and _webhookUrl ~= "" and not _whSilent then
+            local _mode = _webhookMode or "both"
+            if _mode == "raid" or _mode == "both" then
+                local hasRaid = false
+                for _ in pairs(RAID_LIVE) do hasRaid = true; break end
+                if hasRaid then
+                    task.spawn(function() pcall(function() _WH.SendRaid(_webhookUrl) end) end)
+                end
+            end
         end
     end)
 end
@@ -16364,7 +16453,7 @@ do
  })
  end)
  _ourCall = false
- if not ok then task.wait(0.5); break end
+ if not ok then task.wait(0.1); break end
 
  -- [FIX v38] Tangkap hasil quirk weapon - scan luas tanpa filter W_QUIRK_MAP
  local gotId = nil
@@ -16540,7 +16629,7 @@ do
 
  if not ok then
  setStatus("[!] Error - retry...", Color3.fromRGB(255,100,60))
- task.wait(0.5); break
+ task.wait(0.1); break
  end
 
  -- [v216] Parse gradeId rekursif - confirmed ada di res.data.grade

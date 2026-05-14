@@ -16453,7 +16453,7 @@ do
  })
  end)
  _ourCall = false
- if not ok then task.wait(0.1); break end
+ if not ok then task.wait(0.5); break end
 
  -- [FIX v38] Tangkap hasil quirk weapon - scan luas tanpa filter W_QUIRK_MAP
  local gotId = nil
@@ -16629,7 +16629,7 @@ do
 
  if not ok then
  setStatus("[!] Error - retry...", Color3.fromRGB(255,100,60))
- task.wait(0.1); break
+ task.wait(0.5); break
  end
 
  -- [v216] Parse gradeId rekursif - confirmed ada di res.data.grade

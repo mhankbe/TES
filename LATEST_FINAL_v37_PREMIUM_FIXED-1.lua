@@ -7399,7 +7399,9 @@ local function _processMsg(raw)
     local now = tick()
 
     -- [v273 FIX] Short-term memory: 3 menit (180 detik)
-    if _chatSeen[key] and (now - _chatSeen[key]) < 180 then 
+    -- TTL 30 detik: cukup untuk deduplicate burst TipsPanel dalam 1 event,
+    -- tapi tidak memblok event server berikutnya (interval raid biasanya > 1 menit)
+    if _chatSeen[key] and (now - _chatSeen[key]) < 30 then 
         return 
     end
     
@@ -7411,7 +7413,7 @@ local function _processMsg(raw)
     for _ in pairs(_chatSeen) do count = count + 1 end
     if count > 50 then
         for k, t in pairs(_chatSeen) do
-            if (now - t) > 180 then _chatSeen[k] = nil end
+            if (now - t) > 30 then _chatSeen[k] = nil end
         end
     end
 end
@@ -8214,9 +8216,38 @@ local function _onRaidChildAdded(child, slotName)
    or ("Map ".._mn.." - "..(MAP_NAMES[_mn] or "Map ".._mn).." [?]"),
  }
  RebuildRaidList()
- -- [v58] Gunakan debounce terpusat: jangan langsung bangunkan siapapun
- -- TriggerEntryWakeup() akan tunggu 3 detik setelah notif terakhir baru fire RAID & ASC
+ -- [v58] Gunakan debounce terpusat
  if TriggerEntryWakeup then TriggerEntryWakeup() end
+ -- Fallback webhook: kirim via AddLine jika ParseChatLine belum sempat
+ -- (TipsPanel tidak muncul / terlambat). Hanya kirim entry yang grade-nya
+ -- sudah resolved dan belum ada di _whSentCache.
+ if _webhookEnabled and _webhookUrl ~= "" and not _whSilent then
+  task.delay(4, function()  -- tunggu 4 detik beri ParseChatLine kesempatan duluan
+   if not _webhookEnabled or _whSilent then return end
+   for _, ent in pairs(RAID_LIVE) do
+    if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
+     local mn, txt
+     if ent.isAscension then
+      mn = ent.mapId and (ent.mapId - 50300)
+      if mn then
+       local g = (RAID_CONFIG_GRADE and ent.raidId and RAID_CONFIG_GRADE[ent.raidId])
+              or (_runeGradeCache and _runeGradeCache[-mn]) or ent.grade or "?"
+       txt = "The MaFissure appeared in Ascension Tower "..mn.." ["..g.."]"
+      end
+     else
+      mn = ent.mapId and (ent.mapId - 50000)
+      if mn then
+       local g = (RAID_CONFIG_GRADE and ent.raidId and RAID_CONFIG_GRADE[ent.raidId])
+              or (_runeGradeCache and _runeGradeCache[mn]) or ent.grade or "?"
+       local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..mn)
+       txt = "The MaFissure appeared in "..mn..","..nm.." ["..g.."]"
+      end
+     end
+     if txt then _WH.AddLine(txt) end
+    end
+   end
+  end)
+ end
 end
 
 -- Child RaidEnterX hilang = raid Map X tutup

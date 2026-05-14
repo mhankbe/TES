@@ -4811,16 +4811,21 @@ do
  local HIDE_PANELS = {
      "RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"
  }
+ -- Panel yang di-hide via substring match (semua varian nama GarrisonBoss popup)
+ local HIDE_PANELS_SUB = {
+     "GarrisonBossSuccess", "GarrisonBossResult", "GarrisonBossReward",
+ }
 
  -- Keyword yang WAJIB dikecualikan (nama mengandung salah satu = skip)
+ -- HANYA panel count/timer/enter Siege & Tips notif yang dikecualikan
+ -- "garrisonboss" TIDAK ada di sini agar ChallengeGarrisonBossSuccess tetap di-hide
  local _REWARD_WHITELIST_KW = {
-     -- Siege/CityRaid panels
-     "cityraid","city_raid","garrisoncityraid","garrisonboss",
-     "siege","cityraidpanel","cityraidenterpanel",
-     "raidcityresult","garrisonraidresult","citycount","citytimer",
-     "raidcount","raidtimer","ascension","bosscount",
-     -- Tips/Notif panels (dipakai RaidsManager.PreviewRaidNotice & TipsManager)
-     "tips","notice","notif","preview","raid","manager","button",
+     -- Panel count/timer CityRaid (bukan reward, jangan di-hide)
+     "cityraid","city_raid","garrisoncityraid",
+     "cityraidpanel","cityraidenterpanel",
+     "citycount","citytimer","raidcount","raidtimer","bosscount",
+     -- Tips/Notif panels (RaidsManager.PreviewRaidNotice & TipsManager)
+     "tipsfloating","tipsmanager","raidnotice","previewraid",
  }
 
  local function _isRewardPanel(obj)
@@ -4830,9 +4835,13 @@ do
      for _, kw in ipairs(_REWARD_WHITELIST_KW) do
          if nLow:find(kw, 1, true) then return false end
      end
-     -- Exact match saja
+     -- Exact match
      for _, name in ipairs(HIDE_PANELS) do
          if n == name then return true end
+     end
+     -- Substring match untuk GarrisonBoss popup variants
+     for _, sub in ipairs(HIDE_PANELS_SUB) do
+         if n:find(sub, 1, true) then return true end
      end
      return false
  end
@@ -13365,20 +13374,33 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     end
 
     -- ============================================================
-    -- FASE 2: Attack loop - logika identik Mass Attack (Kill All)
-    -- Keluar jika:
-    -- Satu-satunya kondisi sukses: server TP player keluar dari Siege
-    -- (isBackAtBase = MapId kembali ke basemap 50001-50020)
+    -- FASE 2: Attack loop
+    -- Stop jika:
+    --   A) Server TP player keluar (isBackAtBase) → sukses
+    --   B) Kill count >= MAX_SIEGE_KILLS (30) → sukses, stop serang
+    -- Musuh di basemap (50001-50020) tidak pernah jadi target karena
+    -- GetSiegeEnemies() hanya scan model dalam Siege map.
     -- ============================================================
+    local MAX_SIEGE_KILLS = 30
+    local _siegeKillCount = 0
+
     while SIEGE.running and SIEGE.inMap do
 
-        -- KONDISI SUKSES: server TP player keluar → Siege selesai
+        -- KONDISI A: server TP player keluar → Siege selesai
         if isBackAtBase() then
-            if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
+            if onStatus then onStatus("[OK] Server TP keluar - Siege DONE! ("
+                .._siegeKillCount.." kill)") end
             cleanup(); return "exited_clean"
         end
 
-        -- Ambil musuh dan serang semua
+        -- KONDISI B: kill target terpenuhi → stop serang, nyatakan sukses
+        if _siegeKillCount >= MAX_SIEGE_KILLS then
+            if onStatus then onStatus("[OK] Kill target "..MAX_SIEGE_KILLS.." terpenuhi - Siege DONE!") end
+            cleanup(); return "exited_clean"
+        end
+
+        -- Ambil musuh Siege (GetSiegeEnemies hanya return musuh di map Siege,
+        -- tidak pernah return NPC basemap)
         local rawEnemies = GetSiegeEnemies()
         local targets = {}
         for _, e in ipairs(rawEnemies) do
@@ -13387,13 +13409,23 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             end
         end
 
-        if onStatus then onStatus("[S] "..#targets.." musuh") end
+        if onStatus then onStatus("[S] Kill: ".._siegeKillCount.."/"..MAX_SIEGE_KILLS
+            .." | Musuh: "..#targets) end
 
         for _, e in ipairs(targets) do
             if e.model and e.model.Parent then
                 local hrp = e.model:FindFirstChild("HumanoidRootPart")
                 if hrp then
                     local g, pos = e.guid, hrp.Position
+                    -- Track kill via Humanoid.Died
+                    local hum = e.model:FindFirstChildOfClass("Humanoid")
+                    if hum and not _deadG_Siege[g] then
+                        _deadG_Siege[g] = true  -- tandai agar tidak di-track 2x
+                        hum.Died:Connect(function()
+                            _siegeKillCount = _siegeKillCount + 1
+                            SIEGE.killed = (SIEGE.killed or 0) + 1
+                        end)
+                    end
                     task.spawn(function()
                         pcall(function() FireAllDamage(g, pos) end)
                         if #HERO_GUIDS > 0 then

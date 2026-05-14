@@ -13218,6 +13218,10 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- [FIX v8] Gunakan _deadG_Siege lokal agar tidak ganggu _deadG global (Mass Attack)
     local _deadG_Siege = {}
 
+    -- [v15] Counter kill lokal per-sesi Siege. Siege dianggap SUCCES setelah 30 kill.
+    local SIEGE_KILL_TARGET = 30
+    local _siegeKillCount   = 0
+
     -- Helper: cek apakah player sudah kembali ke baseMapId (server TP keluar)
     -- [FIX] _confirmedInSiege: hanya anggap "balik ke lobby" jika player PERNAH masuk 50201-50205 dulu
     -- Tanpa ini, cek range 50001-50020 bisa false-positive saat player masih di baseMapId sebelum masuk siege
@@ -13252,7 +13256,12 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
         _deathConn = RE.Death.OnClientEvent:Connect(function(d)
             if not d then return end
             local g = d.enemyGuid or d.guid
-            if g then _deadG_Siege[g] = true end
+            if g then
+                if not _deadG_Siege[g] then
+                    _deadG_Siege[g] = true
+                    _siegeKillCount = _siegeKillCount + 1   -- [v15] track kill per-sesi
+                end
+            end
         end)
     end
 
@@ -13353,6 +13362,15 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             cleanup(); return "exited_clean"
         end
 
+        -- -- [v15] Kondisi KILL TARGET: sudah bunuh 30 musuh -> Siege SUCCES --
+        if _siegeKillCount >= SIEGE_KILL_TARGET then
+            if onStatus then onStatus("[OK] Kill target "..SIEGE_KILL_TARGET.." tercapai (".. _siegeKillCount .." kill) - Siege SUCCES!") end
+            if RE.GainRaidsRewards then
+                pcall(function() RE.GainRaidsRewards:InvokeServer(1) end)
+            end
+            cleanup(); return "exited_clean"
+        end
+
         -- -- Kondisi A: musuh habis tapi belum di-TP server (fallback) --
         if alive == 0 and _everSawEnemy then
             if onStatus then onStatus("[..] Musuh habis, tunggu server TP keluar...") end
@@ -13387,7 +13405,7 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             end
         end
 
-        if onStatus then onStatus("[S] "..alive.." musuh ("..math.floor(totalTime).."s) stuck:"..string.format("%.1f",stuckT).."s") end
+        if onStatus then onStatus("[S] "..alive.." musuh ("..math.floor(totalTime).."s) kill:".. _siegeKillCount .."/"..SIEGE_KILL_TARGET.." stuck:"..string.format("%.1f",stuckT).."s") end
 
         -- Serang semua target
         for _, e in ipairs(targets) do
@@ -14125,6 +14143,25 @@ local function DungeonAttackLoop(onStatus)
 
     cleanup()
     return "loop_ended"
+end
+
+-- Sembunyikan popup reward setelah dungeon selesai (RewardsFrame, ResultFrame, dll)
+-- [FIX] Fungsi ini sebelumnya dipanggil tapi tidak pernah didefinisikan -> nil call error
+local function DungeonHideRewardPopup()
+    pcall(function()
+        local DUNGEON_HIDE = {"RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"}
+        for _, name in ipairs(DUNGEON_HIDE) do
+            local ui = LP.PlayerGui:FindFirstChild(name)
+            if ui then
+                if ui:IsA("ScreenGui") then
+                    ui.Enabled = false
+                elseif ui:IsA("GuiObject") then
+                    ui.Visible = false
+                    ui.Position = UDim2.new(2, 0, 2, 0)
+                end
+            end
+        end
+    end)
 end
 
 -- TP keluar dungeon ke Map 5

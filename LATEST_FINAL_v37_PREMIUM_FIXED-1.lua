@@ -10071,8 +10071,8 @@ local function ForceRescanRaidEnter()
                         local spawnName = info.spawnName or "RE1001"
                         
                         -- Sinkronisasi Map ID
-                        if mapId >= 50101 and mapId <= 50118 then mapId = mapId - 100 end
-                        if mapId < 50001 or mapId > 50019 then break end
+                        if mapId >= 50101 and mapId <= 50120 then mapId = mapId - 100 end  -- [FIX v17] 50118->50120: cover Map 19 & 20
+                        if mapId < 50001 or mapId > 50020 then break end                   -- [FIX v17] 50019->50020: jangan skip Map 20
                         
                         currentActiveIds[raidId] = true
                         
@@ -11353,7 +11353,7 @@ local function ResolveEntry()
  pcall(function()
  local wm = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
  if wm then
- ok = (wm >= 50101 and wm <= 50118)
+ ok = (wm >= 50101 and wm <= 50120) -- [FIX v17] cover Map 19 & 20
  end
  end)
  return ok

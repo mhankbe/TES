@@ -4804,6 +4804,19 @@ do
 
  local HIDE_PANELS = {"RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess", "TipsPanel"}
 
+ -- Whitelist: panel yang TIDAK BOLEH di-hide (exact match nama ScreenGui)
+ local PANEL_WHITELIST = {
+     -- Panel game utama (inventory, equip, shop, dll)
+     "EquipmentPanel","HeroListPanel","ItemsPanel","TeleportPanel",
+     "ShopPanel","MountPanel","HeroEquipPanel","HaloPanel",
+     "GemsPanel","AntiquePanel","BreathingPanel",
+     -- Panel seasonal/login reward
+     "SeasonPassPanel","SevenLoginPanel","OnlineRewardPanel",
+     "OldSeasonPassPanel","ChristmasSpinPanel",
+     -- Panel utama & setting
+     "MainPanel","SettingPanel",
+ }
+
  local function _forceHide(obj)
      if not obj or not obj.Parent then return end
      pcall(function()
@@ -4823,9 +4836,17 @@ do
      end)
  end
 
+ local function _isWhitelisted(obj)
+     for _, name in ipairs(PANEL_WHITELIST) do
+         if obj.Name == name then return true end
+     end
+     return false
+ end
+
  local function _checkAndHide(obj)
      if not _hideRewardOn then return end
      if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
+     if _isWhitelisted(obj) then return end
      for _, name in ipairs(HIDE_PANELS) do
          -- Exact match + substring match GarrisonBoss (sama persis HIDE_REWARD.lua)
          if obj.Name == name or obj.Name:find("GarrisonBoss") then
@@ -4894,9 +4915,11 @@ do
                  task.wait(0.5)
                  pcall(function()
                      for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
-                         for _, name in ipairs(HIDE_PANELS) do
-                             if obj.Name == name or obj.Name:find("GarrisonBoss") then
-                                 _forceHide(obj)
+                         if not _isWhitelisted(obj) then
+                             for _, name in ipairs(HIDE_PANELS) do
+                                 if obj.Name == name or obj.Name:find("GarrisonBoss") then
+                                     _forceHide(obj)
+                                 end
                              end
                          end
                      end

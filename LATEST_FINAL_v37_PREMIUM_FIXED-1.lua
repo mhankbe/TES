@@ -7891,8 +7891,7 @@ _WH.SendRaid = function(url)
     local gs = e.grade ~= "?" and ("**["..e.grade.."**]") or "[?]"
     table.insert(valLines, gs.." Map "..e.mapNum.." - "..e.mapName)
    end
-   table.insert(fields, {name="Normal Raid ("..#entries_normal..")", value=table.concat(valLines,"
-"), inline=false})
+   table.insert(fields, {name="Normal Raid ("..#entries_normal..")", value=table.concat(valLines,"\n"), inline=false})
   end
   if #entries_at > 0 then
    local valLines = {}
@@ -7900,8 +7899,7 @@ _WH.SendRaid = function(url)
     local gs = e.grade ~= "?" and ("**["..e.grade.."**]") or "[?]"
     table.insert(valLines, gs.." Tower "..e.mapNum)
    end
-   table.insert(fields, {name="Ascension Tower ("..#entries_at..")", value=table.concat(valLines,"
-"), inline=false})
+   table.insert(fields, {name="Ascension Tower ("..#entries_at..")", value=table.concat(valLines,"\n"), inline=false})
   end
   local color = GRADE_COLOR[topGrade] or GRADE_COLOR["E"]
   local payload = {embeds={{
@@ -7921,8 +7919,7 @@ _WH.SendRaid = function(url)
   for _, e in ipairs(entries_at) do
    table.insert(out, "["..e.grade.."] Tower "..e.mapNum)
   end
-  _doSend(url, table.concat(out, "
-"))
+  _doSend(url, table.concat(out, "\n"))
  end
  _whLastSent = tick()
 end

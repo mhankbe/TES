@@ -7860,21 +7860,23 @@ _WH.SendRaid = function(url)
   local mn, grade
   if ent.isAscension then
    mn = ent.mapId and (ent.mapId - 50300)
-   if not mn then continue end
-   grade = (RAID_CONFIG_GRADE and ent.raidId and RAID_CONFIG_GRADE[ent.raidId])
-        or (_runeGradeCache and (_runeGradeCache[-mn] or _runeGradeCache[mn]))
-        or ent.grade or "?"
-   if (GRADE_RANK_W[grade] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = grade end
-   table.insert(entries_at, {mapNum=mn, grade=grade})
+   if mn then
+    grade = (RAID_CONFIG_GRADE and ent.raidId and RAID_CONFIG_GRADE[ent.raidId])
+         or (_runeGradeCache and (_runeGradeCache[-mn] or _runeGradeCache[mn]))
+         or ent.grade or "?"
+    if (GRADE_RANK_W[grade] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = grade end
+    table.insert(entries_at, {mapNum=mn, grade=grade})
+   end
   else
    mn = ent.mapId and (ent.mapId - 50000)
-   if not mn then continue end
-   grade = (RAID_CONFIG_GRADE and ent.raidId and RAID_CONFIG_GRADE[ent.raidId])
-        or (_runeGradeCache and _runeGradeCache[mn])
-        or ent.grade or "?"
-   local mapName = MAP_NAMES and MAP_NAMES[mn] or ("Map "..mn)
-   if (GRADE_RANK_W[grade] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = grade end
-   table.insert(entries_normal, {mapNum=mn, mapName=mapName, grade=grade})
+   if mn then
+    grade = (RAID_CONFIG_GRADE and ent.raidId and RAID_CONFIG_GRADE[ent.raidId])
+         or (_runeGradeCache and _runeGradeCache[mn])
+         or ent.grade or "?"
+    local mapName = MAP_NAMES and MAP_NAMES[mn] or ("Map "..mn)
+    if (GRADE_RANK_W[grade] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = grade end
+    table.insert(entries_normal, {mapNum=mn, mapName=mapName, grade=grade})
+   end
   end
  end
 

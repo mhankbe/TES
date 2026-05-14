@@ -4795,75 +4795,57 @@ do
 
  -- ============================================================
  -- 4. AUTO HIDE REWARD
- -- Sembunyikan popup reward (RewardsFrame, ResultFrame, dll)
- -- saat muncul. Toggle OFF restore semua ke state semula.
+ -- Logika 1:1 dari HIDE_REWARD.lua (referensi asli)
+ -- + cache restore dipertahankan dari V15 (toggle OFF kembalikan state semula)
  -- ============================================================
- local _hideRewardOn    = false
- local _rewardConn      = nil
- local _rewardAddConn   = nil
- local _rewardCache     = {}  -- [obj] = {visible=bool, pos=UDim2, enabled=bool}
+ local _hideRewardOn  = false
+ local _autoHideConn  = nil
+ local _rewardCache   = {}  -- [obj] = {visible, pos, enabled} untuk restore
 
- -- Panel reward yang boleh disembunyikan (exact match ONLY pada direct child PlayerGui)
- -- RewardsFrame, ResultFrame, RewardPanel = panel hasil/reward setelah selesai raid/siege
- -- ChallengeGarrisonBossSuccess = popup sukses siege
- -- TIDAK termasuk: TipsFloatingPanel, RaidNoticePanel, PreviewRaid, dll
- -- karena panel itu dipakai RaidsManager.PreviewRaidNotice + TipsManager.ShowButtonText
- local HIDE_PANELS = {
-     "RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"
- }
- -- Panel yang di-hide via substring match (semua varian nama GarrisonBoss popup)
- local HIDE_PANELS_SUB = {
-     "GarrisonBossSuccess", "GarrisonBossResult", "GarrisonBossReward",
- }
+ local HIDE_PANELS = {"RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"}
 
- -- Keyword yang WAJIB dikecualikan (nama mengandung salah satu = skip)
- -- HANYA panel count/timer/enter Siege & Tips notif yang dikecualikan
- -- "garrisonboss" TIDAK ada di sini agar ChallengeGarrisonBossSuccess tetap di-hide
- local _REWARD_WHITELIST_KW = {
-     -- Panel count/timer CityRaid (bukan reward, jangan di-hide)
-     "cityraid","city_raid","garrisoncityraid",
-     "cityraidpanel","cityraidenterpanel",
-     "citycount","citytimer","raidcount","raidtimer","bosscount",
-     -- Tips/Notif panels (RaidsManager.PreviewRaidNotice & TipsManager)
-     "tipsfloating","tipsmanager","raidnotice","previewraid",
- }
-
- local function _isRewardPanel(obj)
-     local n = obj.Name
-     local nLow = n:lower()
-     -- Whitelist check dulu: nama mengandung keyword ini -> JANGAN HIDE
-     for _, kw in ipairs(_REWARD_WHITELIST_KW) do
-         if nLow:find(kw, 1, true) then return false end
-     end
-     -- Exact match
-     for _, name in ipairs(HIDE_PANELS) do
-         if n == name then return true end
-     end
-     -- Substring match untuk GarrisonBoss popup variants
-     for _, sub in ipairs(HIDE_PANELS_SUB) do
-         if n:find(sub, 1, true) then return true end
-     end
-     return false
- end
-
- local function _cacheAndHideReward(obj)
+ local function _forceHide(obj)
      if not obj or not obj.Parent then return end
-     if _rewardCache[obj] then return end
-     -- Jangan hide saat player sedang di dalam Raid atau Siege
-     if (SIEGE and SIEGE.inMap) or (RAID and RAID.inMap) then return end
-     -- Hanya sembunyikan ScreenGui atau Frame level atas (direct child PlayerGui)
-     -- JANGAN sentuh descendant lebih dalam - menyebabkan crash RaidsManager/TipsManager
-     if obj.Parent ~= LP.PlayerGui then return end
      pcall(function()
-         if obj:IsA("ScreenGui") then
-             _rewardCache[obj] = {enabled = obj.Enabled}
-             obj.Enabled = false
-         elseif obj:IsA("GuiObject") then
-             _rewardCache[obj] = {visible = obj.Visible, pos = obj.Position}
+         if obj:IsA("GuiObject") then
+             -- Cache sebelum hide (untuk restore)
+             if not _rewardCache[obj] then
+                 _rewardCache[obj] = {visible = obj.Visible, pos = obj.Position}
+             end
              obj.Visible  = false
              obj.Position = UDim2.new(2, 0, 2, 0)
+         elseif obj:IsA("ScreenGui") then
+             if not _rewardCache[obj] then
+                 _rewardCache[obj] = {enabled = obj.Enabled}
+             end
+             obj.Enabled = false
          end
      end)
+ end
+
+ local function _checkAndHide(obj)
+     if not _hideRewardOn then return end
+     if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
+     for _, name in ipairs(HIDE_PANELS) do
+         -- Exact match + substring match GarrisonBoss (sama persis HIDE_REWARD.lua)
+         if obj.Name == name or obj.Name:find("GarrisonBoss") then
+             task.wait(0.1)
+             if _hideRewardOn then _forceHide(obj) end
+             -- Property watch: kalau game paksa visible/enabled lagi, hide ulang
+             pcall(function()
+                 if obj:IsA("GuiObject") then
+                     obj:GetPropertyChangedSignal("Visible"):Connect(function()
+                         if _hideRewardOn and obj.Visible then _forceHide(obj) end
+                     end)
+                 elseif obj:IsA("ScreenGui") then
+                     obj:GetPropertyChangedSignal("Enabled"):Connect(function()
+                         if _hideRewardOn and obj.Enabled then _forceHide(obj) end
+                     end)
+                 end
+             end)
+             break
+         end
+     end
  end
 
  local function _restoreAllReward()
@@ -4881,52 +4863,45 @@ do
      _rewardCache = {}
  end
 
- local function ApplyHideReward(on)
+ local function DoAutoHideReward(on)
      _hideRewardOn = on
-
-     -- Putus koneksi lama
-     if _rewardConn    then _rewardConn:Disconnect();    _rewardConn    = nil end
-     if _rewardAddConn then _rewardAddConn:Disconnect(); _rewardAddConn = nil end
+     if _autoHideConn then _autoHideConn:Disconnect(); _autoHideConn = nil end
 
      if on then
-         -- Scan direct children PlayerGui yang sudah ada
-         -- TIDAK scan descendants: terlalu lebar, menyebabkan crash RaidsManager/TipsManager
-         pcall(function()
-             for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
-                 if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
-             end
+         -- Scan GetDescendants (sama persis HIDE_REWARD.lua)
+         for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do _checkAndHide(obj) end
+
+         -- Watch child baru masuk PlayerGui
+         _autoHideConn = LP.PlayerGui.ChildAdded:Connect(function(obj)
+             task.defer(function() _checkAndHide(obj) end)
          end)
 
-         -- Watch panel baru yang muncul (direct child saja)
-         _rewardAddConn = LP.PlayerGui.ChildAdded:Connect(function(obj)
-             task.defer(function()
-                 if not _hideRewardOn then return end
-                 if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
-             end)
-         end)
-
-         -- Ghost polling: pastikan panel yang muncul ulang tetap tersembunyi
-         -- DescendantAdded DIHAPUS: menyebabkan crash saat RaidsManager spawn notif element
+         -- Ghost polling tiap 0.5 detik (sama persis HIDE_REWARD.lua)
          task.spawn(function()
              while _hideRewardOn do
                  task.wait(0.5)
                  pcall(function()
                      for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
-                         if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
+                         for _, name in ipairs(HIDE_PANELS) do
+                             if obj.Name == name or obj.Name:find("GarrisonBoss") then
+                                 _forceHide(obj)
+                             end
+                         end
                      end
                  end)
              end
          end)
-
      else
-         -- RESTORE PENUH ke state sebelum di-hide
+         -- Toggle OFF: restore semua ke state sebelum di-hide
          _restoreAllReward()
      end
  end
 
- ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup reward. Toggle OFF restore penuh.", 4, function(on)
-     ApplyHideReward(on)
+ local _autoHideRow, _autoHideSet, _autoHideVis = ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup reward. Toggle OFF restore penuh.", 4, function(on)
+     DoAutoHideReward(on)
  end)
+ if _setAutoHideToggle == nil then _setAutoHideToggle = _autoHideSet end
+ if _visAutoHide == nil then _visAutoHide = _autoHideVis end
 
 
 end -- end do PANEL HIDE

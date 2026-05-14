@@ -4795,77 +4795,66 @@ do
 
  -- ============================================================
  -- 4. AUTO HIDE REWARD
- -- 1:1 dari HIDE_REWARD.lua + cache restore untuk toggle OFF
+ -- Sembunyikan popup reward (RewardsFrame, ResultFrame, dll)
+ -- saat muncul. Toggle OFF restore semua ke state semula.
  -- ============================================================
- local STATE_autoHideReward = false
- local _autoHideConn        = nil
- local _rewardCache         = {}  -- cache state sebelum di-hide, untuk restore
+ local _hideRewardOn    = false
+ local _rewardConn      = nil
+ local _rewardAddConn   = nil
+ local _rewardCache     = {}  -- [obj] = {visible=bool, pos=UDim2, enabled=bool}
 
+ -- Panel reward yang boleh disembunyikan (exact match ONLY pada direct child PlayerGui)
+ -- RewardsFrame, ResultFrame, RewardPanel = panel hasil/reward setelah selesai raid/siege
+ -- ChallengeGarrisonBossSuccess = popup sukses siege
+ -- TIDAK termasuk: TipsFloatingPanel, RaidNoticePanel, PreviewRaid, dll
+ -- karena panel itu dipakai RaidsManager.PreviewRaidNotice + TipsManager.ShowButtonText
  local HIDE_PANELS = {
-     "RewardsFrame","ResultFrame","RewardPanel",
-     "ChallengeGarrisonBossSuccess","TipsPanel"
+     "RewardsFrame", "ResultFrame", "RewardPanel", "ChallengeGarrisonBossSuccess"
  }
 
- -- Panel game yang WAJIB tidak disentuh sama sekali
- local PANEL_WHITELIST = {
-     "EquipmentPanel","HeroListPanel","ItemsPanel","TeleportPanel",
-     "ShopPanel","MountPanel","HeroEquipPanel","HaloPanel",
-     "GemsPanel","AntiquePanel","BreathingPanel",
-     "SeasonPassPanel","SevenLoginPanel","OnlineRewardPanel",
-     "OldSeasonPassPanel","ChristmasSpinPanel",
-     "MainPanel","SettingPanel",
+ -- Keyword yang WAJIB dikecualikan (nama mengandung salah satu = skip)
+ local _REWARD_WHITELIST_KW = {
+     -- Siege/CityRaid panels
+     "cityraid","city_raid","garrisoncityraid","garrisonboss",
+     "siege","cityraidpanel","cityraidenterpanel",
+     "raidcityresult","garrisonraidresult","citycount","citytimer",
+     "raidcount","raidtimer","ascension","bosscount",
+     -- Tips/Notif panels (dipakai RaidsManager.PreviewRaidNotice & TipsManager)
+     "tips","notice","notif","preview","raid","manager","button",
  }
 
- local function _inWhitelist(name)
-     for _, w in ipairs(PANEL_WHITELIST) do
-         if name == w then return true end
+ local function _isRewardPanel(obj)
+     local n = obj.Name
+     local nLow = n:lower()
+     -- Whitelist check dulu: nama mengandung keyword ini -> JANGAN HIDE
+     for _, kw in ipairs(_REWARD_WHITELIST_KW) do
+         if nLow:find(kw, 1, true) then return false end
+     end
+     -- Exact match saja
+     for _, name in ipairs(HIDE_PANELS) do
+         if n == name then return true end
      end
      return false
  end
 
- local function forceHide(obj)
+ local function _cacheAndHideReward(obj)
      if not obj or not obj.Parent then return end
-     -- Skip panel whitelist
-     if _inWhitelist(obj.Name) then return end
+     if _rewardCache[obj] then return end
+     -- Jangan hide saat player sedang di dalam Raid atau Siege
+     if (SIEGE and SIEGE.inMap) or (RAID and RAID.inMap) then return end
+     -- Hanya sembunyikan ScreenGui atau Frame level atas (direct child PlayerGui)
+     -- JANGAN sentuh descendant lebih dalam - menyebabkan crash RaidsManager/TipsManager
+     if obj.Parent ~= LP.PlayerGui then return end
      pcall(function()
-         if obj:IsA("GuiObject") then
-             -- Cache untuk restore
-             if not _rewardCache[obj] then
-                 _rewardCache[obj] = {visible=obj.Visible, pos=obj.Position}
-             end
-             obj.Visible  = false
-             obj.Position = UDim2.new(2,0,2,0)
-         elseif obj:IsA("ScreenGui") then
-             if not _rewardCache[obj] then
-                 _rewardCache[obj] = {enabled=obj.Enabled}
-             end
+         if obj:IsA("ScreenGui") then
+             _rewardCache[obj] = {enabled = obj.Enabled}
              obj.Enabled = false
+         elseif obj:IsA("GuiObject") then
+             _rewardCache[obj] = {visible = obj.Visible, pos = obj.Position}
+             obj.Visible  = false
+             obj.Position = UDim2.new(2, 0, 2, 0)
          end
      end)
- end
-
- local function checkAndHide(obj)
-     if not STATE_autoHideReward then return end
-     if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
-     if _inWhitelist(obj.Name) then return end
-     for _, name in ipairs(HIDE_PANELS) do
-         if obj.Name == name or obj.Name:find("GarrisonBoss") then
-             task.wait(0.1)
-             if STATE_autoHideReward then forceHide(obj) end
-             pcall(function()
-                 if obj:IsA("GuiObject") then
-                     obj:GetPropertyChangedSignal("Visible"):Connect(function()
-                         if STATE_autoHideReward and obj.Visible then forceHide(obj) end
-                     end)
-                 elseif obj:IsA("ScreenGui") then
-                     obj:GetPropertyChangedSignal("Enabled"):Connect(function()
-                         if STATE_autoHideReward and obj.Enabled then forceHide(obj) end
-                     end)
-                 end
-             end)
-             break
-         end
-     end
  end
 
  local function _restoreAllReward()
@@ -4883,52 +4872,52 @@ do
      _rewardCache = {}
  end
 
- local function DoAutoHideReward(on)
-     STATE_autoHideReward = on
-     if _autoHideConn then _autoHideConn:Disconnect(); _autoHideConn = nil end
+ local function ApplyHideReward(on)
+     _hideRewardOn = on
+
+     -- Putus koneksi lama
+     if _rewardConn    then _rewardConn:Disconnect();    _rewardConn    = nil end
+     if _rewardAddConn then _rewardAddConn:Disconnect(); _rewardAddConn = nil end
 
      if on then
-         -- Scan existing descendants (sama persis HIDE_REWARD.lua)
-         for _, obj in ipairs(LP.PlayerGui:GetDescendants()) do
-             checkAndHide(obj)
-         end
-
-         -- Watch child baru
-         _autoHideConn = LP.PlayerGui.ChildAdded:Connect(function(obj)
-             task.defer(function() checkAndHide(obj) end)
+         -- Scan direct children PlayerGui yang sudah ada
+         -- TIDAK scan descendants: terlalu lebar, menyebabkan crash RaidsManager/TipsManager
+         pcall(function()
+             for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
+                 if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
+             end
          end)
 
-         -- Ghost polling tiap 0.5 detik (sama persis HIDE_REWARD.lua)
+         -- Watch panel baru yang muncul (direct child saja)
+         _rewardAddConn = LP.PlayerGui.ChildAdded:Connect(function(obj)
+             task.defer(function()
+                 if not _hideRewardOn then return end
+                 if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
+             end)
+         end)
+
+         -- Ghost polling: pastikan panel yang muncul ulang tetap tersembunyi
+         -- DescendantAdded DIHAPUS: menyebabkan crash saat RaidsManager spawn notif element
          task.spawn(function()
-             while STATE_autoHideReward do
+             while _hideRewardOn do
                  task.wait(0.5)
                  pcall(function()
                      for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
-                         if not _inWhitelist(obj.Name) then
-                             for _, name in ipairs(HIDE_PANELS) do
-                                 if obj.Name == name or obj.Name:find("GarrisonBoss") then
-                                     forceHide(obj)
-                                 end
-                             end
-                         end
+                         if _isRewardPanel(obj) then _cacheAndHideReward(obj) end
                      end
                  end)
              end
          end)
+
      else
-         -- Toggle OFF: restore semua ke state semula
+         -- RESTORE PENUH ke state sebelum di-hide
          _restoreAllReward()
      end
  end
 
- local _autoHideRow, _autoHideSet, _autoHideVis = ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup reward. Toggle OFF restore penuh.", 4, function(on)
-     DoAutoHideReward(on)
+ ToggleRow(p, "AUTO HIDE REWARD", "Sembunyikan popup reward. Toggle OFF restore penuh.", 4, function(on)
+     ApplyHideReward(on)
  end)
-
-     DoAutoHideReward(on)
- end)
- if _setAutoHideToggle == nil then _setAutoHideToggle = _autoHideSet end
- if _visAutoHide == nil then _visAutoHide = _autoHideVis end
 
 
 end -- end do PANEL HIDE
@@ -13376,35 +13365,20 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     end
 
     -- ============================================================
-    -- FASE 2: Attack loop
-    -- Stop jika:
-    --   A) Server TP player keluar (isBackAtBase) → sukses
-    --   B) Kill count >= MAX_SIEGE_KILLS (30) → sukses, stop serang
-    -- Musuh di basemap (50001-50020) tidak pernah jadi target karena
-    -- GetSiegeEnemies() hanya scan model dalam Siege map.
+    -- FASE 2: Attack loop - logika identik Mass Attack (Kill All)
+    -- Keluar jika:
+    -- Satu-satunya kondisi sukses: server TP player keluar dari Siege
+    -- (isBackAtBase = MapId kembali ke basemap 50001-50020)
     -- ============================================================
-    local MAX_SIEGE_KILLS = 30
-
     while SIEGE.running and SIEGE.inMap do
 
-        -- Hitung kill dari _deadG_Siege (diisi oleh _deathConn via RE.Death)
-        local _siegeKillCount = 0
-        for _ in pairs(_deadG_Siege) do _siegeKillCount = _siegeKillCount + 1 end
-
-        -- KONDISI A: server TP player keluar → Siege selesai
+        -- KONDISI SUKSES: server TP player keluar → Siege selesai
         if isBackAtBase() then
-            if onStatus then onStatus("[OK] Server TP keluar - Siege DONE! ("
-                .._siegeKillCount.." kill)") end
+            if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
             cleanup(); return "exited_clean"
         end
 
-        -- KONDISI B: kill target terpenuhi → stop
-        if _siegeKillCount >= MAX_SIEGE_KILLS then
-            if onStatus then onStatus("[OK] Kill target "..MAX_SIEGE_KILLS.." terpenuhi - Siege DONE!") end
-            cleanup(); return "exited_clean"
-        end
-
-        -- Ambil musuh hidup (belum ada di _deadG_Siege)
+        -- Ambil musuh dan serang semua
         local rawEnemies = GetSiegeEnemies()
         local targets = {}
         for _, e in ipairs(rawEnemies) do
@@ -13413,8 +13387,7 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             end
         end
 
-        if onStatus then onStatus("[S] Kill: ".._siegeKillCount.."/"..MAX_SIEGE_KILLS
-            .." | Musuh: "..#targets) end
+        if onStatus then onStatus("[S] "..#targets.." musuh") end
 
         for _, e in ipairs(targets) do
             if e.model and e.model.Parent then

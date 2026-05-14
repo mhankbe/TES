@@ -2531,16 +2531,16 @@ QUIRK_LIST_PER_SLOT = {
  {id=99117,name="Sovereign Axiom"},
  },
 }
-MAX_PER_SLOT = 3
+MAX_PER_SLOT = math.huge -- [v18] Tidak ada batasan jumlah target
 
 QUIRK_MAP = {}
 for _, list in ipairs(QUIRK_LIST_PER_SLOT) do
  for _, q in ipairs(list) do QUIRK_MAP[q.id] = q.name end
 end
 
--- Weapon: hanya tampilkan quirk tier tinggi per slot, max pilih 3
+-- Weapon: hanya tampilkan quirk tier tinggi per slot, max pilih bebas (tidak dibatasi)
 W_QUIRK_LIST_PER_SLOT = {
- -- Slot 1 (6 pilihan, max 3)
+ -- Slot 1
  {
  {id=99067,name="Celestial Onslaught"},
  {id=99068,name="Lucky Scavenger"},
@@ -2548,8 +2548,11 @@ W_QUIRK_LIST_PER_SLOT = {
  {id=99070,name="Omnipotent Benefactor"},
  {id=99071,name="Archangel's Judgment"},
  {id=99072,name="Avatar of Destruction"},
+ {id=99118,name="Eternal Sovereign"},
+ {id=99119,name="Seraphic Verdict"},
+ {id=99120,name="Doombringer Ascendant"},
  },
- -- Slot 2 (6 pilihan, max 3)
+ -- Slot 2
  {
  {id=99085,name="Celestial Onslaught"},
  {id=99086,name="Lucky Scavenger"},
@@ -2557,8 +2560,11 @@ W_QUIRK_LIST_PER_SLOT = {
  {id=99088,name="Omnipotent Benefactor"},
  {id=99089,name="Archangel's Judgment"},
  {id=99090,name="Avatar of Destruction"},
+ {id=99121,name="Eternal Sovereign"},
+ {id=99122,name="Seraphic Verdict"},
+ {id=99123,name="Doombringer Ascendant"},
  },
- -- Slot 3 (6 pilihan, max 3)
+ -- Slot 3
  {
  {id=99103,name="Celestial Onslaught"},
  {id=99104,name="Lucky Scavenger"},
@@ -2566,9 +2572,12 @@ W_QUIRK_LIST_PER_SLOT = {
  {id=99106,name="Omnipotent Benefactor"},
  {id=99107,name="Archangel's Judgment"},
  {id=99108,name="Avatar of Destruction"},
+ {id=99124,name="Eternal Sovereign"},
+ {id=99125,name="Seraphic Verdict"},
+ {id=99126,name="Doombringer Ascendant"},
  },
 }
-W_MAX_PER_SLOT = 3
+W_MAX_PER_SLOT = math.huge -- [v18] Tidak ada batasan jumlah target
 
 W_QUIRK_MAP = {}
 for _, list in ipairs(W_QUIRK_LIST_PER_SLOT) do
@@ -3136,7 +3145,8 @@ MakeGenericDropdown = function(params)
  Corner(popup, 10); Stroke(popup, C.BORD2, 1.5, 0.2)
 
  local hdr = Frame(popup, C.TBAR, UDim2.new(1,0,0,HEADER_H)); hdr.ZIndex = 9999
- local countLbl = Label(hdr, "0/"..maxSel.." SELECTED", 12, C.TXT, Enum.Font.GothamBold)
+ local isUnlimited = (maxSel == math.huge)
+ local countLbl = Label(hdr, "0 SELECTED", 12, C.TXT, Enum.Font.GothamBold)
  countLbl.Size = UDim2.new(0.6,0,1,0); countLbl.Position = UDim2.new(0,8,0,0); countLbl.ZIndex = 9999
  local clrBtn = Btn(hdr, Color3.fromRGB(180,50,50), UDim2.new(0,50,0,20))
  clrBtn.Position = UDim2.new(1,-56,0.5,-10); Corner(clrBtn,5); clrBtn.ZIndex = 9999
@@ -3157,8 +3167,13 @@ MakeGenericDropdown = function(params)
  local rowRefs = {}
  function UpdateCount()
  local n = 0; for _ in pairs(selTable) do n = n + 1 end
- countLbl.Text = n.."/"..maxSel.." SELECTED"
- countLbl.TextColor3 = n >= maxSel and Color3.fromRGB(255,100,80) or C.ACC2
+ if isUnlimited then
+  countLbl.Text = n.." SELECTED (bebas)"
+  countLbl.TextColor3 = n > 0 and C.ACC2 or C.TXT
+ else
+  countLbl.Text = n.."/"..maxSel.." SELECTED"
+  countLbl.TextColor3 = n >= maxSel and Color3.fromRGB(255,100,80) or C.ACC2
+ end
  end
 
  for _, q in ipairs(list) do
@@ -3179,12 +3194,13 @@ MakeGenericDropdown = function(params)
  if selTable[key] then
  selTable[key] = nil
  else
- local n = 0; for _ in pairs(selTable) do n = n + 1 end
- if n >= maxSel then
- local old = countLbl.Text
- countLbl.Text = "MAX "..maxSel.." SUCCES!"; countLbl.TextColor3 = Color3.fromRGB(255,60,60)
- task.delay(1.2, function() UpdateCount() end)
- return
+ if not isUnlimited then
+  local n = 0; for _ in pairs(selTable) do n = n + 1 end
+  if n >= maxSel then
+  countLbl.Text = "MAX "..maxSel.." SUCCES!"; countLbl.TextColor3 = Color3.fromRGB(255,60,60)
+  task.delay(1.2, function() UpdateCount() end)
+  return
+  end
  end
  selTable[key] = true
  end
@@ -6315,7 +6331,7 @@ do
  local tArrow = Label(tDdBtn,"v",9,C.ACC,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
  tArrow.Size = UDim2.new(0,14,1,0); tArrow.Position = UDim2.new(1,-16,0,0)
 
- local tHint = Label(tRow,"(maks 3)",8.5,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+ local tHint = Label(tRow,"(bebas pilih)",8.5,C.TXT3,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
  tHint.Size = UDim2.new(0,0,1,0); tHint.AutomaticSize = Enum.AutomaticSize.X
  tHint.Position = UDim2.new(1,-4,0,0); tHint.AnchorPoint = Vector2.new(1,0)
 
@@ -6342,7 +6358,7 @@ do
  MakeGenericDropdown({
  ddBtn = tDdBtn,
  list = PG_GRADES_PER_MACHINE[msi],
- maxSel = 3,
+ maxSel = math.huge, -- [v18] Tidak ada batasan jumlah target
  selTable = PGR.targets[msi],
  onRefresh = onTargetChange,
  })

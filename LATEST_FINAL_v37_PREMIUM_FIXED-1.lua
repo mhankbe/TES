@@ -13382,9 +13382,12 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
     -- GetSiegeEnemies() hanya scan model dalam Siege map.
     -- ============================================================
     local MAX_SIEGE_KILLS = 30
-    local _siegeKillCount = 0
 
     while SIEGE.running and SIEGE.inMap do
+
+        -- Hitung kill dari _deadG_Siege (diisi oleh _deathConn via RE.Death)
+        local _siegeKillCount = 0
+        for _ in pairs(_deadG_Siege) do _siegeKillCount = _siegeKillCount + 1 end
 
         -- KONDISI A: server TP player keluar → Siege selesai
         if isBackAtBase() then
@@ -13393,14 +13396,13 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
             cleanup(); return "exited_clean"
         end
 
-        -- KONDISI B: kill target terpenuhi → stop serang, nyatakan sukses
+        -- KONDISI B: kill target terpenuhi → stop
         if _siegeKillCount >= MAX_SIEGE_KILLS then
             if onStatus then onStatus("[OK] Kill target "..MAX_SIEGE_KILLS.." terpenuhi - Siege DONE!") end
             cleanup(); return "exited_clean"
         end
 
-        -- Ambil musuh Siege (GetSiegeEnemies hanya return musuh di map Siege,
-        -- tidak pernah return NPC basemap)
+        -- Ambil musuh hidup (belum ada di _deadG_Siege)
         local rawEnemies = GetSiegeEnemies()
         local targets = {}
         for _, e in ipairs(rawEnemies) do
@@ -13417,15 +13419,6 @@ local function SiegeAttackV2_Independent(onStatus, baseMapId)
                 local hrp = e.model:FindFirstChild("HumanoidRootPart")
                 if hrp then
                     local g, pos = e.guid, hrp.Position
-                    -- Track kill via Humanoid.Died
-                    local hum = e.model:FindFirstChildOfClass("Humanoid")
-                    if hum and not _deadG_Siege[g] then
-                        _deadG_Siege[g] = true  -- tandai agar tidak di-track 2x
-                        hum.Died:Connect(function()
-                            _siegeKillCount = _siegeKillCount + 1
-                            SIEGE.killed = (SIEGE.killed or 0) + 1
-                        end)
-                    end
                     task.spawn(function()
                         pcall(function() FireAllDamage(g, pos) end)
                         if #HERO_GUIDS > 0 then

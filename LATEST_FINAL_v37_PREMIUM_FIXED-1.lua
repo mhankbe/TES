@@ -837,6 +837,7 @@ local NAV_ITEMS = {
  {tag="autoroll", ico="", lbl="Reroll"},
  {tag="claim", ico="", lbl="Claim"},
  {tag="settings", ico="", lbl="Settings"},
+ {tag="webhook", ico="", lbl="Webhook"},
  {tag="theme", ico="", lbl="Theme"},
 }
 
@@ -16230,6 +16231,15 @@ do
   _setPotatoToggle = _s
   _visPotato = _v
  end
+
+ -- [Webhook section dipindah ke tab Webhook]
+end
+
+-- ============================================================
+-- PANEL : WEBHOOK
+-- ============================================================
+do
+ local p = NewPanel("webhook")
 
  SectionHeader(p,"Raid Notif/Webhook",10)
 

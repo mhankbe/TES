@@ -1701,12 +1701,12 @@ local function EnsureHeroAtkThread()
      local last = _lastFire[hGuid] or 0 -- [PERBAIKAN 2] Tambahkan 'or 0'
      if (tick() - last) >= 0.05 then
       _lastFire[hGuid] = tick()
-      if RE.HeroUseSkill then
-       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
+      if RE.Atk then
+       pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
        task.wait(0.1)
-       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
+       pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
        task.wait(0.1)
-       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
+       pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
       end
      end
      task.wait(0.05)

@@ -5027,41 +5027,35 @@ do
 
  -- Random Attack
  local function StartRA()
-  -- Pastikan HERO_GUIDS terisi sebelum attack
-  if #HERO_GUIDS == 0 then
-   pcall(function()
-    for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
-     local g = obj:GetAttribute("heroGuid") or obj:GetAttribute("guid")
-     if type(g)=="string" and IsValidUUID(g) then
-      local dup=false
-      for _,ex in ipairs(HERO_GUIDS) do if ex==g then dup=true; break end end
-      if not dup then table.insert(HERO_GUIDS, g) end
+  RA.running=true; RA.killed=0; RA.cur=nil; RA.threads={}
+  local tChar = task.spawn(function()
+   local lastGuid = nil
+   while RA.running do
+    -- Cari target baru hanya jika target sekarang sudah mati/hilang
+    if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
+     _deadG_F={}; RA.cur=nil
+     for _,e in ipairs(GetEnemiesF()) do
+      if not IsDeadF(e) then RA.cur=e; break end
+     end
+     -- Teleport 1x hanya saat target berganti
+     if RA.cur and RA.cur.guid ~= lastGuid and not TA.running then
+      TpToF(RA.cur)
+      lastGuid = RA.cur.guid
      end
     end
-   end)
-  end
-  RA.running=true; RA.killed=0; RA.cur=nil; RA.threads={}
- local tChar = task.spawn(function()
-  local tpT = 1
-  while RA.running do
-   if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
-    _deadG_F={}; RA.cur=nil
-    for _,e in ipairs(GetEnemiesF()) do
-     if not IsDeadF(e) then RA.cur=e; break end
+    if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
+     -- Hanya pakai RE.Atk (PlayerClickAttackSkill)
+     if RE.Atk then
+      pcall(function() RE.Atk:FireServer({attackEnemyGUID=RA.cur.guid}) end)
+     end
+     task.wait(0)
+    else
+     task.wait(0.5)
     end
-    if RA.cur and not TA.running then TpToF(RA.cur); tpT=1 end
    end
-   if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
-    FCharF(RA.cur.guid, RA.cur.hrp.Position)
-    tpT = tpT + task.wait(0)
-    if tpT>=1 and not TA.running then tpT=1; TpToF(RA.cur) end
-   else
-    task.wait(0.5)
-   end
-  end
- end)
- RA.threads = {tChar}
- StartCollectF(function() return RA.running end)
+  end)
+  RA.threads = {tChar}
+  StartCollectF(function() return RA.running end)
  end
 
  local function StopRA()
@@ -5072,35 +5066,53 @@ do
 
  -- Target Attack
  local function StartTA(targetName, onStatus)
- TA.running=true; TA.killed=0; TA.targetName=targetName; TA.cur=nil; TA.threads={}
- local tChar = task.spawn(function()
- local lastGuid=nil; local tpT=0
- while TA.running do
- local tgt = FindByNameF(targetName)
- if not tgt then
- TA.cur = nil
- if onStatus then onStatus("WAITING ["..targetName.."] respawn...") end
- while TA.running do
- task.wait(); tgt=FindByNameF(targetName)
- if tgt then break end
- end
- if not TA.running then break end
- _deadG_F={}; lastGuid=nil
- end
- if tgt and not IsDeadF(tgt) and tgt.model.Parent then
- TA.cur = tgt
- if tgt.guid~=lastGuid then lastGuid=tgt.guid; TpToF(tgt); tpT=1 end
- FCharF(tgt.guid, tgt.hrp.Position)
- tpT = tpT + task.wait()
- if tpT>=0 then tpT=0; TpToF(tgt) end
- if onStatus then onStatus(">> ["..targetName.."] Kill: "..TA.killed) end
- else
- task.wait()
- end
- end
- end)
- TA.threads = {tChar}
- StartCollectF(function() return TA.running end)
+  TA.running=true; TA.killed=0; TA.targetName=targetName; TA.cur=nil; TA.threads={}
+  local tChar = task.spawn(function()
+   local lastGuid = nil
+   while TA.running do
+    local tgt = FindByNameF(targetName)
+    if not tgt then
+     TA.cur = nil
+     if onStatus then onStatus("WAITING ["..targetName.."] respawn...") end
+     while TA.running do
+      task.wait(); tgt = FindByNameF(targetName)
+      if tgt then break end
+     end
+     if not TA.running then break end
+     _deadG_F={}; lastGuid=nil
+    end
+    if tgt and not IsDeadF(tgt) and tgt.model.Parent then
+     TA.cur = tgt
+     -- Teleport 1x hanya saat guid target berubah (target baru)
+     if tgt.guid ~= lastGuid then
+      lastGuid = tgt.guid
+      TpToF(tgt)
+     end
+     -- Remote: PlayerClickAttackSkill + HeroUseSkill
+     if RE.Atk then
+      pcall(function() RE.Atk:FireServer({attackEnemyGUID=tgt.guid}) end)
+     end
+     if RE.HeroUseSkill and #HERO_GUIDS > 0 then
+      local now = tick()
+      local last = _heroFireTick[tgt.guid] or 0
+      if now - last >= 0.04 then
+       _heroFireTick[tgt.guid] = now
+       for _, hGuid in ipairs(HERO_GUIDS) do
+        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=tgt.guid}) end)
+        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=tgt.guid}) end)
+        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=tgt.guid}) end)
+       end
+      end
+     end
+     if onStatus then onStatus(">> ["..targetName.."] Kill: "..TA.killed) end
+     task.wait()
+    else
+     task.wait()
+    end
+   end
+  end)
+  TA.threads = {tChar}
+  StartCollectF(function() return TA.running end)
  end
 
  local function StopTA()

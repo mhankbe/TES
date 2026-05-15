@@ -16276,7 +16276,7 @@ do
  -- section label + icon row
  local modeTopRow = Frame(modeCard, C.BLACK, UDim2.new(1,0,0,18))
  modeTopRow.BackgroundTransparency=1; modeTopRow.LayoutOrder=0
- local modeIco = Label(modeTopRow, "📡", 13, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ local modeIco = Label(modeTopRow, "", 13, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
  modeIco.Size=UDim2.new(0,20,1,0); modeIco.Position=UDim2.new(0,0,0,0)
  local modeHdr = Label(modeTopRow, "  Notification Mode", 12, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
  modeHdr.Size=UDim2.new(1,-20,1,0); modeHdr.Position=UDim2.new(0,16,0,0)
@@ -16286,9 +16286,9 @@ do
 
  -- Dropdown button
  local MODE_OPTS = {
-  {key="raid",  label="⚔  Raid Only",      desc="Notif saat Raid muncul/update",  col=Color3.fromRGB(255,180,60)},
-  {key="siege", label="🏰  Siege Only",     desc="Notif saat Siege buka/tutup",    col=Color3.fromRGB(100,180,255)},
-  {key="both",  label="⚡  Raid + Siege",   desc="Notif Raid dan Siege",           col=C.TXT2},
+  {key="raid",  label="  Raid Only",      desc="Notif saat Raid muncul/update",  col=Color3.fromRGB(255,180,60)},
+  {key="siege", label="  Siege Only",     desc="Notif saat Siege buka/tutup",    col=Color3.fromRGB(100,180,255)},
+  {key="both",  label="  Raid + Siege",   desc="Notif Raid dan Siege",           col=C.TXT2},
  }
  local curModeIdx = 3 -- default: both
 
@@ -16384,7 +16384,7 @@ do
 
  local urlTopRow = Frame(urlCard, C.BLACK, UDim2.new(1,0,0,16))
  urlTopRow.BackgroundTransparency=1; urlTopRow.LayoutOrder=0
- local urlIco = Label(urlTopRow, "🔗", 12, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ local urlIco = Label(urlTopRow, "", 12, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
  urlIco.Size=UDim2.new(0,18,1,0); urlIco.Position=UDim2.new(0,0,0,0)
  local urlHdr = Label(urlTopRow, "  Webhook URL", 12, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
  urlHdr.Size=UDim2.new(1,-18,1,0); urlHdr.Position=UDim2.new(0,14,0,0)
@@ -16435,7 +16435,7 @@ do
   }
   wg.Rotation = 160
  end
- local wIco = Label(wRow, "🔔", 18, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ local wIco = Label(wRow, "", 18, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
  wIco.Size=UDim2.new(0,28,0,28); wIco.Position=UDim2.new(0,12,0,14)
  local wL=Label(wRow, "Activate Webhook", 12, C.TXT2, Enum.Font.GothamBold)
  wL.Size=UDim2.new(0.62,0,0,20); wL.Position=UDim2.new(0,46,0,10)
@@ -16509,20 +16509,20 @@ do
   tg.Color=ColorSequence.new{ColorSequenceKeypoint.new(0,Color3.fromRGB(200,90,15)),ColorSequenceKeypoint.new(1,Color3.fromRGB(140,50,5))}
   tg.Rotation=90
  end
- local testLbl=Label(testBtn, "🧪  Test Webhook", 10, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+ local testLbl=Label(testBtn, "  Test Webhook", 10, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  testLbl.Size=UDim2.new(1,0,1,0)
  testBtn.MouseButton1Click:Connect(function()
   _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
   UpdatePlatformLbl()
   local msg = "[OK] **[ASH GUI - FLa Project]** Test Webhook berhasil!\n> Mode: `"..(_webhookMode or "both"):upper().."`\n> Webhook aktif dan siap menerima notifikasi Raid/Siege."
-  testLbl.Text="⏳  Sending..."; testLbl.TextColor3=Color3.fromRGB(255,220,60)
+  testLbl.Text="  Sending..."; testLbl.TextColor3=Color3.fromRGB(255,220,60)
   -- [FIX] Timeout UI 10s: HTTP Discord butuh 1-3 detik, jangan timeout terlalu cepat
   local _done = false
   task.delay(10, function()
    if not _done then
     _done = true
     testLbl.Text="✗  Timeout/No HTTP"; testLbl.TextColor3=Color3.fromRGB(255,80,60)
-    task.delay(3, function() testLbl.Text="🧪  Test Webhook"; testLbl.TextColor3=C.TXT2 end)
+    task.delay(3, function() testLbl.Text="  Test Webhook"; testLbl.TextColor3=C.TXT2 end)
    end
   end)
   _WH.SendCustomMessage(_webhookUrl, msg,
@@ -16531,7 +16531,7 @@ do
     task.spawn(function()
      testLbl.Text="✓  Sent!"; testLbl.TextColor3=Color3.fromRGB(100,255,100)
      task.wait(2.5)
-     testLbl.Text="🧪  Test Webhook"; testLbl.TextColor3=C.TXT2
+     testLbl.Text="  Test Webhook"; testLbl.TextColor3=C.TXT2
     end)
    end,
    function(err)
@@ -16539,7 +16539,7 @@ do
     task.spawn(function()
      testLbl.Text=""..err; testLbl.TextColor3=Color3.fromRGB(255,80,60)
      task.wait(2.5)
-     testLbl.Text="🧪  Test Webhook"; testLbl.TextColor3=C.TXT2
+     testLbl.Text="  Test Webhook"; testLbl.TextColor3=C.TXT2
     end)
    end
   )
@@ -16556,25 +16556,25 @@ do
   vg.Color=ColorSequence.new{ColorSequenceKeypoint.new(0,Color3.fromRGB(30,50,120)),ColorSequenceKeypoint.new(1,Color3.fromRGB(15,25,70))}
   vg.Rotation=90
  end
- local verLbl=Label(verBtn, "🔍  Verify Link", 10, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+ local verLbl=Label(verBtn, "  Verify Link", 10, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  verLbl.Size=UDim2.new(1,0,1,0)
  verBtn.MouseButton1Click:Connect(function()
   _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
   UpdatePlatformLbl()
-  verLbl.Text="⏳  Checking..."; verLbl.TextColor3=Color3.fromRGB(255,220,60)
+  verLbl.Text="  Checking..."; verLbl.TextColor3=Color3.fromRGB(255,220,60)
   _WH.VerifyWebhookUrl(_webhookUrl,
    function()
     task.spawn(function()
      verLbl.Text="✓  Link Valid!"; verLbl.TextColor3=Color3.fromRGB(100,255,100)
      task.wait(1)
-     verLbl.Text="🔍  Verify Link"; verLbl.TextColor3=C.TXT2
+     verLbl.Text="  Verify Link"; verLbl.TextColor3=C.TXT2
     end)
    end,
    function(err)
     task.spawn(function()
      verLbl.Text=""..err; verLbl.TextColor3=Color3.fromRGB(255,80,60)
      task.wait(1)
-     verLbl.Text="🔍  Verify Link"; verLbl.TextColor3=C.TXT2
+     verLbl.Text="  Verify Link"; verLbl.TextColor3=C.TXT2
     end)
    end
   )
@@ -16597,23 +16597,23 @@ do
   ng.Color=ColorSequence.new{ColorSequenceKeypoint.new(0,Color3.fromRGB(70,130,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(40,90,200))}
   ng.Rotation=90
  end
- local sendNowLbl=Label(sendNowBtn, "📤  Send Notify Now", 11, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+ local sendNowLbl=Label(sendNowBtn, "  Send Notify Now", 11, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  sendNowLbl.Size=UDim2.new(1,0,1,0)
  sendNowBtn.MouseButton1Click:Connect(function()
   _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
   if _webhookUrl == "" then
    sendNowLbl.Text="⚠  URL is empty!"; sendNowLbl.TextColor3=Color3.fromRGB(255,180,60)
-   task.delay(2, function() sendNowLbl.Text="📤  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
+   task.delay(2, function() sendNowLbl.Text="  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
    return
   end
-  sendNowLbl.Text="⏳  Sending..."; sendNowLbl.TextColor3=Color3.fromRGB(255,220,60)
+  sendNowLbl.Text="  Sending..."; sendNowLbl.TextColor3=Color3.fromRGB(255,220,60)
   -- [FIX] Timeout UI 12s: reset label kalau pengiriman hang
   local _snDone = false
   task.delay(12, function()
    if not _snDone then
     _snDone = true
     sendNowLbl.Text="✗  Timeout"; sendNowLbl.TextColor3=Color3.fromRGB(255,80,60)
-    task.delay(2.5, function() sendNowLbl.Text="📤  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
+    task.delay(2.5, function() sendNowLbl.Text="  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
    end
   end)
   task.spawn(function()
@@ -16633,7 +16633,7 @@ do
     -- Tidak ada data raid/siege aktif saat tombol ditekan
     if _snDone then return end; _snDone = true
     sendNowLbl.Text="⚠  No Active Raid Data"; sendNowLbl.TextColor3=Color3.fromRGB(255,180,60)
-    task.delay(2.5, function() sendNowLbl.Text="📤  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
+    task.delay(2.5, function() sendNowLbl.Text="  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
     return
    end
    _whLastSent = tick()
@@ -16641,7 +16641,7 @@ do
    task.wait(0.5)
    sendNowLbl.Text="✓  Sent Successfully!"; sendNowLbl.TextColor3=Color3.fromRGB(100,255,100)
    task.wait(2.5)
-   sendNowLbl.Text="📤  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2
+   sendNowLbl.Text="  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2
   end)
  end)
 end

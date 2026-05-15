@@ -77,6 +77,7 @@ RE = {
  HeroUseSkill = Remotes:FindFirstChild("HeroUseSkill"),
  EquipWeapon = Remotes:WaitForChild("EquipWeapon", 10),
  RandomWeaponQuirk = Remotes:WaitForChild("RandomWeaponQuirk", 10),
+ AutoWeaponQuirk = Remotes:WaitForChild("AutoRandomWeaponQuirk", 15),
  RandomHeroEquipGrade = Remotes:WaitForChild("RandomHeroEquipGrade", 10),
  RerollHalo = Remotes:FindFirstChild("RerollHalo"),
  RerollOrnament = Remotes:WaitForChild("RerollOrnament", 15),
@@ -6099,6 +6100,8 @@ do
  slotLbls = {nil,nil,nil},
  slotTarget = {{},{},{}},
  running = false,
+ x100 = false,
+ x100Thread = nil,
  SetSlot = function(i,txt,col)
  if _WR_RPT.slotLbls[i] then
  _WR_RPT.slotLbls[i].Text = txt
@@ -6244,6 +6247,181 @@ do
  DoAutoRollWeapon(false)
  end
  end)
+
+ -- ── Toggle x100 Reroll Weapon ──────────────────────────────────
+ local wx100Row = Frame(wrInner, C.BG2, UDim2.new(1,0,0,34))
+ wx100Row.LayoutOrder = 8; Corner(wx100Row, 10); Stroke(wx100Row, C.ACC2, 1.5, 0.7)
+ local wx100Lbl = Label(wx100Row, "x100 Reroll", 12, C.TXT, Enum.Font.GothamBold)
+ wx100Lbl.Size = UDim2.new(0.55,0,1,0); wx100Lbl.Position = UDim2.new(0,10,0,0)
+ local wx100Sub = Label(wx100Row, "ON = 1 roll = 100 result", 9, C.TXT3, Enum.Font.GothamBold)
+ wx100Sub.Size = UDim2.new(0.55,0,0,12); wx100Sub.Position = UDim2.new(0,10,1,-14)
+ local wx100Pill = Btn(wx100Row, C.BG3, UDim2.new(0,40,0,22))
+ wx100Pill.Position = UDim2.new(1,-50,0.5,-11); Corner(wx100Pill, 11)
+ local wx100Knob = Frame(wx100Pill, C.TXT, UDim2.new(0,18,0,18))
+ wx100Knob.Position = UDim2.new(0,2,0.5,-9); Corner(wx100Knob, 9)
+ _WR_RPT.x100 = false
+ _WR_RPT.x100Thread = nil
+
+ local function SetWX100UI(on)
+  TweenService:Create(wx100Pill, TweenInfo.new(0.15), {BackgroundColor3 = on and C.PILL_ON or C.BG3}):Play()
+  TweenService:Create(wx100Knob, TweenInfo.new(0.15), {
+   Position = on and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9),
+   BackgroundColor3 = on and Color3.fromRGB(255,255,255) or C.TXT,
+  }):Play()
+ end
+
+ local function StopWRX100()
+  _WR_RPT.x100 = false
+  SetWX100UI(false)
+  if _WR_RPT.x100Thread then
+   pcall(function() task.cancel(_WR_RPT.x100Thread) end)
+   _WR_RPT.x100Thread = nil
+  end
+  for i = 1, 3 do _WR_RPT.SetSlot(i, "Idle", Color3.fromRGB(160,148,135)) end
+ end
+
+ local function StartWRX100Loop()
+  if _WR_RPT.x100Thread then
+   pcall(function() task.cancel(_WR_RPT.x100Thread) end)
+  end
+  _WR_RPT.x100Thread = task.spawn(function()
+   -- Tunggu GUID tersedia
+   if not (_WR_RPT.guid and _WR_RPT.guid ~= "") then
+    for i = 1, 3 do _WR_RPT.SetSlot(i, "[..] Klik 1x di Mesin Reroll dulu", Color3.fromRGB(180,220,255)) end
+    while _WR_RPT.x100 and not (_WR_RPT.guid and _WR_RPT.guid ~= "") do task.wait(0.5) end
+    if not _WR_RPT.x100 then return end
+    task.wait(1.5)
+   end
+   -- Validasi remote
+   if not RE.AutoWeaponQuirk then
+    for i = 1, 3 do _WR_RPT.SetSlot(i, "[!] Remote AutoRandomWeaponQuirk nil", Color3.fromRGB(255,80,80)) end
+    StopWRX100(); return
+   end
+   local attempt = 0
+   -- Track slot yang sudah DONE agar tidak di-roll ulang
+   local slotDone = {false, false, false}
+
+   -- Helper: scan seluruh table (flat + nested 4 level) cari quirkId yang cocok target
+   local function ScanWResForTarget(res, targets)
+    if type(res) ~= "table" then return nil, nil end
+    local gotId, rawId = nil, nil
+    local PRIO = {"finalResultId","quirkId","resultId","id","Id","result","Result"}
+    -- Pass 1: key prioritas di root
+    for _, key in ipairs(PRIO) do
+     local v = res[key]
+     if type(v) == "number" and v > 0 then
+      rawId = rawId or v
+      if W_QUIRK_MAP[v] then gotId = gotId or v end
+      if targets[v] then return v, v end
+     end
+    end
+    -- Pass 2: scan flat root
+    for k, v in pairs(res) do
+     if type(v) == "number" and v > 0 then
+      rawId = rawId or v
+      if W_QUIRK_MAP[v] then gotId = gotId or v end
+      if targets[v] then return v, v end
+     elseif type(v) == "table" then
+      -- Pass 3: nested 1 level
+      for _, vv in pairs(v) do
+       if type(vv) == "number" and vv > 0 then
+        rawId = rawId or vv
+        if W_QUIRK_MAP[vv] then gotId = gotId or vv end
+        if targets[vv] then return vv, vv end
+       elseif type(vv) == "table" then
+        -- Pass 4: nested 2 level
+        for _, vvv in pairs(vv) do
+         if type(vvv) == "number" and vvv > 0 then
+          rawId = rawId or vvv
+          if W_QUIRK_MAP[vvv] then gotId = gotId or vvv end
+          if targets[vvv] then return vvv, vvv end
+         end
+        end
+       end
+      end
+     end
+    end
+    return gotId, rawId
+   end
+
+   while _WR_RPT.x100 do
+    -- Cek apakah semua slot sudah DONE
+    local allDone = true
+    for si = 1, 3 do
+     local list = W_QUIRK_LIST_PER_SLOT[si]
+     local targets = _WR_RPT.slotTarget[si]
+     local stopIds = {}
+     for _, q in ipairs(list) do
+      if targets[q.id] then table.insert(stopIds, q.id) end
+     end
+     if #stopIds > 0 and not slotDone[si] then allDone = false; break end
+    end
+    if allDone then StopWRX100(); break end
+
+    for si = 1, 3 do
+     if slotDone[si] then
+      -- Slot sudah selesai, skip
+     else
+      local list = W_QUIRK_LIST_PER_SLOT[si]
+      local targets = _WR_RPT.slotTarget[si]
+      local drawId = ({960001, 960002, 960003})[si]
+      -- Kumpulkan stopIds
+      local stopIds = {}
+      for _, q in ipairs(list) do
+       if targets[q.id] then table.insert(stopIds, q.id) end
+      end
+      if #stopIds == 0 then
+       _WR_RPT.SetSlot(si, "[!] SELECT TARGET!", Color3.fromRGB(255,100,60))
+      else
+       attempt = attempt + 1
+       _WR_RPT.SetSlot(si, "[x100] Slot"..si.." #"..attempt.."..", Color3.fromRGB(100,200,255))
+       _ourCall = true
+       local ok, res = pcall(function()
+        return RE.AutoWeaponQuirk:InvokeServer({
+         guid = _WR_RPT.guid,
+         drawId = drawId,
+         stopQuirkIds = stopIds,
+        })
+       end)
+       _ourCall = false
+       if not ok then
+        _WR_RPT.SetSlot(si, "[!] Error - retry", Color3.fromRGB(255,100,60))
+       else
+        local gotId, rawId = ScanWResForTarget(res, targets)
+        local hit = gotId ~= nil and targets[gotId] == true
+        if hit then
+         local gn = W_QUIRK_MAP[gotId] or "ID:"..tostring(gotId)
+         _WR_RPT.SetSlot(si, "[DONE] "..gn.." (#"..attempt..")", Color3.fromRGB(80,220,80))
+         slotDone[si] = true
+        else
+         local gn = (gotId and W_QUIRK_MAP[gotId]) or (rawId and "ID:"..tostring(rawId)) or "?"
+         _WR_RPT.SetSlot(si, "[x100] #"..attempt.." Last: "..gn, Color3.fromRGB(80,180,255))
+        end
+       end
+      end
+     end
+    end
+    task.wait(0.05)
+   end
+  end)
+ end
+
+ wx100Pill.MouseButton1Click:Connect(function()
+  _WR_RPT.x100 = not _WR_RPT.x100
+  SetWX100UI(_WR_RPT.x100)
+  if _WR_RPT.x100 then
+   -- Matikan Auto Roll Weapon kalau lagi jalan (2 mode tidak bisa bersamaan)
+   if _WR_RPT.running then
+    _WR_RPT.running = false
+    SetWeaponToggleUI(false)
+    DoAutoRollWeapon(false)
+   end
+   StartWRX100Loop()
+  else
+   StopWRX100()
+  end
+ end)
+ -- ── End x100 Reroll Weapon ────────────────────────────────────
 
  wrHeader.MouseButton1Click:Connect(function()
  wrOpen = not wrOpen
@@ -17076,6 +17254,12 @@ ScreenGui.AncestryChanged:Connect(function()
   _HR_RPT.running = false
   if _HR_RPT.x100 then _HR_RPT.x100 = false end
   if _HR_RPT.x100Thread then pcall(function() task.cancel(_HR_RPT.x100Thread) end); _HR_RPT.x100Thread = nil end
+ end end)
+ -- Weapon Fastroll
+ pcall(function() if _WR_RPT then
+  _WR_RPT.running = false
+  if _WR_RPT.x100 then _WR_RPT.x100 = false end
+  if _WR_RPT.x100Thread then pcall(function() task.cancel(_WR_RPT.x100Thread) end); _WR_RPT.x100Thread = nil end
  end end)
  -- Ornament loops
  pcall(function() if ORN then

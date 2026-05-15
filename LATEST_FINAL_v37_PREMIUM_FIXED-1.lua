@@ -1184,6 +1184,7 @@ RAID = {
  -- [RAID LIST ENTRY]
  listEntries = {}, -- { {maps={[mn]=true,...}, ranks={[grade]=true,...}} , ... } urutan = prioritas bawah ke atas
  listEnabled = false, -- toggle aktif/nonaktif fitur List Entry
+ _listVisitedMaps = {}, -- {[mapId]=true} tracking map yg sudah dimasuki di siklus event ini
 }
 _raidOn = false
 
@@ -8042,6 +8043,29 @@ TriggerEntryWakeup = function()
         -- [v61 CYCLEFIX] Reset flag siklus lama
         _ascMatchedThisCycle = false
         _raidFallbackActive  = false
+        -- [RAID LIST ENTRY] Reset visited maps HANYA saat event benar-benar baru
+        -- Cek apakah sebelum wakeup ini RAID_LIVE sempat kosong (event lama habis)
+        -- Jika RAID_LIVE masih ada isi = update kecil di siklus yg sama, jangan reset
+        if RAID and RAID._listVisitedMaps then
+            local _liveCount = 0
+            for _ in pairs(RAID_LIVE) do _liveCount = _liveCount + 1 end
+            local _visitedCount = 0
+            for _ in pairs(RAID._listVisitedMaps) do _visitedCount = _visitedCount + 1 end
+            -- Reset hanya jika: tidak ada visited sama sekali (memang fresh start)
+            -- ATAU semua entry yang ada di visited sudah tidak ada di RAID_LIVE (event lama habis)
+            local _allExpired = true
+            if _visitedCount > 0 then
+                for mapId in pairs(RAID._listVisitedMaps) do
+                    for _, r in ipairs(RAID_ID_LIST) do
+                        if r.mapId == mapId then _allExpired = false; break end
+                    end
+                    if not _allExpired then break end
+                end
+            end
+            if _visitedCount == 0 or _allExpired then
+                for k in pairs(RAID._listVisitedMaps) do RAID._listVisitedMaps[k] = nil end
+            end
+        end
 
         -- ============================================================
         -- [v62 RINO/RINI FIX] "Si Pemanggil" memutuskan siapa yang dipanggil
@@ -8741,6 +8765,10 @@ function StopRaid()
  RAID_LIVE = {}
  _defaultRRIdx = 0 -- reset RR saat RAID habis
  RAID_ID_LIST = {}
+ -- [RAID LIST ENTRY] Reset tracking visited maps saat restart
+ if RAID._listVisitedMaps then
+  for k in pairs(RAID._listVisitedMaps) do RAID._listVisitedMaps[k] = nil end
+ end
  if _runeGradeCache then
   -- Reset semua cache grade saat sesi RAID baru dimulai (StopRaid dipanggil sebelum StartRaid)
   -- Ini memastikan batch notif lama tidak mencemari sesi baru
@@ -10441,38 +10469,43 @@ local function ResolveEntryFromList()
         return GetBestGrade(r.mapId - 50000, false)
     end
 
-    -- [FIX BUG 1] Kumpulkan SEMUA lobby yang match dari SEMUA entry sekaligus,
-    -- lalu pilih mapId terkecil. Ini memastikan Map 3 dipilih sebelum Map 10
-    -- meskipun Map 10 ada di entry prioritas lebih bawah.
-    local allMatched = {}  -- { raidEntry } tanpa duplikat (key = mapId)
-    local seen = {}
-
-    for i = 1, #RAID.listEntries do
-        local ent = RAID.listEntries[i]
-        local hasMaps  = next(ent.maps)  ~= nil
-        local hasRanks = next(ent.ranks) ~= nil
-
-        for _, r in ipairs(normalList) do
-            if seen[r.mapId] then continue end  -- skip duplikat
-            local mn = r.mapId - 50000
-
-            -- Cek filter Maps entry ini
-            local mapsOk = (not hasMaps) or ent.maps[mn]
-            if not mapsOk then continue end
-
-            -- Cek filter Rank entry ini
-            if hasRanks then
-                local grade = _getGrade(r)
-                if grade and ent.ranks[grade] then
+    -- Kumpulkan semua lobby yang match dari semua entry sekaligus
+    local function collectAllMatched(skipVisited)
+        local allMatched = {}
+        local seen = {}
+        for i = 1, #RAID.listEntries do
+            local ent = RAID.listEntries[i]
+            local hasMaps  = next(ent.maps)  ~= nil
+            local hasRanks = next(ent.ranks) ~= nil
+            for _, r in ipairs(normalList) do
+                if seen[r.mapId] then continue end
+                -- Skip map yang sudah dikunjungi di siklus ini (kecuali sedang reset)
+                if skipVisited and RAID._listVisitedMaps[r.mapId] then continue end
+                local mn = r.mapId - 50000
+                local mapsOk = (not hasMaps) or ent.maps[mn]
+                if not mapsOk then continue end
+                if hasRanks then
+                    local grade = _getGrade(r)
+                    if grade and ent.ranks[grade] then
+                        table.insert(allMatched, r)
+                        seen[r.mapId] = true
+                    end
+                else
                     table.insert(allMatched, r)
                     seen[r.mapId] = true
                 end
-            else
-                -- Entry ini tidak set rank -> lolos langsung
-                table.insert(allMatched, r)
-                seen[r.mapId] = true
             end
         end
+        return allMatched
+    end
+
+    -- Tahap 1: cari match yang belum dikunjungi
+    local allMatched = collectAllMatched(true)
+
+    -- Tahap 2: kalau semua sudah dikunjungi -> reset visited dan loop ulang dari awal
+    if #allMatched == 0 then
+        for k in pairs(RAID._listVisitedMaps) do RAID._listVisitedMaps[k] = nil end
+        allMatched = collectAllMatched(true)
     end
 
     if #allMatched == 0 then return nil end
@@ -11566,6 +11599,10 @@ local function ResolveEntry()
  RAID.sukses = RAID.sukses + 1
  RaidCounterUpdate()
  RaidStatusUpdate("[OK] Succes-" .. RAID.sukses .. " Map " .. mn, Color3.fromRGB(100,255,150))
+ -- [RAID LIST ENTRY] Catat map ini sudah dikunjungi setelah sukses keluar
+ if RAID.listEnabled and RAID.raidMapId then
+  RAID._listVisitedMaps[RAID.raidMapId] = true
+ end
  end
  if not RAID.running then break end
 

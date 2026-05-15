@@ -831,7 +831,7 @@ local NAV_ITEMS = {
  {tag="main", ico="", lbl="Main"},
  {tag="hide", ico="", lbl="Hide"},
  {tag="farm", ico="", lbl="Farm"},
- {tag="attack", ico="", lbl="Mass Attack"},
+ {tag="Mass Attack", ico="", lbl="Mass Attack"},
  {tag="autoraid", ico="", lbl="Automation"},
  {tag="player", ico="", lbl="Player"},
  {tag="autoroll", ico="", lbl="Reroll"},

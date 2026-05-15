@@ -1701,12 +1701,12 @@ local function EnsureHeroAtkThread()
      local last = _lastFire[hGuid] or 0 -- [PERBAIKAN 2] Tambahkan 'or 0'
      if (tick() - last) >= 0.05 then
       _lastFire[hGuid] = tick()
-      if RE.Atk then
-       pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
+      if RE.HeroUseSkill then
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
        task.wait(0.1)
-       pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
        task.wait(0.1)
-       pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
       end
      end
      task.wait(0.05)
@@ -1739,25 +1739,17 @@ function FireAttack(g, pos)
  end
 end
 
-function FireAllDamage(g, ep)
- if not IsEnemyGuidValid(g) then return end
- if RE.Click then
-  task.spawn(function()
-   pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=ep}) end)
-  end)
+
+function FireHeroRemotes(enemyGuid, enemyPos)
+ local pos = enemyPos or Vector3.new(0,0,0)
+ if #HERO_GUIDS == 0 then return end
+ local posInfos = {}
+ for _, hGuid in ipairs(HERO_GUIDS) do
+  table.insert(posInfos, {heroGuid=hGuid, targetPos=pos})
  end
- if RE.Atk then
-  pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
- end
- _heroAtkTarget = g
- _skillTarget = g
- EnsureHeroAtkThread()
- if not RE.HeroUseSkill and RE.HeroSkill then
-  for _, hGuid in ipairs(HERO_GUIDS) do
-   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=1,masterId=MY_USER_ID}) end)
-   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=2,masterId=MY_USER_ID}) end)
-   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=3,masterId=MY_USER_ID}) end)
-  end
+ if RE.HeroMove then
+  pcall(function() RE.HeroMove:FireServer({attackTarget=enemyGuid,userId=MY_USER_ID,heroTagetPosInfos=posInfos}) end)
+  pcall(function() RE.HeroMove:FireServer({attackTarget=enemyGuid,userId=MY_USER_ID,heroTagetPosInfos=posInfos}) end)
  end
 end
 

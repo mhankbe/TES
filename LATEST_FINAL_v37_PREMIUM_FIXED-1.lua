@@ -16236,190 +16236,243 @@ do
 end
 
 -- ============================================================
--- PANEL : WEBHOOK
+-- PANEL : WEBHOOK  [UI REDESIGN - logic unchanged]
 -- ============================================================
 do
  local p = NewPanel("webhook")
 
- SectionHeader(p,"Raid Notif/Webhook",10)
+ -- ── HEADER BANNER ──────────────────────────────────────────
+ local bannerCard = Frame(p, C.BG2, UDim2.new(1,0,0,52))
+ bannerCard.LayoutOrder=9
+ Corner(bannerCard, 14)
+ do
+  local grad = Instance.new("UIGradient", bannerCard)
+  grad.Color = ColorSequence.new{
+   ColorSequenceKeypoint.new(0, Color3.fromRGB(20,30,80)),
+   ColorSequenceKeypoint.new(1, Color3.fromRGB(10,15,40)),
+  }
+  grad.Rotation = 135
+ end
+ Stroke(bannerCard, C.ACC, 1.5, 0.55)
+ local bannerIco = Label(bannerCard, "🔔", 22, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ bannerIco.Size=UDim2.new(0,38,1,0); bannerIco.Position=UDim2.new(0,14,0,0)
+ local bannerTitle = Label(bannerCard, "Webhook Notifier", 15, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ bannerTitle.Size=UDim2.new(1,-60,0,26); bannerTitle.Position=UDim2.new(0,54,0,8)
+ local bannerSub = Label(bannerCard, "Discord & Telegram — Raid / Siege alerts", 10, C.TXT3, Enum.Font.Gotham, Enum.TextXAlignment.Left)
+ bannerSub.Size=UDim2.new(1,-60,0,16); bannerSub.Position=UDim2.new(0,54,0,30)
 
- -- Info card
- -- info card dihapus (V142)
+ -- ── DIVIDER ─────────────────────────────────────────────────
+ local div0 = Frame(p, C.BORD, UDim2.new(1,0,0,1))
+ div0.LayoutOrder=10; div0.BackgroundTransparency=0.6
 
+ -- ── MODE CARD ───────────────────────────────────────────────
  --  [v115] Mode Dropdown: Raid / Siege / Keduanya 
  local modeCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
  modeCard.LayoutOrder=25; modeCard.AutomaticSize=Enum.AutomaticSize.Y
- Corner(modeCard,9); Stroke(modeCard,C.BORD, 1.5,0.88)
- Padding(modeCard,8,8,10,10)
- New("UIListLayout",{Parent=modeCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,6)})
+ Corner(modeCard, 12); Stroke(modeCard, C.BORD, 1.2, 0.82)
+ Padding(modeCard, 10, 10, 12, 12)
+ New("UIListLayout",{Parent=modeCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,7)})
 
- local modeHdr = Label(modeCard," Mode Notifikasi Webhook",11,C.TXT,Enum.Font.GothamBold)
- modeHdr.Size=UDim2.new(1,0,0,16); modeHdr.LayoutOrder=0
+ -- section label + icon row
+ local modeTopRow = Frame(modeCard, C.BLACK, UDim2.new(1,0,0,18))
+ modeTopRow.BackgroundTransparency=1; modeTopRow.LayoutOrder=0
+ local modeIco = Label(modeTopRow, "📡", 13, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ modeIco.Size=UDim2.new(0,20,1,0); modeIco.Position=UDim2.new(0,0,0,0)
+ local modeHdr = Label(modeTopRow, "  Notification Mode", 12, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ modeHdr.Size=UDim2.new(1,-20,1,0); modeHdr.Position=UDim2.new(0,16,0,0)
 
- local modeSub = Label(modeCard,"Select the type of notification sent to Discord",9.5,C.TXT3,Enum.Font.GothamBold)
- modeSub.Size=UDim2.new(1,0,0,13); modeSub.LayoutOrder=1
+ local modeSub = Label(modeCard,"Choose which events trigger a Discord/Telegram alert",9,C.TXT3,Enum.Font.Gotham)
+ modeSub.Size=UDim2.new(1,0,0,12); modeSub.LayoutOrder=1
 
  -- Dropdown button
  local MODE_OPTS = {
- {key="raid", label="Raid", desc="Notif saat Raid muncul/update", col=Color3.fromRGB(255,180,60)},
- {key="siege", label="Siege", desc="Notif saat Siege buka/tutup", col=Color3.fromRGB(100,180,255)},
- {key="both", label="Raid + Siege", desc="Notif Raid dan Siege", col=C.TXT},
+  {key="raid",  label="⚔  Raid Only",      desc="Notif saat Raid muncul/update",  col=Color3.fromRGB(255,180,60)},
+  {key="siege", label="🏰  Siege Only",     desc="Notif saat Siege buka/tutup",    col=Color3.fromRGB(100,180,255)},
+  {key="both",  label="⚡  Raid + Siege",   desc="Notif Raid dan Siege",           col=C.TXT2},
  }
  local curModeIdx = 3 -- default: both
 
- local modeDDBtn = Btn(modeCard, C.DD_BG, UDim2.new(1,0,0,28))
- modeDDBtn.LayoutOrder=2; Corner(modeDDBtn,7); Stroke(modeDDBtn,C.BORD, 1.5,0.88)
- local modeDDLbl = Label(modeDDBtn," "..MODE_OPTS[curModeIdx].label,10.5,MODE_OPTS[curModeIdx].col,Enum.Font.GothamBold)
- modeDDLbl.Size=UDim2.new(1,-22,1,0); modeDDLbl.Position=UDim2.new(0,4,0,0)
- local modeArr = Label(modeDDBtn,"v",10,Color3.fromRGB(180,120,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- modeArr.Size=UDim2.new(0,18,1,0); modeArr.Position=UDim2.new(1,-20,0,0)
+ local modeDDBtn = Btn(modeCard, C.BG2, UDim2.new(1,0,0,32))
+ modeDDBtn.LayoutOrder=2
+ Corner(modeDDBtn, 10); Stroke(modeDDBtn, C.ACC, 1.2, 0.7)
+ do
+  local dg = Instance.new("UIGradient", modeDDBtn)
+  dg.Color = ColorSequence.new{
+   ColorSequenceKeypoint.new(0, Color3.fromRGB(18,28,72)),
+   ColorSequenceKeypoint.new(1, Color3.fromRGB(12,18,50)),
+  }
+  dg.Rotation = 90
+ end
+ local modeDDLbl = Label(modeDDBtn, "  "..MODE_OPTS[curModeIdx].label, 11, MODE_OPTS[curModeIdx].col, Enum.Font.GothamBold)
+ modeDDLbl.Size=UDim2.new(1,-28,1,0); modeDDLbl.Position=UDim2.new(0,6,0,0)
+ local modeArr = Label(modeDDBtn, "▾", 12, C.ACC2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+ modeArr.Size=UDim2.new(0,22,1,0); modeArr.Position=UDim2.new(1,-24,0,0)
 
- local modeDescLbl = Label(modeCard,MODE_OPTS[curModeIdx].desc,9,C.TXT3,Enum.Font.GothamBold)
- modeDescLbl.Size=UDim2.new(1,0,0,13); modeDescLbl.LayoutOrder=3
+ local modeDescLbl = Label(modeCard, MODE_OPTS[curModeIdx].desc, 9, C.TXT3, Enum.Font.Gotham)
+ modeDescLbl.Size=UDim2.new(1,0,0,12); modeDescLbl.LayoutOrder=3
 
  modeDDBtn.MouseButton1Click:Connect(function()
- CloseActiveDD()
- local absPos = modeDDBtn.AbsolutePosition
- local absSize = modeDDBtn.AbsoluteSize
- local ITEM_H = 36
+  CloseActiveDD()
+  local absPos = modeDDBtn.AbsolutePosition
+  local absSize = modeDDBtn.AbsoluteSize
+  local ITEM_H = 36
 
- local popup = Instance.new("Frame")
- popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
- popup.Size=UDim2.new(0,absSize.X+10,0,#MODE_OPTS*(ITEM_H+2)+12)
- popup.Position=UDim2.new(0,absPos.X,0,absPos.Y+absSize.Y+3)
- popup.ZIndex=9999
- Corner(popup, 10); Stroke(popup,C.BORD, 1.5,0.2)
+  local popup = Instance.new("Frame")
+  popup.Parent=DDLayer; popup.BackgroundColor3=C.DD_BG; popup.BorderSizePixel=0
+  popup.Size=UDim2.new(0,absSize.X+10,0,#MODE_OPTS*(ITEM_H+2)+12)
+  popup.Position=UDim2.new(0,absPos.X,0,absPos.Y+absSize.Y+4)
+  popup.ZIndex=9999
+  Corner(popup, 12); Stroke(popup, C.ACC, 1.5, 0.35)
 
- local ll=Instance.new("UIListLayout",popup)
- ll.Padding=UDim.new(0,2); ll.SortOrder=Enum.SortOrder.LayoutOrder
- Instance.new("UIPadding",popup).PaddingTop=UDim.new(0,5)
+  local ll=Instance.new("UIListLayout",popup)
+  ll.Padding=UDim.new(0,2); ll.SortOrder=Enum.SortOrder.LayoutOrder
+  Instance.new("UIPadding",popup).PaddingTop=UDim.new(0,5)
 
- for i, opt in ipairs(MODE_OPTS) do
- local item=Instance.new("TextButton",popup)
- item.Size=UDim2.new(1,-8,0,ITEM_H); item.LayoutOrder=i
- item.BackgroundColor3=i==curModeIdx and C.SURFACE or C.BG3
- item.BackgroundTransparency=i==curModeIdx and 0.18 or 0.42
- item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
- Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
-
- local iL=Instance.new("TextLabel",item)
- iL.Size=UDim2.new(1,-8,0,16); iL.Position=UDim2.new(0,10,0,4)
- iL.BackgroundTransparency=1; iL.Text=opt.label; iL.TextSize=13
- iL.Font=Enum.Font.Gotham; iL.TextColor3=opt.col
- iL.TextXAlignment=Enum.TextXAlignment.Left; iL.ZIndex=9999
-
- local iD=Instance.new("TextLabel",item)
- iD.Size=UDim2.new(1,-8,0,13); iD.Position=UDim2.new(0,10,0,20)
- iD.BackgroundTransparency=1; iD.Text=opt.desc; iD.TextSize=11
- iD.Font=Enum.Font.GothamBold; iD.TextColor3=C.DIM
- iD.TextXAlignment=Enum.TextXAlignment.Left; iD.ZIndex=9999
-
- local ii=i
- item.MouseButton1Click:Connect(function()
- CloseActiveDD()
- curModeIdx = ii
- _webhookMode = opt.key
- modeDDLbl.Text = " "..opt.label
- modeDDLbl.TextColor3 = opt.col
- modeDescLbl.Text = opt.desc
- end)
- end
- -- Expose webhook mode setter ke global
- _webhookModeSetIdx = function(idx)
   for i, opt in ipairs(MODE_OPTS) do
-   if i == idx then
-    curModeIdx = idx
+   local item=Instance.new("TextButton",popup)
+   item.Size=UDim2.new(1,-8,0,ITEM_H); item.LayoutOrder=i
+   item.BackgroundColor3=i==curModeIdx and C.SURFACE or C.BG3
+   item.BackgroundTransparency=i==curModeIdx and 0.15 or 0.45
+   item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
+   Instance.new("UICorner",item).CornerRadius=UDim.new(0,8)
+
+   local iL=Instance.new("TextLabel",item)
+   iL.Size=UDim2.new(1,-8,0,16); iL.Position=UDim2.new(0,10,0,4)
+   iL.BackgroundTransparency=1; iL.Text=opt.label; iL.TextSize=12
+   iL.Font=Enum.Font.GothamBold; iL.TextColor3=opt.col
+   iL.TextXAlignment=Enum.TextXAlignment.Left; iL.ZIndex=9999
+
+   local iD=Instance.new("TextLabel",item)
+   iD.Size=UDim2.new(1,-8,0,13); iD.Position=UDim2.new(0,10,0,20)
+   iD.BackgroundTransparency=1; iD.Text=opt.desc; iD.TextSize=10
+   iD.Font=Enum.Font.Gotham; iD.TextColor3=C.DIM
+   iD.TextXAlignment=Enum.TextXAlignment.Left; iD.ZIndex=9999
+
+   local ii=i
+   item.MouseButton1Click:Connect(function()
+    CloseActiveDD()
+    curModeIdx = ii
     _webhookMode = opt.key
-    modeDDLbl.Text = " "..opt.label
+    modeDDLbl.Text = "  "..opt.label
     modeDDLbl.TextColor3 = opt.col
     modeDescLbl.Text = opt.desc
-    break
+   end)
+  end
+  -- Expose webhook mode setter ke global
+  _webhookModeSetIdx = function(idx)
+   for i, opt in ipairs(MODE_OPTS) do
+    if i == idx then
+     curModeIdx = idx
+     _webhookMode = opt.key
+     modeDDLbl.Text = "  "..opt.label
+     modeDDLbl.TextColor3 = opt.col
+     modeDescLbl.Text = opt.desc
+     break
+    end
    end
   end
- end
- DDLayer.Visible=true
- _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
+  DDLayer.Visible=true
+  _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
  end)
 
- -- URL input
- local urlCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,58))
- urlCard.LayoutOrder=3; Corner(urlCard,9); Stroke(urlCard,C.BORD, 1.5,0.88); Padding(urlCard,8,8,10,10)
- New("UIListLayout",{Parent=urlCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,5)})
- local urlHdr=Label(urlCard,"URL Webhook",10.5,C.TXT2,Enum.Font.GothamBold)
- urlHdr.Size=UDim2.new(1,0,0,14); urlHdr.LayoutOrder=0
+ -- ── URL INPUT CARD ──────────────────────────────────────────
+ local urlCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
+ urlCard.LayoutOrder=3; urlCard.AutomaticSize=Enum.AutomaticSize.Y
+ Corner(urlCard, 12); Stroke(urlCard, C.BORD, 1.2, 0.82)
+ Padding(urlCard, 10, 10, 12, 12)
+ New("UIListLayout",{Parent=urlCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,7)})
+
+ local urlTopRow = Frame(urlCard, C.BLACK, UDim2.new(1,0,0,16))
+ urlTopRow.BackgroundTransparency=1; urlTopRow.LayoutOrder=0
+ local urlIco = Label(urlTopRow, "🔗", 12, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ urlIco.Size=UDim2.new(0,18,1,0); urlIco.Position=UDim2.new(0,0,0,0)
+ local urlHdr = Label(urlTopRow, "  Webhook URL", 12, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ urlHdr.Size=UDim2.new(1,-18,1,0); urlHdr.Position=UDim2.new(0,14,0,0)
+
  local urlBox = Instance.new("TextBox")
  urlBox.Parent=urlCard; urlBox.LayoutOrder=1
- urlBox.Size=UDim2.new(1,0,0,24); urlBox.BackgroundColor3=C.BG3
- urlBox.BorderSizePixel=0; urlBox.TextSize=11; urlBox.Font=Enum.Font.GothamBold
- urlBox.TextColor3=C.TXT2; urlBox.PlaceholderColor3=C.DIM
- urlBox.PlaceholderText="PASTE YOUR LINK DISCORD HERE..."
+ urlBox.Size=UDim2.new(1,0,0,30); urlBox.BackgroundColor3=C.BG2
+ urlBox.BorderSizePixel=0; urlBox.TextSize=10; urlBox.Font=Enum.Font.Gotham
+ urlBox.TextColor3=C.TXT2; urlBox.PlaceholderColor3=C.TXT3
+ urlBox.PlaceholderText="  Paste your Discord / Telegram link here..."
  urlBox.Text=_webhookUrl; urlBox.TextXAlignment=Enum.TextXAlignment.Left
  urlBox.ClearTextOnFocus=false
  _webhookUrlBox = urlBox  -- expose ke global config
- Corner(urlBox,5); Stroke(urlBox,C.BORD, 1.5,0.88)
+ Corner(urlBox, 8); Stroke(urlBox, C.BORD, 1.2, 0.7)
  local urlPad=Instance.new("UIPadding",urlBox)
- urlPad.PaddingLeft=UDim.new(0,6); urlPad.PaddingRight=UDim.new(0,6)
+ urlPad.PaddingLeft=UDim.new(0,8); urlPad.PaddingRight=UDim.new(0,8)
  urlBox.FocusLost:Connect(function()
- _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
+  _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
  end)
 
  -- Platform detect label
- local platformLbl = Label(p,"",9.5,C.DIM,Enum.Font.GothamBold)
- platformLbl.LayoutOrder=4; platformLbl.Size=UDim2.new(1,0,0,13)
+ local platformLbl = Label(urlCard, "", 9, C.DIM, Enum.Font.Gotham)
+ platformLbl.LayoutOrder=2; platformLbl.Size=UDim2.new(1,0,0,13)
  function UpdatePlatformLbl()
- local url = _webhookUrl
- if url:find("discord%.com/api/webhooks") then
- platformLbl.Text="[OK] Discord webhook DETECTED"; platformLbl.TextColor3=Color3.fromRGB(100,220,100)
- elseif url:find("api%.telegram%.org") then
- platformLbl.Text="[OK] Telegram bot API DETECTED"; platformLbl.TextColor3=Color3.fromRGB(100,180,255)
- elseif url=="" then
- platformLbl.Text="Content URL"; platformLbl.TextColor3=C.DIM
- else
- platformLbl.Text="URL not recognized (Discord/Telegram)"; platformLbl.TextColor3=Color3.fromRGB(255,180,60)
- end
+  local url = _webhookUrl
+  if url:find("discord%.com/api/webhooks") then
+   platformLbl.Text="✅  Discord webhook detected"; platformLbl.TextColor3=Color3.fromRGB(100,220,100)
+  elseif url:find("api%.telegram%.org") then
+   platformLbl.Text="✅  Telegram bot API detected"; platformLbl.TextColor3=Color3.fromRGB(100,180,255)
+  elseif url=="" then
+   platformLbl.Text="  Paste your webhook URL above"; platformLbl.TextColor3=C.TXT3
+  else
+   platformLbl.Text="⚠  URL not recognized — use Discord or Telegram"; platformLbl.TextColor3=Color3.fromRGB(255,180,60)
+  end
  end
  urlBox.FocusLost:Connect(function() UpdatePlatformLbl() end)
  UpdatePlatformLbl()
 
+ -- ── ACTIVE TOGGLE CARD ──────────────────────────────────────
  -- Toggle aktifkan webhook
- local wRow = Frame(p,C.BG3,UDim2.new(1,0,0,50))
- wRow.LayoutOrder=5; Corner(wRow,9); Stroke(wRow,C.BORD, 1.5,0.88)
- local wL=Label(wRow," ACTIVE Webhook",13,C.TXT,Enum.Font.GothamBold)
- wL.Size=UDim2.new(0.65,0,0,20); wL.Position=UDim2.new(0,10,0,6)
- local wS=Label(wRow,"Send notifications for every update",9.5,C.TXT3,Enum.Font.GothamBold)
- wS.Size=UDim2.new(0.65,0,0,14); wS.Position=UDim2.new(0,10,0,26)
- local wPill=Btn(wRow,C.TBAR,UDim2.new(0,50,0,26))
- wPill.AnchorPoint=Vector2.new(1,0.5); wPill.Position=UDim2.new(1,-10,0.5,0); Corner(wPill,13)
- local wKnob=Frame(wPill,Color3.fromRGB(120,50,8),UDim2.new(0,20,0,20))
- wKnob.AnchorPoint=Vector2.new(0,0.5); wKnob.Position=UDim2.new(0,3,0.5,0); Corner(wKnob,10)
+ local wRow = Frame(p, C.BG3, UDim2.new(1,0,0,56))
+ wRow.LayoutOrder=5; Corner(wRow, 12); Stroke(wRow, C.BORD, 1.2, 0.82)
+ do
+  local wg = Instance.new("UIGradient", wRow)
+  wg.Color = ColorSequence.new{
+   ColorSequenceKeypoint.new(0, Color3.fromRGB(18,28,72)),
+   ColorSequenceKeypoint.new(1, Color3.fromRGB(11,15,35)),
+  }
+  wg.Rotation = 160
+ end
+ local wIco = Label(wRow, "🔔", 18, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Left)
+ wIco.Size=UDim2.new(0,28,0,28); wIco.Position=UDim2.new(0,12,0,14)
+ local wL=Label(wRow, "Activate Webhook", 12, C.TXT2, Enum.Font.GothamBold)
+ wL.Size=UDim2.new(0.62,0,0,20); wL.Position=UDim2.new(0,46,0,10)
+ local wS=Label(wRow, "Send notifications for every update", 9, C.TXT3, Enum.Font.Gotham)
+ wS.Size=UDim2.new(0.62,0,0,14); wS.Position=UDim2.new(0,46,0,30)
+ local wPill=Btn(wRow, C.TBAR, UDim2.new(0,52,0,28))
+ wPill.AnchorPoint=Vector2.new(1,0.5); wPill.Position=UDim2.new(1,-12,0.5,0); Corner(wPill,14)
+ local wKnob=Frame(wPill, Color3.fromRGB(120,50,8), UDim2.new(0,22,0,22))
+ wKnob.AnchorPoint=Vector2.new(0,0.5); wKnob.Position=UDim2.new(0,3,0.5,0); Corner(wKnob,11)
  wPill.MouseButton1Click:Connect(function()
-    _webhookEnabled = not _webhookEnabled
-    local on = _webhookEnabled
-    _webhookUrl = (urlBox.Text or ""):match("^%s*(.-)%s*$") or ""
-    if on and (_webhookUrl == "" or not _webhookUrl:find("discord%.com/api/webhooks") and not _webhookUrl:find("api%.telegram%.org")) then
-        -- URL kosong atau tidak valid, batalkan
-        _webhookEnabled = false
-        on = false
-        pcall(function() warn("[ASH Webhook] Isi URL webhook dulu sebelum mengaktifkan!") end)
-    end
-    TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=on and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
-    TweenService:Create(wKnob,TweenInfo.new(0.16),{
-        Position=on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
-        BackgroundColor3=on and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
-    }):Play()
-    wRow.BackgroundColor3 = on and C.BG2 or C.BG3
-    pcall(UpdatePlatformLbl)
-    if on then
-        -- Reset cooldown agar tidak terblok pengiriman sebelumnya
-        _whLastSent = 0
-        if FlushWebhookPending then task.spawn(FlushWebhookPending) end
-    end
+  _webhookEnabled = not _webhookEnabled
+  local on = _webhookEnabled
+  _webhookUrl = (urlBox.Text or ""):match("^%s*(.-)%s*$") or ""
+  if on and (_webhookUrl == "" or not _webhookUrl:find("discord%.com/api/webhooks") and not _webhookUrl:find("api%.telegram%.org")) then
+   -- URL kosong atau tidak valid, batalkan
+   _webhookEnabled = false
+   on = false
+   pcall(function() warn("[ASH Webhook] Isi URL webhook dulu sebelum mengaktifkan!") end)
+  end
+  TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=on and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
+  TweenService:Create(wKnob,TweenInfo.new(0.16),{
+   Position=on and UDim2.new(1,-25,0.5,0) or UDim2.new(0,3,0.5,0),
+   BackgroundColor3=on and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
+  }):Play()
+  wRow.BackgroundColor3 = on and C.BG2 or C.BG3
+  pcall(UpdatePlatformLbl)
+  if on then
+   -- Reset cooldown agar tidak terblok pengiriman sebelumnya
+   _whLastSent = 0
+   if FlushWebhookPending then task.spawn(FlushWebhookPending) end
+  end
  end)
  -- Visual-only setter untuk webhook toggle (update pill tanpa trigger logic)
  _visWebhookToggle = function(v)
   TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=v and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
   TweenService:Create(wKnob,TweenInfo.new(0.16),{
-   Position=v and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+   Position=v and UDim2.new(1,-25,0.5,0) or UDim2.new(0,3,0.5,0),
    BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
   }):Play()
   wRow.BackgroundColor3=v and C.BG2 or C.BG3
@@ -16430,7 +16483,7 @@ do
   _webhookEnabled = v
   TweenService:Create(wPill,TweenInfo.new(0.16),{BackgroundColor3=v and Color3.fromRGB(200,80,10) or C.TBAR}):Play()
   TweenService:Create(wKnob,TweenInfo.new(0.16),{
-   Position=v and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+   Position=v and UDim2.new(1,-25,0.5,0) or UDim2.new(0,3,0.5,0),
    BackgroundColor3=v and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,50,8),
   }):Play()
   wRow.BackgroundColor3=v and C.BG2 or C.BG3
@@ -16438,136 +16491,158 @@ do
   if v and FlushWebhookPending then task.spawn(FlushWebhookPending) end
  end
 
+ -- ── ACTION BUTTONS (Test + Verify) ──────────────────────────
  --  Row: Test Webhook + Verify Link 
- local btnRow = Frame(p, C.BLACK, UDim2.new(1,0,0,36))
+ local btnRow = Frame(p, C.BLACK, UDim2.new(1,0,0,40))
  btnRow.LayoutOrder=6; btnRow.BackgroundTransparency=1
  New("UIListLayout",{Parent=btnRow,FillDirection=Enum.FillDirection.Horizontal,
- SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0, 10)})
+  SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0, 8)})
 
  -- Test Webhook
- local testRow=Frame(btnRow,C.BG3,UDim2.new(0.5,-4,1,0))
- testRow.LayoutOrder=1; Corner(testRow,9); Stroke(testRow,C.BORD, 1.5,0.88)
- local testBtn=Btn(testRow,Color3.fromRGB(160,65,8),UDim2.new(1,-16,0,24))
+ local testRow=Frame(btnRow, C.SURFACE, UDim2.new(0.5,-4,1,0))
+ testRow.LayoutOrder=1; Corner(testRow,10); Stroke(testRow, Color3.fromRGB(200,80,10), 1.5, 0.6)
+ local testBtn=Btn(testRow, Color3.fromRGB(160,65,8), UDim2.new(1,-12,0,28))
  testBtn.AnchorPoint=Vector2.new(0.5,0.5); testBtn.Position=UDim2.new(0.5,0,0.5,0)
- Corner(testBtn,7); Stroke(testBtn,C.BORD, 1.5,0.88)
- local testLbl=Label(testBtn," Test Webhook",10,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+ Corner(testBtn, 8)
+ do
+  local tg=Instance.new("UIGradient",testBtn)
+  tg.Color=ColorSequence.new{ColorSequenceKeypoint.new(0,Color3.fromRGB(200,90,15)),ColorSequenceKeypoint.new(1,Color3.fromRGB(140,50,5))}
+  tg.Rotation=90
+ end
+ local testLbl=Label(testBtn, "🧪  Test Webhook", 10, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  testLbl.Size=UDim2.new(1,0,1,0)
  testBtn.MouseButton1Click:Connect(function()
- _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
- UpdatePlatformLbl()
- local msg = "[OK] **[ASH GUI - FLa Project]** Test Webhook berhasil!\n> Mode: `"..(_webhookMode or "both"):upper().."`\n> Webhook aktif dan siap menerima notifikasi Raid/Siege."
- testLbl.Text="[..] Sending..."; testLbl.TextColor3=Color3.fromRGB(255,220,60)
- -- [FIX] Timeout UI 10s: HTTP Discord butuh 1-3 detik, jangan timeout terlalu cepat
- local _done = false
- task.delay(10, function()
- if not _done then
- _done = true
- testLbl.Text="[!] Timeout/No HTTP"; testLbl.TextColor3=Color3.fromRGB(255,80,60)
- task.delay(3, function() testLbl.Text=" Test Webhook"; testLbl.TextColor3=C.TXT end)
- end
- end)
- _WH.SendCustomMessage(_webhookUrl, msg,
- function()
- if _done then return end; _done = true
- task.spawn(function()
- testLbl.Text="[OK] Sent!"; testLbl.TextColor3=Color3.fromRGB(100,255,100)
- task.wait(2.5)
- testLbl.Text=" Test Webhook"; testLbl.TextColor3=C.TXT
- end)
- end,
- function(err)
- if _done then return end; _done = true
- task.spawn(function()
- testLbl.Text=""..err; testLbl.TextColor3=Color3.fromRGB(255,80,60)
- task.wait(2.5)
- testLbl.Text=" Test Webhook"; testLbl.TextColor3=C.TXT
- end)
- end
- )
+  _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
+  UpdatePlatformLbl()
+  local msg = "[OK] **[ASH GUI - FLa Project]** Test Webhook berhasil!\n> Mode: `"..(_webhookMode or "both"):upper().."`\n> Webhook aktif dan siap menerima notifikasi Raid/Siege."
+  testLbl.Text="⏳  Sending..."; testLbl.TextColor3=Color3.fromRGB(255,220,60)
+  -- [FIX] Timeout UI 10s: HTTP Discord butuh 1-3 detik, jangan timeout terlalu cepat
+  local _done = false
+  task.delay(10, function()
+   if not _done then
+    _done = true
+    testLbl.Text="✗  Timeout/No HTTP"; testLbl.TextColor3=Color3.fromRGB(255,80,60)
+    task.delay(3, function() testLbl.Text="🧪  Test Webhook"; testLbl.TextColor3=C.TXT2 end)
+   end
+  end)
+  _WH.SendCustomMessage(_webhookUrl, msg,
+   function()
+    if _done then return end; _done = true
+    task.spawn(function()
+     testLbl.Text="✓  Sent!"; testLbl.TextColor3=Color3.fromRGB(100,255,100)
+     task.wait(2.5)
+     testLbl.Text="🧪  Test Webhook"; testLbl.TextColor3=C.TXT2
+    end)
+   end,
+   function(err)
+    if _done then return end; _done = true
+    task.spawn(function()
+     testLbl.Text=""..err; testLbl.TextColor3=Color3.fromRGB(255,80,60)
+     task.wait(2.5)
+     testLbl.Text="🧪  Test Webhook"; testLbl.TextColor3=C.TXT2
+    end)
+   end
+  )
  end)
 
  -- Verify Link
- local verRow=Frame(btnRow,C.BG3,UDim2.new(0.5,-4,1,0))
- verRow.LayoutOrder=2; Corner(verRow,9); Stroke(verRow,C.BORD, 1.5,0.88)
- local verBtn=Btn(verRow,C.BG2,UDim2.new(1,-16,0,24))
+ local verRow=Frame(btnRow, C.SURFACE, UDim2.new(0.5,-4,1,0))
+ verRow.LayoutOrder=2; Corner(verRow,10); Stroke(verRow, C.ACC, 1.5, 0.6)
+ local verBtn=Btn(verRow, C.BG2, UDim2.new(1,-12,0,28))
  verBtn.AnchorPoint=Vector2.new(0.5,0.5); verBtn.Position=UDim2.new(0.5,0,0.5,0)
- Corner(verBtn,7); Stroke(verBtn,C.BORD, 1.5,0.88)
- local verLbl=Label(verBtn,"[] Verify Link",10,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+ Corner(verBtn, 8)
+ do
+  local vg=Instance.new("UIGradient",verBtn)
+  vg.Color=ColorSequence.new{ColorSequenceKeypoint.new(0,Color3.fromRGB(30,50,120)),ColorSequenceKeypoint.new(1,Color3.fromRGB(15,25,70))}
+  vg.Rotation=90
+ end
+ local verLbl=Label(verBtn, "🔍  Verify Link", 10, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  verLbl.Size=UDim2.new(1,0,1,0)
  verBtn.MouseButton1Click:Connect(function()
- _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
- UpdatePlatformLbl()
- verLbl.Text="[..] Cek..."; verLbl.TextColor3=Color3.fromRGB(255,220,60)
- _WH.VerifyWebhookUrl(_webhookUrl,
- function()
- task.spawn(function()
- verLbl.Text="[OK] Link Valid!"; verLbl.TextColor3=Color3.fromRGB(100,255,100)
- task.wait(1)
- verLbl.Text="[] Verify Link"; verLbl.TextColor3=C.TXT
- end)
- end,
- function(err)
- task.spawn(function()
- verLbl.Text=""..err; verLbl.TextColor3=Color3.fromRGB(255,80,60)
- task.wait(1)
- verLbl.Text="[] Verify Link"; verLbl.TextColor3=C.TXT
- end)
- end
- )
+  _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
+  UpdatePlatformLbl()
+  verLbl.Text="⏳  Checking..."; verLbl.TextColor3=Color3.fromRGB(255,220,60)
+  _WH.VerifyWebhookUrl(_webhookUrl,
+   function()
+    task.spawn(function()
+     verLbl.Text="✓  Link Valid!"; verLbl.TextColor3=Color3.fromRGB(100,255,100)
+     task.wait(1)
+     verLbl.Text="🔍  Verify Link"; verLbl.TextColor3=C.TXT2
+    end)
+   end,
+   function(err)
+    task.spawn(function()
+     verLbl.Text=""..err; verLbl.TextColor3=Color3.fromRGB(255,80,60)
+     task.wait(1)
+     verLbl.Text="🔍  Verify Link"; verLbl.TextColor3=C.TXT2
+    end)
+   end
+  )
  end)
 
+ -- ── SEND NOW CARD ────────────────────────────────────────────
  --  Kirim Sekarang (manual trigger sesuai mode) 
- local sendNowCard = Frame(p, C.BG3, UDim2.new(1,0,0,38))
- sendNowCard.LayoutOrder=7; Corner(sendNowCard,9); Stroke(sendNowCard,C.BORD, 1.5,0.88)
- local sendNowBtn = Btn(sendNowCard,C.BG2,UDim2.new(0.7,0,0,26))
+ local sendNowCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,46))
+ sendNowCard.LayoutOrder=7; Corner(sendNowCard,12); Stroke(sendNowCard, C.ACC2, 1.5, 0.55)
+ do
+  local sg=Instance.new("UIGradient",sendNowCard)
+  sg.Color=ColorSequence.new{ColorSequenceKeypoint.new(0,Color3.fromRGB(22,40,100)),ColorSequenceKeypoint.new(1,Color3.fromRGB(12,20,55))}
+  sg.Rotation=90
+ end
+ local sendNowBtn = Btn(sendNowCard, C.ACC, UDim2.new(0.78,0,0,30))
  sendNowBtn.AnchorPoint=Vector2.new(0.5,0.5); sendNowBtn.Position=UDim2.new(0.5,0,0.5,0)
- Corner(sendNowBtn, 10); Stroke(sendNowBtn,C.BORD, 1.5,0.88)
- local sendNowLbl=Label(sendNowBtn," Send Notify Now",10.5,C.TXT,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+ Corner(sendNowBtn, 10)
+ do
+  local ng=Instance.new("UIGradient",sendNowBtn)
+  ng.Color=ColorSequence.new{ColorSequenceKeypoint.new(0,Color3.fromRGB(70,130,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(40,90,200))}
+  ng.Rotation=90
+ end
+ local sendNowLbl=Label(sendNowBtn, "📤  Send Notify Now", 11, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  sendNowLbl.Size=UDim2.new(1,0,1,0)
  sendNowBtn.MouseButton1Click:Connect(function()
- _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
- if _webhookUrl == "" then
- sendNowLbl.Text="URL kosong!"; sendNowLbl.TextColor3=Color3.fromRGB(255,180,60)
- task.delay(2, function() sendNowLbl.Text=" Send Notify Now"; sendNowLbl.TextColor3=C.TXT end)
- return
- end
- sendNowLbl.Text="[..] Mengirim..."; sendNowLbl.TextColor3=Color3.fromRGB(255,220,60)
- -- [FIX] Timeout UI 12s: reset label kalau pengiriman hang
- local _snDone = false
- task.delay(12, function()
- if not _snDone then
- _snDone = true
- sendNowLbl.Text="[!] Timeout"; sendNowLbl.TextColor3=Color3.fromRGB(255,80,60)
- task.delay(2.5, function() sendNowLbl.Text=" Send Notify Now"; sendNowLbl.TextColor3=C.TXT end)
- end
- end)
- task.spawn(function()
- local mode = _webhookMode or "both"
- local url = _webhookUrl
- local sent = false
- local hasRaid = next(RAID_LIVE or {}) ~= nil
- local hasSiege = SIEGE and SIEGE.live and next(SIEGE.live) ~= nil
- if (mode == "raid" or mode == "both") and hasRaid then
- if _WH.SendRaid then _WH.SendRaid(url) end; sent = true
- end
- if (mode == "siege" or mode == "both") and hasSiege then
- task.wait(0.3)
- if _WH.SendSiege then _WH.SendSiege(url) end; sent = true
- end
- if not sent then
- -- Tidak ada data raid/siege aktif saat tombol ditekan
- if _snDone then return end; _snDone = true
- sendNowLbl.Text="[!] No Raid Data"; sendNowLbl.TextColor3=Color3.fromRGB(255,180,60)
- task.delay(2.5, function() sendNowLbl.Text=" Send Notify Now"; sendNowLbl.TextColor3=C.TXT end)
- return
- end
- _whLastSent = tick()
- if _snDone then return end; _snDone = true
- task.wait(0.5)
- sendNowLbl.Text="[OK] Sent!"; sendNowLbl.TextColor3=Color3.fromRGB(100,255,100)
- task.wait(2.5)
- sendNowLbl.Text=" Send Notify Now"; sendNowLbl.TextColor3=C.TXT
- end)
+  _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
+  if _webhookUrl == "" then
+   sendNowLbl.Text="⚠  URL is empty!"; sendNowLbl.TextColor3=Color3.fromRGB(255,180,60)
+   task.delay(2, function() sendNowLbl.Text="📤  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
+   return
+  end
+  sendNowLbl.Text="⏳  Sending..."; sendNowLbl.TextColor3=Color3.fromRGB(255,220,60)
+  -- [FIX] Timeout UI 12s: reset label kalau pengiriman hang
+  local _snDone = false
+  task.delay(12, function()
+   if not _snDone then
+    _snDone = true
+    sendNowLbl.Text="✗  Timeout"; sendNowLbl.TextColor3=Color3.fromRGB(255,80,60)
+    task.delay(2.5, function() sendNowLbl.Text="📤  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
+   end
+  end)
+  task.spawn(function()
+   local mode = _webhookMode or "both"
+   local url = _webhookUrl
+   local sent = false
+   local hasRaid = next(RAID_LIVE or {}) ~= nil
+   local hasSiege = SIEGE and SIEGE.live and next(SIEGE.live) ~= nil
+   if (mode == "raid" or mode == "both") and hasRaid then
+    if _WH.SendRaid then _WH.SendRaid(url) end; sent = true
+   end
+   if (mode == "siege" or mode == "both") and hasSiege then
+    task.wait(0.3)
+    if _WH.SendSiege then _WH.SendSiege(url) end; sent = true
+   end
+   if not sent then
+    -- Tidak ada data raid/siege aktif saat tombol ditekan
+    if _snDone then return end; _snDone = true
+    sendNowLbl.Text="⚠  No Active Raid Data"; sendNowLbl.TextColor3=Color3.fromRGB(255,180,60)
+    task.delay(2.5, function() sendNowLbl.Text="📤  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2 end)
+    return
+   end
+   _whLastSent = tick()
+   if _snDone then return end; _snDone = true
+   task.wait(0.5)
+   sendNowLbl.Text="✓  Sent Successfully!"; sendNowLbl.TextColor3=Color3.fromRGB(100,255,100)
+   task.wait(2.5)
+   sendNowLbl.Text="📤  Send Notify Now"; sendNowLbl.TextColor3=C.TXT2
+  end)
  end)
 end
 

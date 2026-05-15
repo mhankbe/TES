@@ -7799,14 +7799,32 @@ local function _WH_resolveGrade(ent)
 end
 local _whBufferTimer   = nil  -- debounce handle
 local _whLastSent      = 0
--- [BUG FIX 4] Cache teks webhook yang sudah pernah dikirim di event server ini.
--- Reset hanya saat RAID_LIVE kosong total (event habis / server baru).
--- Ini cegah spam: ParseChatLine + RebuildRaidList + _onRaidChildAdded semua bisa
--- panggil AddLine untuk teks yang SAMA berkali-kali.
-local _whSentCache     = {}
+-- [BUG FIX 4 v2] Cache teks webhook dengan TTL timestamp.
+-- Anti-spam: cegah teks sama dikirim dalam 1 window event (8 menit).
+-- Setelah 8 menit, entry expire otomatis sehingga event baru bisa masuk.
+-- Ini fix masalah lama: cache tidak pernah reset jika RAID_LIVE tidak pernah kosong sempurna.
+local _WH_SENT_TTL = 300 -- 5 menit (pas dengan durasi event server)
+local _whSentCache = {} -- [text] = timestamp
 local function _whResetSentCache()
  _whSentCache = {}
 end
+-- Pruning: hapus entry expired (dipanggil di AddLine agar memori tidak bocor)
+local function _whPruneSentCache()
+ local now = tick()
+ for k, t in pairs(_whSentCache) do
+  if (now - t) >= _WH_SENT_TTL then
+   _whSentCache[k] = nil
+  end
+ end
+end
+-- Auto-reset setiap 5 menit: supaya event baru dari server selalu dikirim utuh,
+-- tidak peduli apakah kontennya sama atau berbeda dengan event sebelumnya.
+-- Script tidak boleh jadi "pihak ke-3" yang memblokir notif server.
+task.spawn(function()
+ while task.wait(_WH_SENT_TTL) do
+  _whResetSentCache()
+ end
+end)
 
 local GRADE_COLOR = {
  ["E"]=9868950,  ["D"]=6604900,  ["C"]=5294200,  ["B"]=6589695,
@@ -7955,12 +7973,18 @@ _WH.AddLine = function(text)
  if not _webhookEnabled or not _webhookUrl or _webhookUrl == "" then return end
  if _whSilent then return end
  -- [BUG FIX 4] Cek cache global per-event: jika teks ini sudah pernah dikirim di event ini, skip
- if _whSentCache[text] then return end
- -- Cek apakah sudah ada baris identik dalam buffer (anti duplikat)
+ -- [BUG FIX 4 v2] Cek TTL: teks sama diblokir hanya dalam window 8 menit
+ local _now = tick()
+ if _whSentCache[text] and (_now - _whSentCache[text]) < _WH_SENT_TTL then return end
+ -- Cek apakah sudah ada baris identik dalam buffer (anti duplikat in-flight)
  for _, existing in ipairs(_whBuffer) do
   if existing == text then return end
  end
- _whSentCache[text] = true  -- [BUG FIX 4] Tandai teks ini sudah masuk (tidak akan kirim lagi)
+ _whSentCache[text] = _now  -- [BUG FIX 4 v2] Simpan timestamp, bukan boolean
+ -- Pruning berkala agar memori tidak bocor
+ local _cacheSize = 0
+ for _ in pairs(_whSentCache) do _cacheSize = _cacheSize + 1 end
+ if _cacheSize > 100 then _whPruneSentCache() end
  table.insert(_whBuffer, text)
  -- Reset debounce: tunggu 3 detik setelah baris terakhir baru kirim
  if _whBufferTimer then pcall(function() task.cancel(_whBufferTimer) end) end

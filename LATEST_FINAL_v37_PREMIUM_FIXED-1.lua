@@ -1719,7 +1719,7 @@ local function EnsureHeroAtkThread()
 end
 
 local _skillTarget = nil
-local function EnsureSkillThread() end
+local function EnsureSkillThread() EnsureHeroAtkThread() end
 
 local _heroFireTick = {}
 function FireAttack(g, pos)

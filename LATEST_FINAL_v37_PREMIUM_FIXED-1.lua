@@ -1761,6 +1761,19 @@ function FireAllDamage(g, ep)
  end
 end
 
+function FireHeroRemotes(enemyGuid, enemyPos)
+ local pos = enemyPos or Vector3.new(0,0,0)
+ if #HERO_GUIDS == 0 then return end
+ local posInfos = {}
+ for _, hGuid in ipairs(HERO_GUIDS) do
+  table.insert(posInfos, {heroGuid=hGuid, targetPos=pos})
+ end
+ if RE.HeroMove then
+  pcall(function() RE.HeroMove:FireServer({attackTarget=enemyGuid,userId=MY_USER_ID,heroTagetPosInfos=posInfos}) end)
+  pcall(function() RE.HeroMove:FireServer({attackTarget=enemyGuid,userId=MY_USER_ID,heroTagetPosInfos=posInfos}) end)
+ end
+end
+
 if RE.Death then
  RE.Death.OnClientEvent:Connect(function(d)
  if not d then return end

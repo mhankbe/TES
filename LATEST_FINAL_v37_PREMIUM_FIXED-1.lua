@@ -1181,6 +1181,9 @@ RAID = {
  updownDir = "up", -- "up" = UseRaidItem(10270) | "down" = UseRaidItem(10271)
  diffLbl = nil, -- label UI difficulty
  snapshotMapId = nil, -- mapId hasil jepretan sesuai difficulty saat ini
+ -- [RAID LIST ENTRY]
+ listEntries = {}, -- { {maps={[mn]=true,...}, ranks={[grade]=true,...}} , ... } urutan = prioritas bawah ke atas
+ listEnabled = false, -- toggle aktif/nonaktif fitur List Entry
 }
 _raidOn = false
 
@@ -10409,8 +10412,104 @@ function StartRaidLoop()
         -- Prioritas: Rune Map + Pick Rank > Rune Map saja > Pick Rank > Difficulty
  -- Selalu baca RAID.runeEnabled / runeGrades / runeMapTarget live
  -- sehingga kalau user ganti setting di tengah, iterasi berikutnya langsung ikut
+
+-- ============================================================
+-- [RAID LIST ENTRY] ResolveEntryFromList
+-- Resolver independen: bypass manual mode, scan entry dari bawah ke atas.
+-- Return: raidEntry yang match, atau nil jika tidak ada yg match (caller fallback ke Easy)
+-- ============================================================
+local function ResolveEntryFromList()
+    if not RAID.listEnabled then return nil end
+    if #RAID.listEntries == 0 then return nil end
+    if #RAID_ID_LIST == 0 then return nil end
+
+    -- Filter Ascension keluar (sama seperti ResolveEntry)
+    local normalList = {}
+    for _, r in ipairs(RAID_ID_LIST) do
+        local isAsc = r.isAscension == true or (r.id and r.id >= 935001)
+        if not isAsc then
+            local live = r.id and RAID_LIVE[r.id]
+            if not (live and live.isAscension == true) then
+                table.insert(normalList, r)
+            end
+        end
+    end
+    if #normalList == 0 then return nil end
+
+    -- Helper ambil grade terbaik
+    local function _getGrade(r)
+        return GetBestGrade(r.mapId - 50000, false)
+    end
+
+    -- Scan entry dari bawah ke atas (index #listEntries -> 1)
+    for i = #RAID.listEntries, 1, -1 do
+        local ent = RAID.listEntries[i]
+        local hasMaps  = next(ent.maps)  ~= nil
+        local hasRanks = next(ent.ranks) ~= nil
+
+        -- Kumpulkan kandidat yang lolos filter Maps entry ini
+        local candidates = {}
+        for _, r in ipairs(normalList) do
+            local mn = r.mapId - 50000
+            if not hasMaps or ent.maps[mn] then
+                table.insert(candidates, r)
+            end
+        end
+        if #candidates == 0 then continue end
+
+        -- Filter Rank dari kandidat
+        if hasRanks then
+            local matched = {}
+            for _, r in ipairs(candidates) do
+                local grade = _getGrade(r)
+                if grade and ent.ranks[grade] then
+                    table.insert(matched, r)
+                end
+            end
+            if #matched > 0 then
+                -- Pilih map terkecil dari yang match
+                table.sort(matched, function(a, b) return a.mapId < b.mapId end)
+                return matched[1]
+            end
+            -- Rank tidak match di entry ini -> lanjut ke entry berikutnya
+        else
+            -- Tidak ada filter rank -> ambil map terkecil dari kandidat
+            table.sort(candidates, function(a, b) return a.mapId < b.mapId end)
+            return candidates[1]
+        end
+    end
+
+    -- Tidak ada entry yang match sama sekali -> return nil (caller fallback Easy)
+    return nil
+end
+
 local function ResolveEntry()
                 if #RAID_ID_LIST == 0 then return nil end
+
+                -- [RAID LIST ENTRY] Cek List Entry dulu sebelum logika normal
+                if RAID.listEnabled and #RAID.listEntries > 0 then
+                    local listResult = ResolveEntryFromList()
+                    if listResult then
+                        return listResult
+                    end
+                    -- Tidak ada match -> fallback Easy (map terkecil dari normal list)
+                    local easyList = {}
+                    for _, r in ipairs(RAID_ID_LIST) do
+                        local isAsc = r.isAscension == true or (r.id and r.id >= 935001)
+                        if not isAsc then
+                            local live = r.id and RAID_LIVE[r.id]
+                            if not (live and live.isAscension == true) then
+                                table.insert(easyList, r)
+                            end
+                        end
+                    end
+                    if #easyList > 0 then
+                        table.sort(easyList, function(a, b) return a.mapId < b.mapId end)
+                        return easyList[1]
+                    end
+                    return nil
+                end
+
                 -- [v46] Auto Raid selalu filter Normal saja (Ascension ditangani Auto Ascension)
                 local function _ascFilter(entry)
                     if not entry then return false end
@@ -12509,6 +12608,186 @@ do
 
  ApplyPickModeLock()
  task.defer(ResizeRaidBody)
+
+ -- ============================================================
+ -- [RAID LIST ENTRY] UI Section (LayoutOrder 18+)
+ -- ============================================================
+ do
+  -- Header label
+  local listHdr = Label(raidInner, "RAID LIST ENTRY", 10, C.TXT3, Enum.Font.GothamBold)
+  listHdr.LayoutOrder = 18; listHdr.Size = UDim2.new(1,0,0,14)
+
+  -- Card utama: toggle ON/OFF + tombol Save Entry
+  local listCtrlCard = Frame(raidInner, C.SURFACE, UDim2.new(1,0,0,40))
+  listCtrlCard.LayoutOrder = 19
+  Corner(listCtrlCard, 10); Stroke(listCtrlCard, C.BORD, 1.5, 0.3); Padding(listCtrlCard, 6, 6, 10, 10)
+
+  local listCtrlRow = Frame(listCtrlCard, C.BLACK, UDim2.new(1,0,1,0))
+  listCtrlRow.BackgroundTransparency = 1
+
+  -- Label toggle
+  local listTogLbl = Label(listCtrlRow, "List Entry", 12, C.TXT, Enum.Font.GothamBold)
+  listTogLbl.Size = UDim2.new(0,70,1,0)
+
+  -- Pill toggle ON/OFF
+  local listPill = Btn(listCtrlRow, RAID.listEnabled and C.PILL_ON or C.PILL_OFF, UDim2.new(0,48,0,26))
+  listPill.Position = UDim2.new(0,76,0.5,-13); Corner(listPill, 12)
+  local listKnob = Frame(listPill, RAID.listEnabled and C.KNOB_ON or C.KNOB_OFF, UDim2.new(0,20,0,20))
+  listKnob.AnchorPoint = Vector2.new(0,0.5)
+  listKnob.Position = RAID.listEnabled and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0)
+  Corner(listKnob, 9)
+
+  listPill.MouseButton1Click:Connect(function()
+   RAID.listEnabled = not RAID.listEnabled
+   local on = RAID.listEnabled
+   TweenService:Create(listPill, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
+   TweenService:Create(listKnob, TweenInfo.new(0.16), {
+    Position = on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+    BackgroundColor3 = on and C.KNOB_ON or C.KNOB_OFF,
+   }):Play()
+   if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
+  end)
+
+  -- Tombol Save Entry
+  local saveBtn = Btn(listCtrlRow, C.ACC, UDim2.new(1,-136,1,-4))
+  saveBtn.Position = UDim2.new(0,132,0,2)
+  Corner(saveBtn, 7); Stroke(saveBtn, C.ACC2, 1, 0.3)
+  local saveLbl = Label(saveBtn, "+ Save Entry", 11, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+  saveLbl.Size = UDim2.new(1,0,1,0)
+
+  -- Container untuk list rows (ScrollingFrame)
+  local listContainer = Instance.new("ScrollingFrame")
+  listContainer.Parent = raidInner
+  listContainer.LayoutOrder = 20
+  listContainer.BackgroundTransparency = 1
+  listContainer.BorderSizePixel = 0
+  listContainer.ScrollBarThickness = 4
+  listContainer.ScrollBarImageColor3 = C.ACC
+  listContainer.CanvasSize = UDim2.new(0,0,0,0)
+  listContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
+  listContainer.Size = UDim2.new(1,0,0,0) -- akan di-resize dinamis
+  local listLayout2 = New("UIListLayout", {Parent=listContainer, SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,4)})
+
+  -- Helper: hitung & set tinggi listContainer (max 200px)
+  local function ResizeListContainer()
+   task.defer(function()
+    task.wait(0)
+    local h = math.min(listLayout2.AbsoluteContentSize.Y, 200)
+    listContainer.Size = UDim2.new(1,0,0,h)
+    task.defer(ResizeRaidBody)
+   end)
+  end
+
+  -- Helper: build label teks untuk satu entry
+  local function EntryLabel(ent)
+   -- Maps
+   local mapsStr
+   if next(ent.maps) == nil then
+    mapsStr = "All Maps"
+   else
+    local ms = {}
+    for mn in pairs(ent.maps) do table.insert(ms, mn) end
+    table.sort(ms)
+    local parts = {}
+    for _, mn in ipairs(ms) do table.insert(parts, "Map "..mn) end
+    mapsStr = table.concat(parts, ", ")
+   end
+   -- Ranks
+   local ranksStr
+   if next(ent.ranks) == nil then
+    ranksStr = "All Ranks"
+   else
+    local rs = {}
+    for _, g in ipairs(GRADE_LIST) do
+     if ent.ranks[g] then table.insert(rs, g) end
+    end
+    ranksStr = table.concat(rs, "/")
+   end
+   return mapsStr .. "  |  Rank: " .. ranksStr
+  end
+
+  -- Buat visual row untuk 1 entry
+  local entryRowRefs = {} -- simpan referensi row agar bisa di-destroy
+
+  local function BuildEntryRow(entIdx)
+   local ent = RAID.listEntries[entIdx]
+   if not ent then return end
+
+   local row = Frame(listContainer, C.SURFACE, UDim2.new(1,0,0,32))
+   row.LayoutOrder = entIdx
+   Corner(row, 8); Stroke(row, C.BORD, 1, 0.4)
+
+   -- Nomor entry
+   local numLbl = Label(row, "#"..entIdx, 10, C.TXT3, Enum.Font.GothamBold)
+   numLbl.Size = UDim2.new(0,22,1,0); numLbl.Position = UDim2.new(0,4,0,0)
+
+   -- Label maps + rank
+   local entLbl = Label(row, EntryLabel(ent), 10, C.TXT, Enum.Font.Gotham)
+   entLbl.Size = UDim2.new(1,-72,1,0); entLbl.Position = UDim2.new(0,26,0,0)
+   entLbl.TextTruncate = Enum.TextTruncate.AtEnd
+   entLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+   -- Tombol Delete
+   local delBtn = Btn(row, Color3.fromRGB(140,30,30), UDim2.new(0,40,0,24))
+   delBtn.AnchorPoint = Vector2.new(1,0.5); delBtn.Position = UDim2.new(1,-4,0.5,0)
+   Corner(delBtn, 6)
+   local delLbl = Label(delBtn, "Del", 10, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+   delLbl.Size = UDim2.new(1,0,1,0)
+
+   entryRowRefs[entIdx] = row
+
+   delBtn.MouseButton1Click:Connect(function()
+    -- Hapus dari data
+    table.remove(RAID.listEntries, entIdx)
+    -- Rebuild semua row (urutan bisa berubah)
+    for _, ref in pairs(entryRowRefs) do
+     if ref and ref.Parent then ref:Destroy() end
+    end
+    entryRowRefs = {}
+    for i = 1, #RAID.listEntries do
+     BuildEntryRow(i)
+    end
+    ResizeListContainer()
+   end)
+  end
+
+  -- Rebuild semua rows dari scratch
+  local function RebuildAllRows()
+   for _, ref in pairs(entryRowRefs) do
+    if ref and ref.Parent then ref:Destroy() end
+   end
+   entryRowRefs = {}
+   for i = 1, #RAID.listEntries do
+    BuildEntryRow(i)
+   end
+   ResizeListContainer()
+  end
+
+  -- Render entry yang sudah ada (jika ada dari session sebelumnya)
+  RebuildAllRows()
+
+  -- Tombol Save Entry: snapshot Maps + Rank saat ini -> tambah ke list
+  saveBtn.MouseButton1Click:Connect(function()
+   -- Snapshot Maps (copy)
+   local snapMaps = {}
+   for mn, v in pairs(RAID.preferMaps) do
+    snapMaps[mn] = v
+   end
+   -- Snapshot Ranks (copy)
+   local snapRanks = {}
+   for g, v in pairs(RAID.runeGrades) do
+    snapRanks[g] = v
+   end
+   -- Tambah ke list
+   table.insert(RAID.listEntries, {maps=snapMaps, ranks=snapRanks})
+   -- Buat row baru
+   BuildEntryRow(#RAID.listEntries)
+   ResizeListContainer()
+   if _raidWakeup then pcall(function() _raidWakeup:Fire() end) end
+  end)
+
+  ResizeListContainer()
+ end -- end RAID LIST ENTRY UI do block
 
 end -- end Auto Raid do block
 

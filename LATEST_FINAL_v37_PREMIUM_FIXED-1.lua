@@ -10441,46 +10441,45 @@ local function ResolveEntryFromList()
         return GetBestGrade(r.mapId - 50000, false)
     end
 
-    -- Scan entry dari bawah ke atas (index #listEntries -> 1)
-    for i = #RAID.listEntries, 1, -1 do
+    -- [FIX BUG 1] Kumpulkan SEMUA lobby yang match dari SEMUA entry sekaligus,
+    -- lalu pilih mapId terkecil. Ini memastikan Map 3 dipilih sebelum Map 10
+    -- meskipun Map 10 ada di entry prioritas lebih bawah.
+    local allMatched = {}  -- { raidEntry } tanpa duplikat (key = mapId)
+    local seen = {}
+
+    for i = 1, #RAID.listEntries do
         local ent = RAID.listEntries[i]
         local hasMaps  = next(ent.maps)  ~= nil
         local hasRanks = next(ent.ranks) ~= nil
 
-        -- Kumpulkan kandidat yang lolos filter Maps entry ini
-        local candidates = {}
         for _, r in ipairs(normalList) do
+            if seen[r.mapId] then continue end  -- skip duplikat
             local mn = r.mapId - 50000
-            if not hasMaps or ent.maps[mn] then
-                table.insert(candidates, r)
-            end
-        end
-        if #candidates == 0 then continue end
 
-        -- Filter Rank dari kandidat
-        if hasRanks then
-            local matched = {}
-            for _, r in ipairs(candidates) do
+            -- Cek filter Maps entry ini
+            local mapsOk = (not hasMaps) or ent.maps[mn]
+            if not mapsOk then continue end
+
+            -- Cek filter Rank entry ini
+            if hasRanks then
                 local grade = _getGrade(r)
                 if grade and ent.ranks[grade] then
-                    table.insert(matched, r)
+                    table.insert(allMatched, r)
+                    seen[r.mapId] = true
                 end
+            else
+                -- Entry ini tidak set rank -> lolos langsung
+                table.insert(allMatched, r)
+                seen[r.mapId] = true
             end
-            if #matched > 0 then
-                -- Pilih map terkecil dari yang match
-                table.sort(matched, function(a, b) return a.mapId < b.mapId end)
-                return matched[1]
-            end
-            -- Rank tidak match di entry ini -> lanjut ke entry berikutnya
-        else
-            -- Tidak ada filter rank -> ambil map terkecil dari kandidat
-            table.sort(candidates, function(a, b) return a.mapId < b.mapId end)
-            return candidates[1]
         end
     end
 
-    -- Tidak ada entry yang match sama sekali -> return nil (caller fallback Easy)
-    return nil
+    if #allMatched == 0 then return nil end
+
+    -- Pilih mapId terkecil dari semua yang match
+    table.sort(allMatched, function(a, b) return a.mapId < b.mapId end)
+    return allMatched[1]
 end
 
 local function ResolveEntry()
@@ -11661,6 +11660,16 @@ local function ResolveEntry()
  task.wait(1)
  end
  RAID._cooldownActive = false -- [BUG FIX 3] Cooldown selesai, standby loop boleh masuk
+
+ -- [FIX BUG 2 LIST ENTRY] Buffer 2s tambahan setelah cooldown 14s
+ -- Mencegah "terlalu cepat masuk raid lagi" notif dari server
+ if RAID.listEnabled and #RAID.listEntries > 0 then
+  RaidStatusUpdate("[..] List Entry buffer 2s...", Color3.fromRGB(160,148,135))
+  for _bf = 2, 1, -1 do
+   if not RAID.running then break end
+   task.wait(1)
+  end
+ end
 
  -- [v247] STEP 7: Setelah cooldown selesai:
  -- 1. Jika SIEGE aktif/running -> tunggu SIEGE selesai total dulu (PRIORITAS atas MA)

@@ -5257,7 +5257,7 @@ end
 -- PANEL : ATTACK
 -- ============================================================
 do
- local p = NewPanel("attack")
+ local p = NewPanel("Mass Attack")
 
  local ddBackdrop = Instance.new("TextButton",ScreenGui)
  ddBackdrop.Size=UDim2.new(1,0,1,0); ddBackdrop.Position=UDim2.new(0,0,0,0)

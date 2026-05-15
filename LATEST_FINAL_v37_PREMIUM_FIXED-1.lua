@@ -1689,35 +1689,26 @@ local function IsEnemyGuidValid(g)
  return false
 end
 
-local function EnsureHeroAtkThread()
- if _heroAtkThread then return end
- _heroAtkThread = task.spawn(function()
-  local _lastFire = {}
-  while ScreenGui and ScreenGui.Parent do
-   local g = _heroAtkTarget
-   if g and #HERO_GUIDS > 0 and (tick() - _heroAtkTick) >= 0.5 and IsEnemyGuidValid(g) then
-    _heroAtkTick = tick()
-    for _, hGuid in ipairs(HERO_GUIDS) do
-     local last = _lastFire[hGuid] or 0 -- [PERBAIKAN 2] Tambahkan 'or 0'
-     if (tick() - last) >= 0.05 then
-      _lastFire[hGuid] = tick()
-      if RE.HeroUseSkill then
-       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
-       task.wait(0.1)
-       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
-       task.wait(0.1)
-       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
-      end
-     end
-     task.wait(0.05)
-    end
-   end
-   task.wait(0.05)
-  end
-  _heroAtkThread = nil -- [PERBAIKAN 3] Memperbaiki memori bocor (sebelumnya terisi angka 5)
- end)
-end
+local _skillTarget = nil
+local function EnsureSkillThread() EnsureHeroAtkThread() end
 
+local _heroFireTick = {}
+function FireAttack(g, pos)
+ if not g then return end
+ if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end) end
+ if RE.HeroUseSkill and #HERO_GUIDS > 0 then
+  local now = tick()
+  local last = _heroFireTick[g] or 0 -- [PERBAIKAN 4 UTAMA] Menyembuhkan error baris 1383
+  if now - last >= 0.04 then
+   _heroFireTick[g] = now
+   for _, hGuid in ipairs(HERO_GUIDS) do
+    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
+    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
+    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
+   end
+  end
+ end
+end
 
 function FireAllDamage(g, ep)
  if not IsEnemyGuidValid(g) then return end

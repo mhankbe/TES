@@ -830,7 +830,7 @@ ContentFrame.BackgroundTransparency = 1
 local NAV_ITEMS = {
  {tag="main", ico="", lbl="Main"},
  {tag="hide", ico="", lbl="Hide"},
- {tag="farm", ico="", lbl="Farm"},
+ {tag="Attack", ico="", lbl="Attack"},
  {tag="Mass Attack", ico="", lbl="Mass Attack"},
  {tag="autoraid", ico="", lbl="Automation"},
  {tag="player", ico="", lbl="Player"},
@@ -4892,7 +4892,7 @@ end -- end do PANEL HIDE
 -- PANEL : FARM
 -- ============================================================
 do
- local p = NewPanel("farm")
+ local p = NewPanel("Attack")
 
  -- State
  local RA = { running=false, threads={}, killed=0, cur=nil }

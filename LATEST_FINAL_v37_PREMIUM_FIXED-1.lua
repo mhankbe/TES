@@ -1718,27 +1718,28 @@ local function EnsureHeroAtkThread()
  end)
 end
 
-local _skillTarget = nil
-local function EnsureSkillThread() EnsureHeroAtkThread() end
 
-local _heroFireTick = {}
-function FireAttack(g, pos)
- if not g then return end
- if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end) end
- if RE.HeroUseSkill and #HERO_GUIDS > 0 then
-  local now = tick()
-  local last = _heroFireTick[g] or 0 -- [PERBAIKAN 4 UTAMA] Menyembuhkan error baris 1383
-  if now - last >= 0.04 then
-   _heroFireTick[g] = now
-   for _, hGuid in ipairs(HERO_GUIDS) do
-    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
-    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
-    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
-   end
+function FireAllDamage(g, ep)
+ if not IsEnemyGuidValid(g) then return end
+ if RE.Click then
+  task.spawn(function()
+   pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=ep}) end)
+  end)
+ end
+ if RE.Atk then
+  pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
+ end
+ _heroAtkTarget = g
+ _skillTarget = g
+ EnsureHeroAtkThread()
+ if not RE.HeroUseSkill and RE.HeroSkill then
+  for _, hGuid in ipairs(HERO_GUIDS) do
+   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=1,masterId=MY_USER_ID}) end)
+   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=2,masterId=MY_USER_ID}) end)
+   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=3,masterId=MY_USER_ID}) end)
   end
  end
 end
-
 
 function FireHeroRemotes(enemyGuid, enemyPos)
  local pos = enemyPos or Vector3.new(0,0,0)

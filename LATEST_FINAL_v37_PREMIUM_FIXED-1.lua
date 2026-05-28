@@ -597,18 +597,6 @@ function BuildTopBar()
  BtnMin.MouseButton1Click:Connect(ShowBubble)
  Bubble.MouseButton1Click:Connect(ShowWin)
 
- -- [Minimize Bind] Tekan Alt = toggle minimize / restore
- UserInputService.InputBegan:Connect(function(input, gameProcessed)
-  if gameProcessed then return end
-  if input.KeyCode == Enum.KeyCode.LeftAlt or input.KeyCode == Enum.KeyCode.RightAlt then
-   if Window.Visible then
-    ShowBubble()
-   else
-    ShowWin()
-   end
-  end
- end)
-
  -- Maximize tetap dari versi lama
  local isFS, prevSz, prevPs = false, Window.Size, Window.Position
  BtnMax.MouseButton1Click:Connect(function()
@@ -1291,10 +1279,10 @@ _setDelayDDGlobal   = nil  -- Attack: Delay DD
 _maMapSelState      = nil
 _setNoClipToggle    = nil  -- Player: No Clip
 _setAntiAfkToggle   = nil  -- Player: Anti AFK
-_walkSpeedState     = 160  -- Player: WalkSpeed value (default 1000%)
+_walkSpeedState     = 16   -- Player: WalkSpeed value
 _setMergeToggle     = nil  -- AutoRoll: Merge Potion
 _setUseToggle       = nil  -- AutoRoll: Use Potion
--- _setPotatoToggle removed (Potato Mode dihapus V28)
+_setPotatoToggle    = nil  -- Settings: Potato Mode
 _webhookModeSetIdx  = nil  -- Settings: webhook mode setter
 _webhookMode        = "both" -- Webhook mode: "raid" | "siege" | "both"
 _webhookUrlBox      = nil  -- Settings: urlBox reference untuk restore text
@@ -1312,7 +1300,7 @@ _visUse         = nil  -- AutoRoll: Use Potion visual
 _visSiege       = nil  -- Automation: Siege visual
 _visDungeon     = nil  -- Automation: Dungeon visual
 _visST2         = nil  -- Automation: ST2 visual
--- _visPotato removed (Potato Mode dihapus V28)
+_visPotato      = nil  -- Settings: Potato Mode visual
 _visWeaponSell  = nil  -- Main: Auto Sell Weapon visual (manual pill)
 _visDecompGem   = nil  -- Main: Auto Decomp Gem visual (manual pill)
 _setTransSlider = nil  -- Theme: UI Transparency slider setter
@@ -5724,13 +5712,13 @@ do
  wsCard.LayoutOrder=1; Corner(wsCard, 10); Stroke(wsCard,C.BORD, 1.5,0.88); Padding(wsCard,8,8,12,8)
  local wsTitle=Label(wsCard,"SPEED RUN",12,C.TXT,Enum.Font.GothamBold)
  wsTitle.Size=UDim2.new(0.6,0,0,16); wsTitle.Position=UDim2.new(0,0,0,4)
- local wsValLbl=Label(wsCard,"160 (1000%)",11,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
+ local wsValLbl=Label(wsCard,"16 (100%)",11,C.ACC2,Enum.Font.GothamBold,Enum.TextXAlignment.Right)
  wsValLbl.Size=UDim2.new(0.4,0,0,16); wsValLbl.Position=UDim2.new(0.6,0,0,4)
  local sliderTrack=Frame(wsCard,C.BG3,UDim2.new(1,0,0,8))
  sliderTrack.Position=UDim2.new(0,0,0,30); Corner(sliderTrack,4); Stroke(sliderTrack,C.BORD, 1.5,0.88)
- local sliderFill=Frame(sliderTrack,C.ACC,UDim2.new(1,0,1,0)); Corner(sliderFill,4)
+ local sliderFill=Frame(sliderTrack,C.ACC,UDim2.new(0.1,0,1,0)); Corner(sliderFill,4)
  local sliderKnob=Frame(sliderTrack,C.ACC2,UDim2.new(0,14,0,14))
- sliderKnob.Position=UDim2.new(1,-7,0.5,-7); Corner(sliderKnob,7); Stroke(sliderKnob,C.ACC3,1.5,0)
+ sliderKnob.Position=UDim2.new(0.1,-7,0.5,-7); Corner(sliderKnob,7); Stroke(sliderKnob,C.ACC3,1.5,0)
  local presetRow=Frame(wsCard,C.BLACK,UDim2.new(1,0,0,16))
  presetRow.BackgroundTransparency=1; presetRow.Position=UDim2.new(0,0,0,46)
  local presets={{lbl="0%",v=0},{lbl="100%",v=16},{lbl="300%",v=48},{lbl="500%",v=80},{lbl="1000%",v=160}}
@@ -5762,17 +5750,6 @@ do
  _setSpeedSlider = function(spd)
   SetSpeed(math.clamp(spd, 0, 160) / 160)
  end
- -- Terapkan default 1000% saat karakter sudah siap
- local function ApplyDefaultSpeed()
-  local char = LP.Character or LP.CharacterAdded:Wait()
-  local hum = char:FindFirstChild("Humanoid")
-  if hum then hum.WalkSpeed = 160 end
- end
- task.spawn(ApplyDefaultSpeed)
- LP.CharacterAdded:Connect(function(char)
-  local hum = char:WaitForChild("Humanoid", 5)
-  if hum then hum.WalkSpeed = _walkSpeedState end
- end)
  sliderTrack.InputBegan:Connect(function(i)
  if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
  isDragging=true; local rel=(i.Position.X-sliderTrack.AbsolutePosition.X)/sliderTrack.AbsoluteSize.X; SetSpeed(rel)
@@ -8218,7 +8195,7 @@ _whFlushBuffer = function(url)
    description = "Total: **"..total.."** raid aktif",
    color       = color,
    fields      = fields,
-   footer      = {text = "Server Id : "..( (function() local ok,p=pcall(function() return game.PrivateServerId end); if ok and p and p~="" then return p end; local j=game.JobId; return j~="" and "wp"..j or "N/A" end)() )},
+   footer      = {text = "ASH GUI FLa Project"},
   }}}
   pcall(function()
    reqFunc({
@@ -8239,8 +8216,6 @@ _whFlushBuffer = function(url)
    local tStr = e.mapNum and ("Ascension Tower "..e.mapNum) or e.raw
    table.insert(out, "["..e.grade.."] "..tStr)
   end
-  local _sid3 = (function() local ok,p=pcall(function() return game.PrivateServerId end); if ok and p and p~="" then return p end; local j=game.JobId; return j~="" and "wp"..j or "N/A" end)()
-  table.insert(out, "Server Id : ".._sid3)
   _doSend(url, table.concat(out, "\n"))
  end
 end
@@ -8300,8 +8275,6 @@ _WH.SendSiege = function(url)
   end
  end
  if not found then return end
- local _sid4 = (function() local ok,p=pcall(function() return game.PrivateServerId end); if ok and p and p~="" then return p end; local j=game.JobId; return j~="" and "wp"..j or "N/A" end)()
- table.insert(lines, "Server Id : ".._sid4)
  _doSend(url, table.concat(lines, "\n"))
 end
 SendWebhookSiege = function(url) _WH.SendSiege(url) end -- alias internal
@@ -16271,7 +16244,7 @@ do
         end
 
         JTP_joining = true
-        joinLbl.Text = "JOINING..."
+        joinLbl.Text = "[...]  JOINING..."
         joinLbl.TextColor3 = C.YEL
         JTPStat("[JOIN] Menuju room "..entry.name.." (hostId="..entry.userId..")...", C.YEL)
 
@@ -16636,169 +16609,32 @@ do
 
 
 
- -- ============================================================
- -- SERVER INFO SECTION
- -- ============================================================
- SectionHeader(p, "Server Info", 1)
-
- -- Card utama server info
- local siCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
- siCard.LayoutOrder = 2
- siCard.AutomaticSize = Enum.AutomaticSize.Y
- Corner(siCard, 10); Stroke(siCard, C.BORD, 1.5, 0.88)
- Padding(siCard, 10, 10, 12, 10)
- New("UIListLayout", {Parent=siCard, SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,6)})
-
- -- Helper buat baris info (label + value + copy btn opsional)
- local function InfoRow(order, labelTxt, valueTxt, valColor, showCopy)
-  local row = Frame(siCard, C.CARD or C.BG3, UDim2.new(1,0,0,44))
-  row.LayoutOrder = order; Corner(row, 8); Stroke(row, C.BORD, 1.2, 0.7)
-
-  -- Label kecil atas
-  local topLbl = Label(row, labelTxt, 9, C.TXT3, Enum.Font.GothamBold)
-  topLbl.Size = UDim2.new(1,-66,0,13); topLbl.Position = UDim2.new(0,12,0,6)
-
-  -- Value label bawah
-  local valLbl = Label(row, valueTxt or "-", 10, valColor or C.TXT2, Enum.Font.GothamBold)
-  valLbl.Size = UDim2.new(1,-66,0,16); valLbl.Position = UDim2.new(0,12,0,22)
-  valLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
-  -- Copy button (hanya jika showCopy = true)
-  if showCopy then
-   local copyBtn = Btn(row, C.BORD, UDim2.new(0,46,0,22))
-   copyBtn.AnchorPoint = Vector2.new(1,0.5); copyBtn.Position = UDim2.new(1,-8,0.5,0)
-   Corner(copyBtn, 6)
-   local copyLbl = Label(copyBtn, "copy", 9, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-   copyLbl.Size = UDim2.new(1,0,1,0)
-   copyBtn.MouseButton1Click:Connect(function()
-    pcall(function() setclipboard(valLbl.Text) end)
-    copyLbl.Text = "OK"; copyLbl.TextColor3 = C.ACC
-    task.wait(1.2)
-    copyLbl.Text = "copy"; copyLbl.TextColor3 = C.TXT2
-   end)
-  end
-
-  return valLbl
- end
-
- -- Data server
- local function GetServerId()
-  local ok, priv = pcall(function() return game.PrivateServerId end)
-  if ok and priv and priv ~= "" then return priv end
-  local jobId = game.JobId ~= "" and game.JobId or nil
-  if jobId then return "wp"..jobId end
-  return "N/A"
- end
-
- local siServerLbl = InfoRow(1, "SERVER ID", GetServerId(), C.ACC, true)
- local siJobLbl    = InfoRow(2, "JOB ID", game.JobId ~= "" and game.JobId or "N/A", Color3.fromRGB(255,200,60), true)
- local siPingLbl   = InfoRow(3, "PING (ms)", "...", Color3.fromRGB(60,220,130), false)
-
- -- Realtime ping update
+ SectionHeader(p,"UI & Performance",1)
+ 
  do
-  local function PingColor(ms)
-   if ms <= 60 then return Color3.fromRGB(60,220,130)
-   elseif ms <= 120 then return Color3.fromRGB(255,200,60)
-   else return Color3.fromRGB(255,80,80) end
-  end
-  local _pingConn
-  _pingConn = game:GetService("RunService").Heartbeat:Connect(function()
-   if not siPingLbl or not siPingLbl.Parent then
-    pcall(function() _pingConn:Disconnect() end); return
-   end
-   local ok, ping = pcall(function()
-    return math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
-   end)
-   if ok and ping and ping > 0 then
-    siPingLbl.Text = tostring(ping).." ms"
-    siPingLbl.TextColor3 = PingColor(ping)
-   end
+  local _r, _s, _v = ToggleRow(p, "Potato Mode (Anti-Lag)", "Disable all VFX for performance", 2, function(v)
+     _G.PotatoMode = v
+     if v then
+         CleanupVFX()
+         pcall(function()
+             for _, obj in ipairs(ScreenGui:GetDescendants()) do
+                 if obj:IsA("ParticleEmitter") or obj:IsA("UIGradient") or obj:IsA("UIStroke") then
+                     obj:Destroy()
+                 end
+             end
+             Window.BackgroundTransparency = 0
+         end)
+         SystemNotify("[SYSTEM]: Potato Mode Activated!", 3)
+     else
+         Window.BackgroundTransparency = _G.ThemeTransparency
+         ApplyTheme(_G.CurrentTheme)
+     end
   end)
+  _setPotatoToggle = _s
+  _visPotato = _v
  end
 
- -- ============================================================
- -- JOIN SERVER BY ID
- -- ============================================================
- SectionHeader(p, "Join Server by ID", 10)
-
- local joinCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
- joinCard.LayoutOrder = 11
- joinCard.AutomaticSize = Enum.AutomaticSize.Y
- Corner(joinCard, 10); Stroke(joinCard, C.BORD, 1.5, 0.88)
- Padding(joinCard, 10, 10, 12, 10)
- New("UIListLayout", {Parent=joinCard, SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,8)})
-
- -- Sub label
- local joinSub = Label(joinCard, "Masukkan Server ID / Job ID lalu tekan JOIN", 9.5, C.TXT3, Enum.Font.GothamBold)
- joinSub.Size = UDim2.new(1,0,0,13); joinSub.LayoutOrder = 0
-
- -- TextBox input
- local joinBox = New("TextBox", {
-  Parent              = joinCard,
-  Size                = UDim2.new(1,0,0,30),
-  BackgroundColor3    = C.BG3 or C.CARD or Color3.fromRGB(14,15,25),
-  BorderSizePixel     = 0,
-  TextSize            = 11,
-  Font                = Enum.Font.GothamBold,
-  TextColor3          = C.TXT2,
-  PlaceholderColor3   = C.DIM,
-  PlaceholderText     = "Contoh: wp3ce78053-7a0e-4641-acf4-98f312675b38",
-  Text                = "",
-  TextXAlignment      = Enum.TextXAlignment.Left,
-  ClearTextOnFocus    = false,
-  LayoutOrder         = 1,
- })
- Corner(joinBox, 7); Stroke(joinBox, C.BORD, 1.5, 0.7)
- New("UIPadding", {Parent=joinBox, PaddingLeft=UDim.new(0,8), PaddingRight=UDim.new(0,8)})
-
- -- Tombol JOIN
- local joinBtn = Btn(joinCard, C.ACC or Color3.fromRGB(80,140,255), UDim2.new(1,0,0,32))
- joinBtn.LayoutOrder = 2; Corner(joinBtn, 8)
- New("UIStroke", {Parent=joinBtn, Color=C.ACC2 or Color3.fromRGB(50,90,200), Thickness=1.2, Transparency=0.4})
- local joinBtnLbl = Label(joinBtn, "JOIN SERVER", 12, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
- joinBtnLbl.Size = UDim2.new(1,0,1,0)
-
- -- Status label
- local joinStatus = Label(joinCard, "", 9.5, C.TXT3, Enum.Font.GothamBold)
- joinStatus.Size = UDim2.new(1,0,0,13); joinStatus.LayoutOrder = 3
-
- -- Join logic
- joinBtn.MouseButton1Click:Connect(function()
-  local raw = joinBox.Text:match("^%s*(.-)%s*$") -- trim
-  if raw == "" then
-   joinStatus.TextColor3 = Color3.fromRGB(255,80,80)
-   joinStatus.Text = "[!] Server ID tidak boleh kosong!"
-   return
-  end
-
-  -- Strip prefix "wp" jika ada (Roblox butuh pure JobId UUID)
-  local jobId = raw:match("^wp(.+)$") or raw
-
-  -- Validasi format UUID sederhana
-  if not jobId:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then
-   joinStatus.TextColor3 = Color3.fromRGB(255,80,80)
-   joinStatus.Text = "[!] Format ID tidak valid! Cek kembali."
-   return
-  end
-
-  joinStatus.TextColor3 = Color3.fromRGB(255,200,60)
-  joinStatus.Text = "Connecting ke server..."
-  joinBtnLbl.Text = "JOINING..."
-
-  task.spawn(function()
-   local ok, err = pcall(function()
-    local TS = game:GetService("TeleportService")
-    TS:TeleportToPlaceInstance(game.PlaceId, jobId, game:GetService("Players").LocalPlayer)
-   end)
-   if not ok then
-    joinStatus.TextColor3 = Color3.fromRGB(255,80,80)
-    joinStatus.Text = "[ERR] Gagal join: "..(tostring(err):sub(1,60))
-    joinBtnLbl.Text = "JOIN SERVER"
-   end
-  end)
- end)
-
- -- Webhook section dipindah ke tab Webhook
+ -- [Webhook section dipindah ke tab Webhook]
 end
 
 -- ============================================================
@@ -17021,14 +16857,7 @@ do
  testBtn.MouseButton1Click:Connect(function()
  _webhookUrl = urlBox.Text:match("^%s*(.-)%s*$") or ""
  UpdatePlatformLbl()
- local function GetServerId()
-  local ok, priv = pcall(function() return game.PrivateServerId end)
-  if ok and priv and priv ~= "" then return priv end
-  local jobId = game.JobId ~= "" and game.JobId or nil
-  if jobId then return "wp"..jobId end
-  return "N/A"
- end
- local msg = "[OK] Test Webhook Succes !!\nReady to receive RAID and SIEGE notifications !\nServer Id : "..GetServerId()
+ local msg = "[OK] **[ASH GUI - FLa Project]** Test Webhook berhasil!\n> Mode: `"..(_webhookMode or "both"):upper().."`\n> Webhook aktif dan siap menerima notifikasi Raid/Siege."
  testLbl.Text="[..] Sending..."; testLbl.TextColor3=Color3.fromRGB(255,220,60)
  -- [FIX] Timeout UI 10s: HTTP Discord butuh 1-3 detik, jangan timeout terlalu cepat
  local _done = false
@@ -18314,7 +18143,7 @@ do
     if k == (_webhookMode or "both") then cfg.webhookModeIdx = i; break end
    end
   end)
-  -- cfg.potatoOn removed (Potato Mode dihapus)
+  cfg.potatoOn        = _G.PotatoMode or false
 
   -- ── THEME ────────────────────────────────────────────────
   cfg.themeTransparency = _G.ThemeTransparency or 0
@@ -18755,8 +18584,8 @@ do
    if _webhookModeSetIdx and cfg.webhookModeIdx then
     _webhookModeSetIdx(cfg.webhookModeIdx)
    end
-   -- Potato Mode removed
-
+   if _setPotatoToggle then _setPotatoToggle(cfg.potatoOn == true) end
+   if _visPotato then _visPotato(cfg.potatoOn == true) end
   end)
 
   -- ── REROLL slot label refresh (setelah data restore) ─────
@@ -18972,7 +18801,7 @@ do
    {"Main - Decomp Gem Max",         cfg.gemMaxLevel and tostring(cfg.gemMaxLevel) or "1"},
    {"Settings - Webhook",            cfg.webhookEnabled},
    {"Settings - Webhook Mode",       cfg.webhookMode or "both"},
-   -- {"Settings - Potato Mode", removed},
+   {"Settings - Potato Mode",        cfg.potatoOn},
    {"Theme - Palette",               cfg.themeName or "Solo Leveling"},
    {"Theme - Transparency",          cfg.themeTransparency and string.format("%.2f", cfg.themeTransparency) or "0"},
   }

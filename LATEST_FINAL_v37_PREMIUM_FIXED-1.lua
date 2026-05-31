@@ -12139,36 +12139,44 @@ local function ResolveEntry()
  local _bossRefPos   = _bossData and _bossData.pos or nil
 
  if _bossNameExact and _bossRefPos then
-  -- [FIX] Scan boss langsung dari workspace:GetDescendants() (bukan GetRaidEnemies)
-  -- Alasan: saat scan pertama player belum di-TP ke boss, sehingga filter jarak
-  -- di GetRaidEnemies bisa reject boss yang valid karena refPos = posisi player lama.
-  -- Kita sudah punya validasi posisi sendiri (±5 studs dari _bossRefPos) yang lebih akurat.
+  -- [FIX] Scan boss langsung dari folder workspace (Enemys, dll) bukan GetRaidEnemies.
+  -- Alasan: GetRaidEnemies filter by playerPos, tapi saat scan pertama player belum di-TP
+  -- ke boss sehingga boss valid bisa kena reject filter jarak.
+  -- Validasi posisi pakai _bossRefPos ±5 studs, lebih akurat dari filter playerPos.
+  -- Folder-folder tempat boss RAID berada di workspace
+  local _BOSS_FOLDERS = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy","Bosses","Boss","RaidBoss","RaidEnemys","Monsters","Monster"}
+
   local function _scanBossInWorkspace()
    local _found = nil
    pcall(function()
-    for _, obj in ipairs(workspace:GetDescendants()) do
-     if not obj:IsA("Model") then continue end
-     -- Exact match nama (case-insensitive, strip whitespace leading/trailing)
-     local _objName = obj.Name:lower():match("^%s*(.-)%s*$")
-     if _objName ~= _bossNameExact then continue end
-     local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid")
-           or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
-     if not g then continue end
-     local hrp = obj:FindFirstChild("HumanoidRootPart")
-           or obj.PrimaryPart
-           or obj:FindFirstChild("Head")
-           or obj:FindFirstChild("UpperTorso")
-           or obj:FindFirstChild("Torso")
-           or obj:FindFirstChildWhichIsA("BasePart")
-     local hum = obj:FindFirstChildOfClass("Humanoid")
-     if not (hrp and hrp.Parent and hum and hum.Health > 0) then continue end
-     -- Validasi posisi: harus ±5 studs dari koordinat referensi
-     local _dist = (hrp.Position - _bossRefPos).Magnitude
-     if _dist > 5 then
-      RaidStatusUpdate("[~] Boss name match tapi pos jauh ("..math.floor(_dist).."u) - tunggu stabilisasi...", Color3.fromRGB(200,150,50))
-      continue
+    for _, fname in ipairs(_BOSS_FOLDERS) do
+     local folder = workspace:FindFirstChild(fname)
+     if not folder then continue end
+     for _, obj in ipairs(folder:GetChildren()) do
+      if not obj:IsA("Model") then continue end
+      -- Exact match nama (case-insensitive, strip whitespace leading/trailing)
+      local _objName = obj.Name:lower():match("^%s*(.-)%s*$")
+      if _objName ~= _bossNameExact then continue end
+      local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid")
+            or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+      if not g then continue end
+      local hrp = obj:FindFirstChild("HumanoidRootPart")
+            or obj.PrimaryPart
+            or obj:FindFirstChild("Head")
+            or obj:FindFirstChild("UpperTorso")
+            or obj:FindFirstChild("Torso")
+            or obj:FindFirstChildWhichIsA("BasePart")
+      local hum = obj:FindFirstChildOfClass("Humanoid")
+      if not (hrp and hrp.Parent and hum and hum.Health > 0) then continue end
+      -- Validasi posisi: harus ±5 studs dari koordinat referensi
+      local _dist = (hrp.Position - _bossRefPos).Magnitude
+      if _dist > 5 then
+       RaidStatusUpdate("[~] Boss name match tapi pos jauh ("..math.floor(_dist).."u) - tunggu stabilisasi...", Color3.fromRGB(200,150,50))
+       continue
+      end
+      _found = {guid=g, hrp=hrp, model=obj}; break
      end
-     _found = {guid=g, hrp=hrp, model=obj}; break
+     if _found then break end
     end
    end)
    return _found
@@ -12404,24 +12412,29 @@ local function ResolveEntry()
  -- [BOSS DATA v35-FIX] Boss tidak ditemukan setelah 10s scan
  -- Last chance: scan penuh workspace dengan exact name + validasi posisi ±5 studs
  if _bossNameExact and _bossRefPos and RAID.running and not RAID._raidDone then
-  -- [FIX] Last chance: strip whitespace + toleransi posisi sama seperti scan utama
+  -- [FIX] Last chance: scan folder-folder workspace (sama seperti scan utama)
   local _lastChance = nil
   pcall(function()
-   for _, obj in ipairs(workspace:GetDescendants()) do
-    if not obj:IsA("Model") then continue end
-    local _objName = obj.Name:lower():match("^%s*(.-)%s*$")
-    if _objName ~= _bossNameExact then continue end
-    local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid")
-          or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
-    local hrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
-          or obj:FindFirstChild("Head") or obj:FindFirstChild("UpperTorso")
-          or obj:FindFirstChild("Torso") or obj:FindFirstChildWhichIsA("BasePart")
-    local hum = obj:FindFirstChildOfClass("Humanoid")
-    if not (g and hrp and hrp.Parent and hum and hum.Health > 0) then continue end
-    local _dist = (hrp.Position - _bossRefPos).Magnitude
-    if _dist <= 5 then
-     _lastChance = {guid=g, hrp=hrp, model=obj}; break
+   for _, fname in ipairs(_BOSS_FOLDERS) do
+    local folder = workspace:FindFirstChild(fname)
+    if not folder then continue end
+    for _, obj in ipairs(folder:GetChildren()) do
+     if not obj:IsA("Model") then continue end
+     local _objName = obj.Name:lower():match("^%s*(.-)%s*$")
+     if _objName ~= _bossNameExact then continue end
+     local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid")
+           or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+     local hrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+           or obj:FindFirstChild("Head") or obj:FindFirstChild("UpperTorso")
+           or obj:FindFirstChild("Torso") or obj:FindFirstChildWhichIsA("BasePart")
+     local hum = obj:FindFirstChildOfClass("Humanoid")
+     if not (g and hrp and hrp.Parent and hum and hum.Health > 0) then continue end
+     local _dist = (hrp.Position - _bossRefPos).Magnitude
+     if _dist <= 5 then
+      _lastChance = {guid=g, hrp=hrp, model=obj}; break
+     end
     end
+    if _lastChance then break end
    end
   end)
   if _lastChance then

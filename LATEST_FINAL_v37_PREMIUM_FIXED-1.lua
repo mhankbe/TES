@@ -12471,7 +12471,7 @@ local function ResolveEntry()
     end
    end
 
-   if RAID.running and not RAID._raidDone and bossPos then
+   if RAID.running and not RAID._raidDone and boss and bossPos then
     RaidStatusUpdate("[K] Boss: " .. boss.model.Name .. " - Attack!", Color3.fromRGB(255,80,80))
 
     local function _raidOffsetFromBoss(basePos)

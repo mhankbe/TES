@@ -8100,6 +8100,10 @@ RAID_SPAWN_POS = {
 -- Keyword lowercase, dicocokkan via name:lower():find(keyword, 1, true)
 -- ============================================================
 RAID_BOSS_MAP = {
+ -- Keyword UNIK per map - tidak overlap ke map lain.
+ -- Jika nil -> fallback ke _isBossFallback() (keyword list lama).
+ -- Tujuan: HANYA menolak musuh dari map BERBEDA yang nyasar ke workspace.Enemys,
+ -- bukan memperketat filter boss di map yang sedang aktif.
  [50101] = "goblin king",
  [50102] = "giant arachnid",
  [50103] = "igris",
@@ -8108,8 +8112,8 @@ RAID_BOSS_MAP = {
  [50106] = "kargalgan",
  [50107] = "baran",
  [50108] = "beru",
- [50109] = "giant monarch",
- [50110] = "monarch of plague",
+ [50109] = nil,           -- "Monarch" terlalu generik, bisa overlap -> fallback
+ [50110] = "monarch plague",
  [50111] = "frostborne",
  [50112] = "legia",
  [50113] = "silas",
@@ -12457,16 +12461,14 @@ local function ResolveEntry()
     bossPos = GetSafeBossPos()
    end
 
-   -- [FIX] Re-validasi final sebelum TP: cek ulang mapId + nama boss masih benar.
-   -- Menutup celah race condition yang terjadi SELAMA countdown delay (1-10s):
-   -- server bisa update mapId atau enemy nyasar masuk tepat sebelum TP dieksekusi.
+   -- [FIX] Re-validasi final sebelum TP: pastikan mapId masih valid RAID range.
+   -- Hanya cek range mapId - tidak cek nama boss lagi di sini karena keyword
+   -- bisa tidak cocok dengan nama objek aktual di workspace dan justru batalkan boss benar.
+   -- Filter nama boss sudah dilakukan di IsBossWithHint() saat scan.
    if boss then
     local _preTPMapId = GetCurrentMapId()
     if not _isValidRaidMap(_preTPMapId) then
-     RaidStatusUpdate("[!] MapId berubah sebelum TP ("..tostring(_preTPMapId)..") - batalkan", Color3.fromRGB(255,80,80))
-     boss = nil
-    elseif not IsCorrectBossForMap(boss.model.Name, _preTPMapId) then
-     RaidStatusUpdate("[!] Boss tidak sesuai map "..tostring(_preTPMapId).." - batalkan TP", Color3.fromRGB(255,80,80))
+     RaidStatusUpdate("[!] MapId tidak valid sebelum TP ("..tostring(_preTPMapId)..") - batalkan", Color3.fromRGB(255,80,80))
      boss = nil
     end
    end

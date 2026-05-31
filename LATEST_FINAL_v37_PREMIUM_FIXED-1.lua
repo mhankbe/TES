@@ -12192,7 +12192,7 @@ local function ResolveEntry()
  -- atau nested dalam Model lain) - ChildAdded ke folder tidak menangkap ini.
  -- Polling setiap 0.5s sangat ringan dan memastikan tidak ada yang terlewat.
  local _loadWait = 0
- while _loadWait < 12 and RAID.running and not RAID._raidDone do
+ while _loadWait < 3 and RAID.running and not RAID._raidDone do
   -- Update anchor posisi player (player mungkin baru selesai di-TP)
   local _newPos = GetPlayerPos()
   if _newPos and _newPos.Magnitude > 10 then

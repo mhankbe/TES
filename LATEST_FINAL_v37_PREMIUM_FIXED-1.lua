@@ -11941,7 +11941,10 @@ local function ResolveEntry()
  -- Tidak ada scan enemy sama sekali. Langsung TP ke koordinat boss yang sudah diketahui.
  -- Baca mapId dari workspace.Maps (validasi server)
  -- Struktur: workspace.Maps -> [Model] Map101 -> angka 101 = offset, mapId = 50000+101 = 50101
- local _tpMapId = (function()
+ -- Tunggu sampai workspace.Maps punya Model yang valid (max 10s, map masih loading)
+ local _tpMapId = nil
+ local _mapsWait = 0
+ local function _readMapId()
   local mapsFolder = workspace:FindFirstChild("Maps")
   if not mapsFolder then return nil end
   for _, obj in ipairs(mapsFolder:GetChildren()) do
@@ -11951,7 +11954,13 @@ local function ResolveEntry()
    end
   end
   return nil
- end)()
+ end
+ _tpMapId = _readMapId()
+ while not _tpMapId and _mapsWait < 10 and RAID.running and not RAID._raidDone do
+  RaidStatusUpdate("[..] Wait map load... (" .. math.floor(_mapsWait) .. "s)", Color3.fromRGB(160,148,135))
+  PingWait(0.5); _mapsWait = _mapsWait + 0.5
+  _tpMapId = _readMapId()
+ end
  local BOSS_HRP_POS = {
   [50101] = Vector3.new(2424.9,  7.5,  482.9),  -- Map 1  Goblin King
   [50102] = Vector3.new(-316.9,  9.0,  -24.1),  -- Map 2  Giant Arachnid Buryura

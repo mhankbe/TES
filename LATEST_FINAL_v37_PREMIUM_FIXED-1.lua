@@ -12144,7 +12144,7 @@ local function ResolveEntry()
   -- ke boss sehingga boss valid bisa kena reject filter jarak.
   -- Validasi posisi pakai _bossRefPos ±5 studs, lebih akurat dari filter playerPos.
   -- Folder-folder tempat boss RAID berada di workspace
-  local _BOSS_FOLDERS = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy","Bosses","Boss","RaidBoss","RaidEnemys","Monsters","Monster"}
+  local _BOSS_FOLDERS = {"Enemys"}
 
   local function _scanBossInWorkspace()
    local _found = nil

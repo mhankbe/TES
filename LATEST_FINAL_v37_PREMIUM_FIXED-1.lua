@@ -12047,14 +12047,13 @@ local function ResolveEntry()
  -- [v_NEWFLOW] Tidak ada scan nama boss. Pakai BOSS_HRP_POS hardcode per map.
  -- Deteksi mati: event ChallengeRaidsSuccess dari server.
  -- Attack: fire remote ke koordinat HRP, player berdiri 3 studs dari titik itu.
+ -- [FIX] Tidak pakai goto - diganti repeat...until true + break (valid Luau executor)
  --
 
  RAID._raidDone = false
  local _raidSuccess = false
 
- -- ── Pasang event listener mati dari server ──────────────────────────────────
- -- ChallengeRaidsSuccess  → boss mati, raid berhasil → set _raidServerDone
- -- ChallengeRaidsFail     → raid gagal (timeout/disconnect) → keluar paksa
+ -- ── Pasang event listener dari server ───────────────────────────────────────
  local connS, connF
  local _raidServerDone = false
  local _reS = Remotes:FindFirstChild("ChallengeRaidsSuccess")
@@ -12067,296 +12066,243 @@ local function ResolveEntry()
  end
  if _reF then
   connF = _reF.OnClientEvent:Connect(function()
-   RAID._raidDone = true -- fail: keluar langsung dari attack loop
+   RAID._raidDone = true
   end)
  end
 
- -- ── STEP 4A: Loading wait 2 detik ────────────────────────────────────────────
- -- Beri server waktu populate map sebelum kita bergerak
- RaidStatusUpdate("[..] Enter Map - loading 2s...", Color3.fromRGB(160,148,135))
- local _lw = 0
- while _lw < 2 and RAID.running and not RAID._raidDone do
-  PingWait(0.5); _lw = _lw + 0.5
- end
- if not RAID.running or RAID._raidDone then
-  if connS then pcall(function() connS:Disconnect() end) end
-  if connF then pcall(function() connF:Disconnect() end) end
-  goto _step4_cleanup
- end
+ -- Wrapper tunggal: repeat...until true agar bisa break kapan saja tanpa goto
+ repeat
 
- -- ── STEP 4B: Ambil koordinat HRP boss dari tabel hardcode ───────────────────
- -- raidMapId sudah diset oleh STEP 2/3 (nilai 50101-50120)
- local _bossHrpPos = BOSS_HRP_POS and BOSS_HRP_POS[RAID.raidMapId]
- if not _bossHrpPos then
-  -- Map tidak ada di tabel (misal Map 19/20 masih Vector3.new(0,10,0))
-  -- Fallback: pakai spawn pos saja agar tidak crash
-  _bossHrpPos = RAID_SPAWN_POS and RAID_SPAWN_POS[RAID.raidMapId]
-  RaidStatusUpdate("[!] BOSS_HRP_POS map "..tostring(RAID.raidMapId).." tidak ada - fallback spawn pos", Color3.fromRGB(255,140,0))
- end
+  -- ── STEP 4A: Loading wait 2 detik ─────────────────────────────────────────
+  RaidStatusUpdate("[..] Enter Map - loading 2s...", Color3.fromRGB(160,148,135))
+  local _lw = 0
+  while _lw < 2 and RAID.running and not RAID._raidDone do
+   PingWait(0.5); _lw = _lw + 0.5
+  end
+  if not RAID.running or RAID._raidDone then break end
 
- if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
+  -- ── STEP 4B: Ambil koordinat HRP boss dari tabel hardcode ──────────────────
+  local _bossHrpPos = BOSS_HRP_POS and BOSS_HRP_POS[RAID.raidMapId]
+  if not _bossHrpPos then
+   _bossHrpPos = RAID_SPAWN_POS and RAID_SPAWN_POS[RAID.raidMapId]
+   RaidStatusUpdate("[!] BOSS_HRP_POS map "..tostring(RAID.raidMapId).." tidak ada - fallback spawn pos", Color3.fromRGB(255,140,0))
+  end
 
-  -- ── STEP 4C: Countdown bossDelay (1-10s) ──────────────────────────────────
-  local _bd = math.max(1, math.min(10, RAID.bossDelay or 3))
-  local _mapNum = RAID.raidMapId and (RAID.raidMapId - 50100) or 0
-  for _ci = _bd, 1, -1 do
+  if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
+
+   -- ── STEP 4C: Countdown bossDelay (1-10s) ───────────────────────────────────
+   local _bd     = math.max(1, math.min(10, RAID.bossDelay or 3))
+   local _mapNum = RAID.raidMapId and (RAID.raidMapId - 50100) or 0
+   for _ci = _bd, 1, -1 do
+    if not RAID.running or RAID._raidDone then break end
+    RaidStatusUpdate("[K] Map ".._mapNum.." - TP ke Boss ".._ci.."s...", Color3.fromRGB(255,160,60))
+    PingWait(1)
+   end
    if not RAID.running or RAID._raidDone then break end
-   RaidStatusUpdate(
-    "[K] Map ".._mapNum.." - TP ke Boss ".._ci.."s...",
-    Color3.fromRGB(255,160,60)
-   )
-   PingWait(1)
-  end
-  if not RAID.running or RAID._raidDone then
-   if connS then pcall(function() connS:Disconnect() end) end
-   if connF then pcall(function() connF:Disconnect() end) end
-   goto _step4_cleanup
-  end
 
-  -- ── STEP 4D: Scan GUID boss dari jarak ke koordinat HRP hardcode ──────────
-  -- Tidak pakai filter nama. Ambil enemy terdekat dari titik BOSS_HRP_POS.
-  -- Radius 500 studs — cukup luas untuk variasi posisi spawn, cukup sempit
-  -- untuk tidak salah ambil enemy lain yang jauh.
-  local _bossGuid = nil
-  local _bossHrpRef = nil -- referensi HRP model boss (untuk attack pos fallback)
-  local _bossModel  = nil
-  local GUID_SCAN_RADIUS = 500
+   -- ── STEP 4D: Scan GUID boss berdasarkan jarak ke koordinat HRP hardcode ────
+   -- Tidak pakai filter nama. Enemy terdekat dari BOSS_HRP_POS dalam radius 500 studs.
+   local _bossGuid   = nil
+   local _bossHrpRef = nil
+   local _bossModel  = nil
+   local GUID_SCAN_RADIUS = 500
 
-  local function _scanBossGuid()
-   local _closest  = nil
-   local _closestD = math.huge
-   local _refPos   = _bossHrpPos
-   if not _refPos then return end
+   local function _scanBossGuid()
+    local _closest  = nil
+    local _closestD = math.huge
+    if not _bossHrpPos then return end
 
-   local function _tryObj(obj)
-    if not obj:IsA("Model") then return end
-    local g = obj:GetAttribute("EnemyGuid")
-           or obj:GetAttribute("BossGuid")
-           or obj:GetAttribute("Guid")
-           or obj:GetAttribute("GUID")
-    if not g then return end
-    local hrp = obj:FindFirstChild("HumanoidRootPart")
-             or obj.PrimaryPart
-             or obj:FindFirstChildWhichIsA("BasePart")
-    local hum = obj:FindFirstChildOfClass("Humanoid")
-    if not (hrp and hum and hum.Health > 0) then return end
-    local d = (hrp.Position - _refPos).Magnitude
-    if d < _closestD and d <= GUID_SCAN_RADIUS then
-     _closestD = d
-     _closest  = {guid=g, hrp=hrp, model=obj}
+    local function _tryObj(obj)
+     if not obj:IsA("Model") then return end
+     local g = obj:GetAttribute("EnemyGuid")
+            or obj:GetAttribute("BossGuid")
+            or obj:GetAttribute("Guid")
+            or obj:GetAttribute("GUID")
+     if not g then return end
+     local hrp = obj:FindFirstChild("HumanoidRootPart")
+              or obj.PrimaryPart
+              or obj:FindFirstChildWhichIsA("BasePart")
+     local hum = obj:FindFirstChildOfClass("Humanoid")
+     if not (hrp and hum and hum.Health > 0) then return end
+     local d = (hrp.Position - _bossHrpPos).Magnitude
+     if d < _closestD and d <= GUID_SCAN_RADIUS then
+      _closestD = d
+      _closest  = {guid=g, hrp=hrp, model=obj}
+     end
+    end
+
+    for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters"}) do
+     local folder = workspace:FindFirstChild(fname)
+     if folder then
+      for _, child in ipairs(folder:GetChildren()) do pcall(_tryObj, child) end
+     end
+    end
+    for _, obj in ipairs(workspace:GetChildren()) do
+     if obj:IsA("Model") then pcall(_tryObj, obj) end
+    end
+
+    if _closest then
+     _bossGuid   = _closest.guid
+     _bossHrpRef = _closest.hrp
+     _bossModel  = _closest.model
     end
    end
 
-   -- Scan semua folder enemy yang mungkin ada di workspace
-   for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters"}) do
-    local folder = workspace:FindFirstChild(fname)
-    if folder then
-     for _, child in ipairs(folder:GetChildren()) do
-      pcall(_tryObj, child)
-     end
+   for _attempt = 1, 3 do
+    pcall(_scanBossGuid)
+    if _bossGuid then break end
+    RaidStatusUpdate("[..] Scan GUID boss... attempt ".._attempt.."/3", Color3.fromRGB(160,148,135))
+    PingWait(0.5)
+   end
+
+   if not _bossGuid then
+    _bossGuid = ""
+    RaidStatusUpdate("[!] GUID boss tidak dapat - attack ke koordinat HRP", Color3.fromRGB(255,140,0))
+   else
+    local _mn = _bossModel and _bossModel.Name or "?"
+    RaidStatusUpdate("[K] Boss: ".._mn.." - GUID OK - Attack!", Color3.fromRGB(255,80,80))
+   end
+
+   -- ── STEP 4E: Posisi player = HRP boss + offset 3 studs ─────────────────────
+   local function _calcPlayerPos()
+    local base = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
+    if not base then return nil end
+    local char = LP.Character
+    local pHrp = char and char:FindFirstChild("HumanoidRootPart")
+    local dir  = Vector3.new(1, 0, 0)
+    if pHrp then
+     local dFlat = Vector3.new(pHrp.Position.X - base.X, 0, pHrp.Position.Z - base.Z)
+     if dFlat.Magnitude > 0.5 then dir = dFlat.Unit end
     end
-   end
-   -- Fallback: scan langsung anak workspace
-   for _, obj in ipairs(workspace:GetChildren()) do
-    if obj:IsA("Model") then pcall(_tryObj, obj) end
+    return base + dir * 3
    end
 
-   if _closest then
-    _bossGuid   = _closest.guid
-    _bossHrpRef = _closest.hrp
-    _bossModel  = _closest.model
-   end
-  end
+   local _playerPos = _calcPlayerPos()
 
-  -- Coba scan GUID, max 3x dengan jeda 0.5s jika belum dapat
-  -- (boss kadang butuh ~1 detik lagi untuk muncul setelah loading selesai)
-  for _attempt = 1, 3 do
-   pcall(_scanBossGuid)
-   if _bossGuid then break end
-   RaidStatusUpdate(
-    "[..] Scan GUID boss... attempt ".._attempt.."/3",
-    Color3.fromRGB(160,148,135)
-   )
-   PingWait(0.5)
-  end
-
-  if not _bossGuid then
-   -- Tidak dapat GUID → attack tetap jalan ke koordinat HRP, GUID pakai "" (server kadang masih terima)
-   _bossGuid = ""
-   RaidStatusUpdate("[!] GUID boss tidak dapat - attack ke koordinat HRP", Color3.fromRGB(255,140,0))
-  else
-   local _mn = _bossModel and _bossModel.Name or "?"
-   RaidStatusUpdate("[K] Boss: ".._mn.." - GUID OK → Attack!", Color3.fromRGB(255,80,80))
-  end
-
-  -- ── STEP 4E: Hitung posisi player = HRP boss + offset 3 studs ────────────
-  -- Arah offset: sumbu X+3 sebagai default; jika HRP model ada, ambil arah
-  -- dari HRP model ke titik HRP boss lalu geser 3 studs ke arah berlawanan
-  -- agar player berdiri di samping boss, tidak menindih.
-  local function _calcPlayerPos()
-   local base = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
-   if not base then return nil end
-   local char = LP.Character
-   local pHrp = char and char:FindFirstChild("HumanoidRootPart")
-   local dir  = Vector3.new(1, 0, 0) -- default arah
-   if pHrp then
-    local d     = pHrp.Position - base
-    local dFlat = Vector3.new(d.X, 0, d.Z)
-    if dFlat.Magnitude > 0.5 then dir = dFlat.Unit end
-   end
-   return base + dir * 3
-  end
-
-  local _playerPos = _calcPlayerPos()
-
-  -- ── STEP 4F: TP Player ke offset 3 studs dari HRP boss ───────────────────
-  pcall(function()
-   local char = LP.Character
-   local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-   if hrp and _playerPos then
-    hrp.CFrame = CFrame.new(_playerPos)
-   end
-  end)
-
-  -- ── STEP 4G: TP semua hero ke koordinat HRP boss ──────────────────────────
-  pcall(function()
-   local heroFolder = workspace:FindFirstChild("Heros")
-   if heroFolder then
-    for _, hModel in ipairs(heroFolder:GetChildren()) do
-     local hHrp = hModel:FindFirstChild("HumanoidRootPart")
-     if hHrp and _bossHrpPos then
-      hHrp.CFrame = CFrame.new(_bossHrpPos)
-     end
-    end
-   end
-  end)
-
-  -- ── STEP 4H: FireHeroRemotes ke koordinat HRP boss ───────────────────────
-  local _atkPos = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
-  pcall(function()
-   if _atkPos then FireHeroRemotes(_bossGuid, _atkPos) end
-  end)
-  -- HeroStand: arahkan hero berdiri di titik boss
-  if RE.HeroStand and #HERO_GUIDS > 0 and _atkPos then
-   for _, hGuid in ipairs(HERO_GUIDS) do
-    pcall(function()
-     RE.HeroStand:FireServer({
-      heroGuid = hGuid,
-      userId   = MY_USER_ID,
-      standPos = _atkPos + Vector3.new(1, 0, 1),
-     })
-    end)
-   end
-  end
-
-  -- ── STEP 4I: UnEquip → EquipBest → TP hero ulang ─────────────────────────
-  PingWait(0.3)
-  if RE.UnEquipHero  then pcall(function() RE.UnEquipHero:FireServer()  end) end
-  PingWait(0.3)
-  if RE.EquipBestHero then pcall(function() RE.EquipBestHero:FireServer() end) end
-  PingWait(0.3)
-  -- TP hero ulang setelah re-equip
-  pcall(function()
-   local heroFolder = workspace:FindFirstChild("Heros")
-   if heroFolder then
-    for _, hModel in ipairs(heroFolder:GetChildren()) do
-     local hHrp = hModel:FindFirstChild("HumanoidRootPart")
-     if hHrp and _bossHrpPos then
-      hHrp.CFrame = CFrame.new(_bossHrpPos)
-     end
-    end
-   end
-  end)
-  _atkPos = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
-  pcall(function()
-   if _atkPos then FireHeroRemotes(_bossGuid, _atkPos) end
-  end)
-
-  -- ── STEP 4J: Freeze player di posisi offset 3 studs (Heartbeat) ──────────
-  local _frozenCFrame = _playerPos and CFrame.new(_playerPos) or nil
-  local _freezeConn   = nil
-  pcall(function()
-   local char = LP.Character
-   local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-   if hrp and _frozenCFrame then
-    hrp.Anchored = true
-    hrp.CFrame   = _frozenCFrame
-    _freezeConn  = RunService.Heartbeat:Connect(function()
-     if not RAID.running or RAID._raidDone then
-      pcall(function() hrp.Anchored = false end)
-      if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
-      return
-     end
-     if hrp and hrp.Parent and _frozenCFrame then
-      hrp.CFrame = _frozenCFrame
-     end
-    end)
-   end
-  end)
-
-  local function _unfreezePlayer()
+   -- ── STEP 4F: TP Player ke offset 3 studs ────────────────────────────────────
    pcall(function()
     local char = LP.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then hrp.Anchored = false end
+    if hrp and _playerPos then hrp.CFrame = CFrame.new(_playerPos) end
    end)
-   if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
-  end
 
-  -- ── STEP 4K: Attack loop ──────────────────────────────────────────────────
-  -- Fire RaidFireDamage ke koordinat HRP boss tiap 0.08s.
-  -- Berhenti saat: ChallengeRaidsSuccess (server) | keluar map | Dungeon aktif.
-  RaidStatusUpdate("[FLa] Attacking boss...", Color3.fromRGB(255,80,80))
-  local _outOfMapCount = 0
-  while RAID.running do
-   -- Dungeon: prioritas tertinggi, hentikan segera
-   if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
-    RaidStatusUpdate("[||] Dungeon aktif - RAID pause...", Color3.fromRGB(255,140,0))
-    RAID._raidDone = true
-    break
-   end
-   -- Event server: ChallengeRaidsSuccess → boss sudah mati di server
-   if _raidServerDone then break end
-   -- Cek masih di dalam map raid
-   local _curMap = GetCurrentMapId()
-   if _curMap and (_curMap < 50101 or _curMap > 50120) then
-    _outOfMapCount = _outOfMapCount + 1
-    if _outOfMapCount >= 3 then
-     RaidStatusUpdate("[!] Keluar dari map raid - stop attack", Color3.fromRGB(255,140,0))
-     break
+   -- ── STEP 4G: TP semua hero ke koordinat HRP boss ────────────────────────────
+   pcall(function()
+    local heroFolder = workspace:FindFirstChild("Heros")
+    if heroFolder then
+     for _, hModel in ipairs(heroFolder:GetChildren()) do
+      local hHrp = hModel:FindFirstChild("HumanoidRootPart")
+      if hHrp and _bossHrpPos then hHrp.CFrame = CFrame.new(_bossHrpPos) end
+     end
     end
-   else
-    _outOfMapCount = 0
+   end)
+
+   -- ── STEP 4H: FireHeroRemotes + HeroStand ────────────────────────────────────
+   local _atkPos = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
+   pcall(function()
+    if _atkPos then FireHeroRemotes(_bossGuid, _atkPos) end
+   end)
+   if RE.HeroStand and #HERO_GUIDS > 0 and _atkPos then
+    for _, hGuid in ipairs(HERO_GUIDS) do
+     pcall(function()
+      RE.HeroStand:FireServer({heroGuid=hGuid, userId=MY_USER_ID, standPos=_atkPos + Vector3.new(1,0,1)})
+     end)
+    end
    end
-   -- Update posisi attack: prioritaskan HRP model live, fallback ke hardcode
+
+   -- ── STEP 4I: UnEquip → EquipBest → TP hero ulang ────────────────────────────
+   PingWait(0.3)
+   if RE.UnEquipHero   then pcall(function() RE.UnEquipHero:FireServer()   end) end
+   PingWait(0.3)
+   if RE.EquipBestHero then pcall(function() RE.EquipBestHero:FireServer() end) end
+   PingWait(0.3)
+   pcall(function()
+    local heroFolder = workspace:FindFirstChild("Heros")
+    if heroFolder then
+     for _, hModel in ipairs(heroFolder:GetChildren()) do
+      local hHrp = hModel:FindFirstChild("HumanoidRootPart")
+      if hHrp and _bossHrpPos then hHrp.CFrame = CFrame.new(_bossHrpPos) end
+     end
+    end
+   end)
    _atkPos = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
-   if _atkPos then
-    task.spawn(function()
-     pcall(function() RaidFireDamage(_bossGuid, _atkPos) end)
+   pcall(function()
+    if _atkPos then FireHeroRemotes(_bossGuid, _atkPos) end
+   end)
+
+   -- ── STEP 4J: Freeze player via Heartbeat ────────────────────────────────────
+   local _frozenCFrame = _playerPos and CFrame.new(_playerPos) or nil
+   local _freezeConn   = nil
+   pcall(function()
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp and _frozenCFrame then
+     hrp.Anchored = true
+     hrp.CFrame   = _frozenCFrame
+     _freezeConn  = RunService.Heartbeat:Connect(function()
+      if not RAID.running or RAID._raidDone then
+       pcall(function() hrp.Anchored = false end)
+       if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
+       return
+      end
+      if hrp and hrp.Parent and _frozenCFrame then hrp.CFrame = _frozenCFrame end
+     end)
+    end
+   end)
+
+   local function _unfreezePlayer()
+    pcall(function()
+     local char = LP.Character
+     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+     if hrp then hrp.Anchored = false end
     end)
+    if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
    end
-   PingWait(0.08)
+
+   -- ── STEP 4K: Attack loop ─────────────────────────────────────────────────────
+   RaidStatusUpdate("[FLa] Attacking boss...", Color3.fromRGB(255,80,80))
+   local _outOfMapCount = 0
+   while RAID.running do
+    if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
+     RaidStatusUpdate("[||] Dungeon aktif - RAID pause...", Color3.fromRGB(255,140,0))
+     RAID._raidDone = true; break
+    end
+    if _raidServerDone then break end
+    local _curMap = GetCurrentMapId()
+    if _curMap and (_curMap < 50101 or _curMap > 50120) then
+     _outOfMapCount = _outOfMapCount + 1
+     if _outOfMapCount >= 3 then
+      RaidStatusUpdate("[!] Keluar dari map raid - stop attack", Color3.fromRGB(255,140,0)); break
+     end
+    else
+     _outOfMapCount = 0
+    end
+    _atkPos = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
+    if _atkPos then
+     task.spawn(function() pcall(function() RaidFireDamage(_bossGuid, _atkPos) end) end)
+    end
+    PingWait(0.08)
+   end
+
+   _unfreezePlayer()
+   _raidSuccess = true
+   RAID._raidDone = true
+   RaidStatusUpdate("[FLa] Boss Dead!", Color3.fromRGB(100,255,150))
+
+  elseif RAID.running and not RAID._raidDone then
+   -- Auto Kill Boss OFF: tunggu event server max 5 menit
+   local _wt = 0
+   while RAID.running and not RAID._raidDone and _wt < 300 do
+    if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
+     RaidStatusUpdate("[||] Dungeon aktif - RAID pause...", Color3.fromRGB(255,140,0))
+     RAID._raidDone = true; break
+    end
+    PingWait(1); _wt = _wt + 1
+   end
   end
 
-  _unfreezePlayer()
-  _raidSuccess = true
-  RAID._raidDone = true
-  RaidStatusUpdate("[FLa] Boss Dead!", Color3.fromRGB(100,255,150))
+ until true -- sekali jalan, break di atas = early exit tanpa goto
 
- elseif RAID.running and not RAID._raidDone then
-  -- Auto Kill Boss OFF → tunggu event ChallengeRaidsSuccess max 5 menit
-  local _wt = 0
-  while RAID.running and not RAID._raidDone and _wt < 300 do
-   if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
-    RaidStatusUpdate("[||] Dungeon aktif - RAID pause...", Color3.fromRGB(255,140,0))
-    RAID._raidDone = true
-    break
-   end
-   PingWait(1); _wt = _wt + 1
-  end
- end
-
- ::_step4_cleanup::
  if connS then pcall(function() connS:Disconnect() end) end
  if connF then pcall(function() connF:Disconnect() end) end
 

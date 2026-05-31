@@ -8093,6 +8093,47 @@ RAID_SPAWN_POS = {
  [50119] = Vector3.new(0, 10.0, 0), -- Map 19 Dragon Ball City (update posisi jika perlu)
  [50120] = Vector3.new(0, 10.0, 0), -- Map 20 Dragon Ball Wasteland (update posisi jika perlu)
 }
+
+-- ============================================================
+-- [FIX] RAID_BOSS_MAP - Mapping deterministik mapId -> boss yang benar per map
+-- Mencegah musuh nyasar dari map lain dijadikan target TP saat race condition server.
+-- Keyword lowercase, dicocokkan via name:lower():find(keyword, 1, true)
+-- ============================================================
+RAID_BOSS_MAP = {
+ [50101] = "goblin king",
+ [50102] = "giant arachnid",
+ [50103] = "igris",
+ [50104] = "leader of the polar",
+ [50105] = "arch lich",
+ [50106] = "kargalgan",
+ [50107] = "baran",
+ [50108] = "beru",
+ [50109] = "giant monarch",
+ [50110] = "monarch of plague",
+ [50111] = "frostborne",
+ [50112] = "legia",
+ [50113] = "silas",
+ [50114] = "yogumunt",
+ [50115] = "antares",
+ [50116] = "ashborn",
+ [50117] = "dominion",
+ [50118] = "absolute",
+ [50119] = "broly",
+ [50120] = "goku",
+}
+
+-- [FIX] IsCorrectBossForMap(name, mapId)
+-- Validasi deterministik: apakah nama musuh cocok dengan boss yang BENAR untuk map ini?
+-- - mapId dikenal di RAID_BOSS_MAP -> HARUS cocok keyword map itu, lainnya ditolak
+-- - mapId tidak dikenal (Ascension Tower, dll) -> fallback ke IsBoss() lama
+-- - mapId nil -> fallback ke IsBoss() lama (tidak blokir)
+function IsCorrectBossForMap(name, mapId)
+ if not mapId then return IsBoss and IsBoss(name) or false end
+ local expected = RAID_BOSS_MAP[mapId]
+ if not expected then return IsBoss and IsBoss(name) or false end
+ return name:lower():find(expected, 1, true) ~= nil
+end
+
 end -- chat listener + grade cache
 
 -- ============================================================
@@ -12246,11 +12287,17 @@ local function ResolveEntry()
    return false
   end
 
-  local _ascHintName = (raidEntry and raidEntry.isAscension and raidEntry.bossName) or nil
+  local _ascHintName  = (raidEntry and raidEntry.isAscension and raidEntry.bossName) or nil
+  -- [FIX] Ambil mapId aktual sekarang untuk validasi deterministik boss per map
+  local _currentMapId = GetCurrentMapId()
+
   local function IsBossWithHint(name)
    local n = name:lower()
+   -- Ascension Tower: hint nama boss dari entry lebih spesifik, prioritaskan
    if _ascHintName and n:find(_ascHintName, 1, true) then return true end
-   return IsBoss(name)
+   -- [FIX] RAID normal: validasi deterministik -> harus boss yang benar untuk map ini
+   -- IsCorrectBossForMap() fallback ke IsBoss() jika mapId tidak ada di RAID_BOSS_MAP
+   return IsCorrectBossForMap(name, _currentMapId)
   end
 
   -- Pakai boss dari early detection kalau sudah ada DAN nama valid
@@ -12389,6 +12436,20 @@ local function ResolveEntry()
     RaidStatusUpdate("[!] Posisi boss terlalu rendah - tunggu stabilisasi...", Color3.fromRGB(255,160,60))
     PingWait(1)
     bossPos = GetSafeBossPos()
+   end
+
+   -- [FIX] Re-validasi final sebelum TP: cek ulang mapId + nama boss masih benar.
+   -- Menutup celah race condition yang terjadi SELAMA countdown delay (1-10s):
+   -- server bisa update mapId atau enemy nyasar masuk tepat sebelum TP dieksekusi.
+   if boss then
+    local _preTPMapId = GetCurrentMapId()
+    if not _isValidRaidMap(_preTPMapId) then
+     RaidStatusUpdate("[!] MapId berubah sebelum TP ("..tostring(_preTPMapId)..") - batalkan", Color3.fromRGB(255,80,80))
+     boss = nil
+    elseif not IsCorrectBossForMap(boss.model.Name, _preTPMapId) then
+     RaidStatusUpdate("[!] Boss tidak sesuai map "..tostring(_preTPMapId).." - batalkan TP", Color3.fromRGB(255,80,80))
+     boss = nil
+    end
    end
 
    if RAID.running and not RAID._raidDone and bossPos then

@@ -12073,37 +12073,48 @@ local function ResolveEntry()
  end
 
  -- ── LOADING WAIT: tunggu enemies muncul via ChildAdded ───────────────────────
- -- [FIX v260] Tidak pakai polling GetRaidEnemies() - pakai ChildAdded murni.
- -- ChildAdded lebih ringan dan instan - langsung terpantik saat server spawn enemy.
+ -- ChildAdded murni untuk deteksi instan + polling ringan sebagai safety net.
  RaidStatusUpdate("[..] Enter Map - loading...", Color3.fromRGB(160,148,135))
 
- -- Snapshot mapId saat pertama masuk - dipakai sebagai referensi validasi sepanjang STEP 4
- local _raidMapIdSnapshot = GetCurrentMapId()
- -- Validasi: harus di range RAID (50101-50120) atau ASC (50301-50326)
+ -- [FIX v261] Snapshot mapId dan anchor posisi player diambil SETELAH jeda singkat.
+ -- Bug di v260: snapshot diambil langsung setelah STEP 3, tapi workspace.MapId dan
+ -- posisi player dari server belum tentu update di tick yang sama dengan TP selesai.
+ -- Akibat: snapshot = nil atau nilai map lama -> semua enemy ditolak -> boss tidak ketemu.
+ PingWait(0.3) -- beri server 1 tick untuk update workspace.MapId
+
  local function _isValidRaidMap(mId)
   if not mId then return false end
   return (mId >= 50101 and mId <= 50120) or (mId >= 50301 and mId <= 50326)
  end
 
- -- [FIX v260] Ambil referensi posisi player saat masuk map sebagai anchor filter jarak.
- -- Referensi ini diambil SETELAH TP ke dalam map, jadi koordinatnya sudah benar.
- -- MAX_DIST_BOSS: radius maksimal musuh dari posisi player agar dianggap enemy map ini.
- -- 3000 studs cukup untuk semua map RAID (umumnya <500 studs), tapi cukup sempit
- -- untuk menolak enemy dari event lain yang bisa ada di koordinat >10000 studs.
- local _playerAnchorPos = GetPlayerPos()
- local MAX_DIST_BOSS = 3000
+ -- Tunggu mapId valid (max 3s), snapshot setelah valid
+ local _raidMapIdSnapshot = GetCurrentMapId()
+ local _snapWait = 0
+ while not _isValidRaidMap(_raidMapIdSnapshot) and _snapWait < 3 and RAID.running do
+  PingWait(0.3); _snapWait = _snapWait + 0.3
+  _raidMapIdSnapshot = GetCurrentMapId()
+ end
+ local _mapIdFilterActive = _isValidRaidMap(_raidMapIdSnapshot)
 
- -- Helper validasi enemy: mapId benar + jarak wajar dari player anchor
+ -- [FIX v261] Anchor posisi player diambil setelah mapId valid.
+ -- Di v260 anchor diambil terlalu awal -> posisi masih di map lama ->
+ -- jarak ke boss map baru >3000 studs -> semua enemy ditolak.
+ -- Filter jarak hanya aktif jika anchor benar-benar valid (Magnitude > 10).
+ -- MAX_DIST dinaikkan ke 6000: cukup sempit untuk tolak Siege/Anniversary
+ -- (koordinat mereka biasanya >15000 studs dari map RAID).
+ local _playerAnchorPos = GetPlayerPos()
+ local MAX_DIST_BOSS = 6000
+ local _anchorValid = _playerAnchorPos and _playerAnchorPos.Magnitude > 10
+
+ -- Helper validasi enemy: prinsip "lebih baik lolos false positive daripada blokir boss benar"
  local function _isEnemyInThisMap(hrp)
-  -- 1) MapId harus tetap sama dengan snapshot saat masuk
-  local _nowMapId = GetCurrentMapId()
-  if _nowMapId and _raidMapIdSnapshot and _nowMapId ~= _raidMapIdSnapshot then
-   return false -- mapId sudah berubah = bukan map yang sama
+  -- Filter mapId: hanya blokir jika mapId sekarang jelas-jelas bukan RAID/ASC
+  if _mapIdFilterActive then
+   local _nowMapId = GetCurrentMapId()
+   if _nowMapId and not _isValidRaidMap(_nowMapId) then return false end
   end
-  -- 2) Range mapId harus valid (RAID atau ASC)
-  if not _isValidRaidMap(_nowMapId or _raidMapIdSnapshot) then return false end
-  -- 3) Filter jarak dari anchor posisi player
-  if _playerAnchorPos and _playerAnchorPos.Magnitude > 1 and hrp and hrp.Parent then
+  -- Filter jarak: hanya aktif jika anchor valid
+  if _anchorValid and hrp and hrp.Parent then
    local dist = (hrp.Position - _playerAnchorPos).Magnitude
    if dist > MAX_DIST_BOSS then return false end
   end
@@ -12179,17 +12190,38 @@ local function ResolveEntry()
   end
  end))
 
- -- Tunggu sampai ada enemy (max 12s) - tidak pakai polling GetRaidEnemies()
+ -- Tunggu sampai ada enemy (max 12s)
+ -- [FIX v261] Tambah polling GetRaidEnemies() sebagai safety net di samping ChildAdded.
+ -- Ada game dimana enemy tidak di-add ke folder standar (langsung di workspace root
+ -- atau nested dalam Model lain) - ChildAdded ke folder tidak menangkap ini.
+ -- Polling setiap 0.5s sangat ringan dan memastikan tidak ada yang terlewat.
  local _loadWait = 0
  while _loadWait < 12 and RAID.running and not RAID._raidDone do
-  -- [FIX v260] Update anchor posisi player secara berkala selama loading
-  -- (player mungkin baru selesai di-TP saat loop ini jalan)
+  -- Update anchor posisi player (player mungkin baru selesai di-TP)
   local _newPos = GetPlayerPos()
-  if _newPos and _newPos.Magnitude > 1 then _playerAnchorPos = _newPos end
+  if _newPos and _newPos.Magnitude > 10 then
+   _playerAnchorPos = _newPos
+   _anchorValid = true
+  end
 
-  if _earlyBoss and _loadWait >= 1.5 then break end
-  if _mapHasEnemies and _loadWait >= 2 and not RAID.autoKillBoss then break end
-  if _mapHasEnemies and _loadWait >= 2 and RAID.autoKillBoss and _earlyBoss then break end
+  -- [FIX v261] Polling GetRaidEnemies() sebagai fallback - menangkap enemy
+  -- yang tidak melalui ChildAdded (nested model, non-standard folder, dll)
+  if not _mapHasEnemies or (not _earlyBoss and RAID.autoKillBoss) then
+   local _pList = GetRaidEnemies()
+   if #_pList > 0 then _mapHasEnemies = true end
+   if not _earlyBoss then
+    for _, e in ipairs(_pList) do
+     if IsBossEarlyWithHint(e.model.Name) then
+      _earlyBoss = e; break
+     end
+    end
+   end
+  end
+
+  -- Break conditions
+  if _earlyBoss and _loadWait >= 1 then break end  -- boss ketemu, min 1s loading
+  if _mapHasEnemies and not RAID.autoKillBoss and _loadWait >= 1.5 then break end
+  if _mapHasEnemies and RAID.autoKillBoss and _earlyBoss and _loadWait >= 1 then break end
   PingWait(0.5); _loadWait = _loadWait + 0.5
  end
  _loadDone = true
@@ -12277,10 +12309,32 @@ local function ResolveEntry()
    end
   end))
 
-  -- Tunggu boss via event (max 15s) - tidak ada polling loop di sini
+  -- Tunggu boss via event (max 15s)
+  -- [FIX v261] Tambah polling GetRaidEnemies() setiap 0.5s sebagai safety net.
+  -- ChildAdded handle mayoritas kasus (instan), polling handle edge case
+  -- (enemy nested, folder non-standard, dsb). Keduanya saling melengkapi.
   local _waitBoss = 0
   while RAID.running and not boss and _waitBoss < 15 and not RAID._raidDone do
    RaidStatusUpdate("Find Boss... (" .. math.floor(_waitBoss) .. "s/15s)", Color3.fromRGB(160,148,135))
+
+   -- Update anchor posisi (player mungkin baru stabil setelah TP)
+   local _np = GetPlayerPos()
+   if _np and _np.Magnitude > 10 then _playerAnchorPos = _np; _anchorValid = true end
+
+   -- Polling GetRaidEnemies() sebagai fallback
+   for _, e in ipairs(GetRaidEnemies()) do
+    if IsBossWithHint(e.model.Name) then
+     -- Validasi jarak sebelum terima
+     local _hrpOk = e.hrp and e.hrp.Parent
+     local _distOk = true
+     if _anchorValid and _hrpOk then
+      _distOk = (e.hrp.Position - _playerAnchorPos).Magnitude <= MAX_DIST_BOSS
+     end
+     if _distOk then boss = e; break end
+    end
+   end
+
+   if boss then break end
    PingWait(0.5); _waitBoss = _waitBoss + 0.5
   end
 

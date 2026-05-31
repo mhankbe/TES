@@ -5259,17 +5259,6 @@ do
  -- [EDIT] Hanya scan Workspace.Enemys
  local function GetEnemiesF()
   local list = {}
-  -- [FIX] Jangan scan saat player berada di map Siege (50201-50204) atau Dungeon (50303)
-  -- Enemy Siege tersimpan di workspace.Enemys saat berada di dalam map Siege,
-  -- sehingga tanpa guard ini mereka ikut masuk ke daftar Select Enemy FARM.
-  local _curMap = GetCurrentMapId and GetCurrentMapId() or nil
-  if _curMap then
-   local _inSiege = _curMap >= 50201 and _curMap <= 50204
-   local _inRaid  = _curMap >= 50101 and _curMap <= 50120
-   local _inAsc   = _curMap >= 50301 and _curMap <= 50326
-   local _inDung  = _curMap == 50303
-   if _inSiege or _inRaid or _inAsc or _inDung then return list end
-  end
   local seen = {}
   local f = workspace:FindFirstChild("Enemys")
   if f then
@@ -8101,8 +8090,8 @@ RAID_SPAWN_POS = {
  [50116] = Vector3.new(1999.6, 17.0, 236.5), -- Map 16 Shadow Throne
  [50117] = Vector3.new( -0.4, 18.5, 93.5), -- Map 17 Angel Holy Realm
  [50118] = Vector3.new(2000.0, 45.4, 234.7), -- Map 18 Golden Throne
- [50119] = Vector3.new(13.9, 17.3, 96.8),   -- Map 19 Dragon Ball City        | Boss: Broly
- [50120] = Vector3.new(-145.2, 15.9, 260.1), -- Map 20 Dragon Ball Wasteland   | Boss: Goku[Super4]
+ [50119] = Vector3.new(0, 10.0, 0), -- Map 19 Dragon Ball City (update posisi jika perlu)
+ [50120] = Vector3.new(0, 10.0, 0), -- Map 20 Dragon Ball Wasteland (update posisi jika perlu)
 }
 end -- chat listener + grade cache
 
@@ -10361,43 +10350,149 @@ function StartAscensionLoop()
 
 
 
-    -- [ROMBAK] AUTO BOSS KILL ASC - simplified
-    -- Ascension Tower: hanya 1 enemy di workspace.Enemys = boss itu sendiri
-    -- Tidak perlu cek nama, tidak perlu keyword, langsung GetChildren()[1]
+    -- [v48] AUTO BOSS KILL - sama persis dengan AUTO RAID
     if ASC.autoKillBoss then
-     -- [ROMBAK] Deteksi boss ASC: tunggu workspace.Enemys punya >= 1 model
-     -- Polling sederhana, tanpa keyword, tanpa multi-source scan
-     local boss = nil
+     -- BOSS_KEYS untuk Ascension Tower (semua boss AT + boss normal)
+     local BOSS_KEYS_ASC = {
+      "goblin king","giant arachnid","buryura","igris",
+      "leader of the polar","arch lich","kargalgan","baran",
+      "beru","grendal","monarch plague","frostborne","legia",
+      "monarch beastly","beastly fangs","silas","unbreakable monarch",
+      "yogumunt","monarch of transfiguration","transfiguration",
+      "antares","ashborn","dominion","absolute","monarch","fragment","boss",
+      "legendary super saiyan","broly",
+      "goku[super4]","goku super4","goku super 4",
+     }
+     local function IsBossAsc(name)
+      local n = name:lower()
+      for _, k in ipairs(BOSS_KEYS_ASC) do if n:find(k,1,true) then return true end end
+      return false
+     end
+     -- Prioritaskan nama boss dari entry jika ada
+     local _ascHintName = raidEntry.bossName and raidEntry.bossName:lower() or nil
+     local function IsBossAscWithHint(name)
+      local n = name:lower()
+      if _ascHintName and n:find(_ascHintName,1,true) then return true end
+      return IsBossAsc(name)
+     end
+
+     -- [FIX v50] Early boss detection ASC - scan agresif semua sumber
+     local _earlyBoss = nil
      local _loadWait = 0
-     local function _tryGetAscBoss()
-      local folder = workspace:FindFirstChild("Enemys")
-      if not folder then return nil end
-      for _, obj in ipairs(folder:GetChildren()) do
-       if obj:IsA("Model") then
-        local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
-        local hrp = obj:FindFirstChild("HumanoidRootPart")
-        local hum = obj:FindFirstChildOfClass("Humanoid")
-        if g and hrp and hum and hum.Health > 0 then
-         local p = hrp.Position
-         if p.Y > -200 and p.Magnitude > 1 then
-          return {guid=g, hrp=hrp, model=obj}
+     while _loadWait < 10 and ASC.running and not _ascDone do
+      PingWait(0.5); _loadWait = _loadWait + 0.5
+      if _loadWait >= 1 and not _earlyBoss then
+       -- Sumber 1: GetRaidEnemies()
+       local _eList = GetRaidEnemies()
+       -- Sumber 2: fallback GetEnemiesLocal() kalau kosong
+       if #_eList == 0 then _eList = GetEnemiesLocal() end
+       for _, e in ipairs(_eList) do
+        if IsBossAscWithHint(e.model.Name) then _earlyBoss = e; break end
+       end
+       -- Sumber 3: scan folder langsung kalau masih belum ketemu
+       if not _earlyBoss then
+        pcall(function()
+         for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters","Monster"}) do
+          local f = workspace:FindFirstChild(fname)
+          if f then
+           for _, obj in ipairs(f:GetChildren()) do
+            if obj:IsA("Model") and IsBossAscWithHint(obj.Name) then
+             local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+             local hrp = obj:FindFirstChild("HumanoidRootPart")
+             local hum = obj:FindFirstChildOfClass("Humanoid")
+             if g and hrp and hum and hum.Health > 0 then
+              _earlyBoss = {guid=g, hrp=hrp, model=obj}; break
+             end
+            end
+           end
+          end
+          if _earlyBoss then break end
          end
-        end
+        end)
        end
       end
-      return nil
-     end
-     -- Tunggu boss muncul - max 10s, poll tiap 0.5s
-     while _loadWait < 10 and ASC.running and not _ascDone and not boss do
-      PingWait(0.5); _loadWait = _loadWait + 0.5
-      if _loadWait >= 1 then
-       boss = _tryGetAscBoss()
-       if not boss then
-        AscStatusUpdate("[..] Wait boss... ("..math.floor(_loadWait).."s)", Color3.fromRGB(160,148,135))
-       end
+      if _earlyBoss then
+       local _ep = _earlyBoss.hrp and _earlyBoss.hrp.Parent and _earlyBoss.hrp.Position
+       if _ep and _ep.Y > -200 and _ep.Magnitude > 1 and _loadWait >= 1.5 then break end
+       if _ep and (_ep.Y <= -200 or _ep.Magnitude <= 1) then _earlyBoss = nil end
       end
      end
 
+     -- [FIX v50] Event-based boss detection - identik dengan RAID
+     -- Tambah _bossFoundViaEvent flag + scan existing children tiap folder
+     local boss = (_earlyBoss and IsBossAscWithHint(_earlyBoss.model.Name)) and _earlyBoss or nil
+     local _bossEventConns = {}
+     local _bossFoundViaEvent = false
+     local function _tryAddBoss(obj)
+      if boss or not obj:IsA("Model") then return end
+      if IsBossAscWithHint(obj.Name) then
+       local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+       local hrp = obj:FindFirstChild("HumanoidRootPart")
+       local hum = obj:FindFirstChildOfClass("Humanoid")
+       if g and hrp and hum and hum.Health > 0 then
+        -- [BUG FIX] Validasi jarak ke posisi player sebelum set sebagai boss target.
+        local _pp = GetPlayerPos()
+        if _pp and _pp.Magnitude > 1 then
+         if (hrp.Position - _pp).Magnitude > 8000 then return end
+        end
+        boss = {guid=g, hrp=hrp, model=obj}
+        _bossFoundViaEvent = true
+       end
+      end
+     end
+     -- Pasang ChildAdded di semua folder enemy + scan existing children sekarang
+     for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters","Monster"}) do
+      local folder = workspace:FindFirstChild(fname)
+      if folder then
+       table.insert(_bossEventConns, folder.ChildAdded:Connect(_tryAddBoss))
+       -- [FIX] Scan existing children - boss mungkin sudah ada sebelum listener dipasang
+       for _, child in ipairs(folder:GetChildren()) do _tryAddBoss(child) end
+      end
+     end
+     -- Listen workspace.ChildAdded untuk folder yang baru muncul
+     table.insert(_bossEventConns, workspace.ChildAdded:Connect(function(obj)
+      if obj:IsA("Folder") or obj:IsA("Model") then
+       _tryAddBoss(obj)
+       pcall(function()
+        table.insert(_bossEventConns, obj.ChildAdded:Connect(_tryAddBoss))
+        for _, child in ipairs(obj:GetChildren()) do _tryAddBoss(child) end
+       end)
+      end
+     end))
+
+     -- [FIX v50] Cari boss - max 40s (Tower butuh lebih lama dari RAID)
+     -- Pakai GetRaidEnemies() + fallback GetEnemiesLocal() tiap iterasi
+     local waitBoss = 0
+     while ASC.running and not boss and waitBoss < 5 and not _ascDone do
+      -- Coba GetRaidEnemies() dulu
+      local _bList = GetRaidEnemies()
+      -- Fallback: kalau kosong (mapId belum update), pakai GetEnemiesLocal()
+      if #_bList == 0 then _bList = GetEnemiesLocal() end
+      for _, e in ipairs(_bList) do
+       if IsBossAscWithHint(e.model.Name) then boss = e; break end
+      end
+      -- Fallback terakhir: scan workspace:GetDescendants() setelah 15s
+      if not boss and waitBoss >= 15 and waitBoss % 5 < 0.4 then
+       pcall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+         if obj:IsA("Model") and IsBossAscWithHint(obj.Name) then
+          local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+          local hrp = obj:FindFirstChild("HumanoidRootPart")
+          local hum = obj:FindFirstChildOfClass("Humanoid")
+          if g and hrp and hum and hum.Health > 0 then
+           boss = {guid=g, hrp=hrp, model=obj}; break
+          end
+         end
+        end
+       end)
+      end
+      if not boss then
+       AscStatusUpdate("Find Boss... ("..math.floor(waitBoss).."s/5s)", Color3.fromRGB(160,148,135))
+       PingWait(0.3); waitBoss = waitBoss + 0.3
+      end
+     end
+     for _, c in ipairs(_bossEventConns) do pcall(function() c:Disconnect() end) end
+     _bossEventConns = {}
 
      -- Helper bossPos yang aman - [v34 FIX] prioritas HumanoidRootPart bukan Head
      local function GetSafeAscBossPos()
@@ -10590,10 +10685,20 @@ function StartAscensionLoop()
        AscStatusUpdate("[FLa] Boss Dead!", Color3.fromRGB(100,255,150))
       end -- if bossPos
      else
-      -- [ROMBAK] Boss tidak ditemukan - last chance: coba lagi GetChildren()[1]
-      -- ASC hanya 1 enemy, tidak perlu cek nama
+      -- Boss tidak ditemukan setelah 30s - last chance scan
       if not boss then
-       boss = _tryGetAscBoss()
+       pcall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+         if obj:IsA("Model") and IsBossAscWithHint(obj.Name) then
+          local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+          local hrp = obj:FindFirstChild("HumanoidRootPart")
+          local hum = obj:FindFirstChildOfClass("Humanoid")
+          if g and hrp and hum and hum.Health > 0 then
+           boss = {guid=g, hrp=hrp, model=obj}; break
+          end
+         end
+        end
+       end)
       end
       if not boss and ASC.running then
        AscStatusUpdate("[FLa] Boss not found (30s) - Go Out...", Color3.fromRGB(255,150,50))
@@ -11936,247 +12041,350 @@ local function ResolveEntry()
  RAID._raidDone = true -- fail: langsung keluar
  end) end
 
+ -- [v62 FIX] Loading wait: tunggu sampai minimal ada 1 enemy di workspace ATAU boss early detect
+ -- Ini mencegah script menyerang map kosong (musuh belum spawn dari server)
+ RaidStatusUpdate("[..] Enter Map - loading...", Color3.fromRGB(160,148,135))
+ local _loadWait = 0
+ local _earlyBoss = nil
+ local _mapHasEnemies = false
 
- -- [ROMBAK v35] AUTO BOSS KILL - Gunakan data HRP statis per mapId
- -- Tidak ada scan enemy sama sekali. Langsung TP ke koordinat boss yang sudah diketahui.
- -- Baca mapId dari workspace.Maps (validasi server)
- -- Struktur: workspace.Maps -> [Model] Map101 -> angka 101 = offset, mapId = 50000+101 = 50101
- -- Tunggu sampai workspace.Maps punya Model yang valid (max 10s, map masih loading)
- local _tpMapId = nil
- local _mapsWait = 0
- local function _readMapId()
-  local mapsFolder = workspace:FindFirstChild("Maps")
-  if not mapsFolder then return nil end
-  for _, obj in ipairs(mapsFolder:GetChildren()) do
-   if obj:IsA("Model") then
-    local num = tonumber(obj.Name:match("^Map(%d+)$"))
-    if num then return 50000 + num end
+ -- [BOSS DATA v35-FIX] Tabel boss per mapId - exact match nama + koordinat HRP hardcode
+ -- Tidak lagi pakai BOSS_KEYS keyword gambling.
+ -- mapKey = tpMapId (raidMapId + 100), misal Map 1 -> 50101
+ local RAID_BOSS_DATA = {
+  [50101] = { name = "Goblin King",                  pos = Vector3.new(2424.9,  7.5,  482.9) }, -- Map 1
+  [50102] = { name = "Giant Arachnid Buryura",        pos = Vector3.new(-316.9,  9.0,  -24.1) }, -- Map 2
+  [50103] = { name = "Igris",                        pos = Vector3.new(1913.1,  9.3, -194.4) }, -- Map 3
+  [50104] = { name = "The Leader Of The Polar Bears", pos = Vector3.new(2515.8, 13.7,  -98.0) }, -- Map 4
+  [50105] = { name = "Arch Lich",                    pos = Vector3.new(1770.7,  8.7,   -2.3) }, -- Map 5
+  [50106] = { name = "Kargalgan",                    pos = Vector3.new(1998.2,  7.1,  237.7) }, -- Map 6
+  [50107] = { name = "Baran",                        pos = Vector3.new(1958.0,  7.4,  334.0) }, -- Map 7
+  [50108] = { name = "Beru",                         pos = Vector3.new(1074.2,-397.0, -901.6) }, -- Map 8
+  [50109] = { name = "Giant Monarch",                pos = Vector3.new(2008.7, 12.6,  244.2) }, -- Map 9
+  [50110] = { name = "Monarch of Plague",            pos = Vector3.new(2003.0,  7.0,  344.0) }, -- Map 10
+  [50111] = { name = "Frostborne",                   pos = Vector3.new(  68.0, 48.2, -155.8) }, -- Map 11
+  [50112] = { name = "Legia",                        pos = Vector3.new(  16.5,  8.8,  269.5) }, -- Map 12
+  [50113] = { name = "Silas",                        pos = Vector3.new( 100.7, 61.9,  423.1) }, -- Map 13
+  [50114] = { name = "Yogumunt",                     pos = Vector3.new(2027.8, 51.3,  303.9) }, -- Map 14
+  [50115] = { name = "Antares",                      pos = Vector3.new(1999.1, 23.1,  185.3) }, -- Map 15
+  [50116] = { name = "Ashborn",                      pos = Vector3.new(  -0.4, 16.0,  236.5) }, -- Map 16
+  [50117] = { name = "Dominion",                     pos = Vector3.new(1999.6, 17.5,   93.5) }, -- Map 17
+  [50118] = { name = "Absolute",                     pos = Vector3.new(  -0.0, 44.4,  234.7) }, -- Map 18
+  [50119] = { name = "Broly",                        pos = Vector3.new(  13.9, 17.3,   96.8) }, -- Map 19
+  [50120] = { name = "Goku[Super4]",                 pos = Vector3.new(-145.2, 15.9,  260.1) }, -- Map 20
+ }
+
+ -- Ambil data boss dari tpMapId (serverMapId yang sudah di-set sebelumnya)
+ -- Fallback: derive dari raidEntry.mapId + 100
+ local _tpMapKey = RAID.serverMapId
+ if not _tpMapKey and raidEntry then
+  if RAID.runeEnabled and RAID.runeMapTarget >= 1 and RAID.runeMapTarget <= 20 then
+   _tpMapKey = 50100 + RAID.runeMapTarget
+  else
+   _tpMapKey = raidEntry.mapId + 100
+  end
+ end
+ local _bossData = _tpMapKey and RAID_BOSS_DATA[_tpMapKey] or nil
+
+ -- Loading wait: tunggu minimal 2s agar server populate map
+ -- Tidak lagi scan boss di sini - langsung pakai koordinat hardcode
+ RaidStatusUpdate("[..] Enter Map - loading...", Color3.fromRGB(160,148,135))
+ while _loadWait < 2 and RAID.running and not RAID._raidDone do
+  PingWait(0.5); _loadWait = _loadWait + 0.5
+  -- Tetap cek enemies agar flag _mapHasEnemies valid (dipakai autoKillBoss OFF)
+  local _bList = GetRaidEnemies()
+  if #_bList == 0 then _bList = GetEnemiesLocal() end
+  if #_bList > 0 then _mapHasEnemies = true end
+ end
+ -- Extra wait jika enemy belum ada sama sekali setelah 2s (server lag)
+ if not _mapHasEnemies then
+  local _extraWait = 0
+  while not _mapHasEnemies and _extraWait < 8 and RAID.running and not RAID._raidDone do
+   PingWait(0.5); _extraWait = _extraWait + 0.5
+   local _bl2 = GetRaidEnemies()
+   if #_bl2 == 0 then _bl2 = GetEnemiesLocal() end
+   if #_bl2 > 0 then _mapHasEnemies = true end
+  end
+ end
+
+ if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
+ -- [BOSS DATA v35-FIX] Ambil GUID boss dari workspace via exact name match + validasi posisi ±5 studs
+ -- Tidak ada keyword gambling. Nama harus exact (case-insensitive), posisi harus dalam 5 studs dari referensi.
+ local boss = nil
+ local _bossNameExact = _bossData and _bossData.name:lower() or nil
+ local _bossRefPos   = _bossData and _bossData.pos or nil
+
+ if _bossNameExact and _bossRefPos then
+  -- Scan workspace: cari model dengan nama exact + posisi valid (±5 studs dari referensi)
+  local _scanWait = 0
+  while not boss and _scanWait < 10 and RAID.running and not RAID._raidDone do
+   for _, e in ipairs(GetRaidEnemies()) do
+    if e.model.Name:lower() == _bossNameExact then
+     local _ep = e.hrp and e.hrp.Parent and e.hrp.Position
+     if _ep then
+      local _dist = (_ep - _bossRefPos).Magnitude
+      if _dist <= 5 then
+       boss = e; break -- lolos: nama exact + posisi dalam 5 studs
+      else
+       RaidStatusUpdate("[~] Boss name match tapi pos jauh ("..math.floor(_dist).."u) - tunggu stabilisasi...", Color3.fromRGB(200,150,50))
+      end
+     end
+    end
    end
+   if not boss then
+    RaidStatusUpdate("[~] Scan boss: "..(_bossData.name).." ("..math.floor(_scanWait).."s/10s)", Color3.fromRGB(160,148,135))
+    PingWait(0.3); _scanWait = _scanWait + 0.3
+   end
+  end
+ else
+  -- Map tidak dikenali di tabel (seharusnya tidak terjadi untuk Map 1-20)
+  RaidStatusUpdate("[!] Map tidak ada di BOSS DATA - skip boss kill", Color3.fromRGB(255,100,60))
+ end
+
+ if boss and RAID.running and not RAID._raidDone then
+ local bossGuid = boss.guid
+ -- [BOSS DATA v35-FIX] bossPos langsung dari tabel hardcode, bukan live-scan workspace
+ -- _bossRefPos sudah divalidasi saat scan (±5 studs), tidak perlu re-check posisi lagi
+ local function GetSafeBossPos()
+  -- Prioritas 1: koordinat hardcode dari RAID_BOSS_DATA (akurat, tidak bisa jatuh ke void)
+  if _bossRefPos then return _bossRefPos end
+  -- Fallback (seharusnya tidak pernah tercapai untuk Map 1-20)
+  local headPart = boss.model:FindFirstChild("HumanoidRootPart")
+   or (boss.model.PrimaryPart)
+   or boss.model:FindFirstChild("Head")
+  if headPart and headPart.Parent then
+   local p = headPart.Position
+   if p.Y > -200 then return p end
   end
   return nil
  end
- _tpMapId = _readMapId()
- print("[DBG-BK] _tpMapId awal=", _tpMapId)
- while not _tpMapId and _mapsWait < 10 and RAID.running and not RAID._raidDone do
-  RaidStatusUpdate("[..] Wait map load... (" .. math.floor(_mapsWait) .. "s)", Color3.fromRGB(160,148,135))
-  PingWait(0.5); _mapsWait = _mapsWait + 0.5
-  _tpMapId = _readMapId()
+ local bossPos = GetSafeBossPos()
+ if not bossPos then
+  RaidStatusUpdate("[!] Boss pos tidak valid - skip TP boss", Color3.fromRGB(255,80,80))
  end
- print("[DBG-BK] _tpMapId final=", _tpMapId, "_mapsWait=", _mapsWait)
- local BOSS_HRP_POS = {
-  [50101] = Vector3.new(2424.9,  7.5,  482.9),  -- Map 1  Goblin King
-  [50102] = Vector3.new(-316.9,  9.0,  -24.1),  -- Map 2  Giant Arachnid Buryura
-  [50103] = Vector3.new(1913.1,  9.3, -194.4),  -- Map 3  Igris
-  [50104] = Vector3.new(2515.8, 13.7,  -98.0),  -- Map 4  The Leader Of The Polar Bears
-  [50105] = Vector3.new(1770.7,  8.7,   -2.3),  -- Map 5  Arch Lich
-  [50106] = Vector3.new(1998.2,  7.1,  237.7),  -- Map 6  Kargalgan
-  [50107] = Vector3.new(1958.0,  7.4,  334.0),  -- Map 7  Baran
-  [50108] = Vector3.new(1074.2,-397.0, -901.6),  -- Map 8  Beru
-  [50109] = Vector3.new(2008.7, 12.6,  244.2),  -- Map 9  Giant Monarch
-  [50110] = Vector3.new(2003.0,  7.0,  344.0),  -- Map 10 Monarch of Plague
-  [50111] = Vector3.new(  68.0, 48.2, -155.8),  -- Map 11 Frostborne
-  [50112] = Vector3.new(  16.5,  8.8,  269.5),  -- Map 12 Legia
-  [50113] = Vector3.new( 100.7, 61.9,  423.1),  -- Map 13 Silas
-  [50114] = Vector3.new(2027.8, 51.3,  303.9),  -- Map 14 Yogumunt
-  [50115] = Vector3.new(1999.1, 23.1,  185.3),  -- Map 15 Antares
-  [50116] = Vector3.new(  -0.4, 16.0,  236.5),  -- Map 16 Ashborn
-  [50117] = Vector3.new(1999.6, 17.5,   93.5),  -- Map 17 Dominion
-  [50118] = Vector3.new(  -0.0, 44.4,  234.7),  -- Map 18 Absolute
-  [50119] = Vector3.new(  13.9, 17.3,   96.8),  -- Map 19 Broly
-  [50120] = Vector3.new(-145.2, 15.9,  260.1),  -- Map 20 Goku[Super4]
- }
+ -- [v259] Teleport delay user-controlled (RAID.bossDelay 1-10s)
+ local _bd = math.max(1, math.min(10, RAID.bossDelay or 3))
+ for _ci = _bd, 1, -1 do
+  if not RAID.running or RAID._raidDone then break end
+  RaidStatusUpdate("[K] Boss: "..boss.model.Name.." - TP ".._ci.."s...", Color3.fromRGB(255,160,60))
+  PingWait(1)
+ end
+ -- bossPos dari hardcode - tidak perlu refresh, selalu valid
+ if RAID.running and not RAID._raidDone and bossPos then
+ RaidStatusUpdate("[K] Boss: " .. boss.model.Name .. " - Attack!", Color3.fromRGB(255,80,80))
 
- print("[DBG-BK] autoKillBoss=", RAID.autoKillBoss, "_tpMapId=", _tpMapId, "_raidDone=", RAID._raidDone, "running=", RAID.running)
- if RAID.autoKillBoss then
-  -- Resolve mapId yang sedang aktif
-  local _bossStaticPos = _tpMapId and BOSS_HRP_POS[_tpMapId] or nil
-  print("[DBG-BK] _bossStaticPos=", _bossStaticPos)
-
-  if not _bossStaticPos then
-   RaidStatusUpdate("[!] Boss HRP data tidak ditemukan untuk mapId: " .. tostring(_tpMapId), Color3.fromRGB(255,80,80))
-   print("[DBG-BK] SKIP: _bossStaticPos nil")
+ -- [v35] Helper offset untuk RAID (identik ASC)
+ local function _raidOffsetFromBoss(basePos)
+  if not basePos then return nil end
+  local char = LP.Character
+  local pHrp = char and char:FindFirstChild("HumanoidRootPart")
+  local dir
+  if pHrp then
+   local d = (pHrp.Position - basePos)
+   local dFlat = Vector3.new(d.X, 0, d.Z)
+   dir = dFlat.Magnitude > 0.5 and dFlat.Unit or Vector3.new(1, 0, 0)
   else
-   -- Helper offset: player berdiri 3u samping dari titik boss agar tidak overlap physics
-   local function _raidOffsetFromStatic(basePos)
-    if not basePos then return nil end
-    local char = LP.Character
-    local pHrp = char and char:FindFirstChild("HumanoidRootPart")
-    local dir
-    if pHrp then
-     local d = (pHrp.Position - basePos)
-     local dFlat = Vector3.new(d.X, 0, d.Z)
-     dir = dFlat.Magnitude > 0.5 and dFlat.Unit or Vector3.new(1, 0, 0)
-    else
-     dir = Vector3.new(1, 0, 0)
-    end
-    return basePos + dir * 3
-   end
+   dir = Vector3.new(1, 0, 0)
+  end
+  return basePos + dir * 3
+ end
 
-   -- Countdown delay sebelum TP (user-controlled slider)
-   local _bd = math.max(1, math.min(10, RAID.bossDelay or 3))
-   for _ci = _bd, 1, -1 do
-    if not RAID.running or RAID._raidDone then break end
-    RaidStatusUpdate("[K] Boss TP dalam " .. _ci .. "s...", Color3.fromRGB(255,160,60))
-    PingWait(1)
-   end
+ -- 
+ -- [v256] TP PLAYER + SEMUA HERO KE BOSS BARENG
+ -- [v35] Diberi offset 3u samping agar part boss tidak hilang karena physics overlap
+ -- 
 
-   if RAID.running and not RAID._raidDone then
-    local _tpPos = _raidOffsetFromStatic(_bossStaticPos)
+ -- 1) TP Player ke posisi offset dari boss (3u samping) - cegah part boss hilang
+ pcall(function()
+ local char = LP.Character
+ local hrp = char and char:FindFirstChild("HumanoidRootPart")
+ local safePos = _raidOffsetFromBoss(GetSafeBossPos())
+ if hrp and safePos then hrp.CFrame = CFrame.new(safePos) end
+ end)
 
-    RaidStatusUpdate("[K] TP ke Boss...", Color3.fromRGB(255,80,80))
+ -- 2) TP SEMUA hero client-side ke posisi offset dari boss
+ pcall(function()
+ local safePos2 = _raidOffsetFromBoss(GetSafeBossPos())
+ if not safePos2 then return end
+ local heroFolder = workspace:FindFirstChild("Heros")
+ if heroFolder then
+ for _, hModel in ipairs(heroFolder:GetChildren()) do
+ local hHrp = hModel:FindFirstChild("HumanoidRootPart")
+ if hHrp then
+ hHrp.CFrame = CFrame.new(safePos2)
+ end
+ end
+ end
+ end)
 
-    -- 1) TP Player ke offset dari boss
-    pcall(function()
-     local char = LP.Character
-     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-     if hrp and _tpPos then hrp.CFrame = CFrame.new(_tpPos) end
-    end)
+ -- 3) Fire SEMUA hero remote ke boss SEKARANG
+ pcall(function()
+ local safePos3 = GetSafeBossPos()
+ if safePos3 then FireHeroRemotes(bossGuid, safePos3) end
+ end)
+ if RE.HeroStand and #HERO_GUIDS > 0 then
+ local safePos3b = GetSafeBossPos()
+ if safePos3b then
+ for _, hGuid in ipairs(HERO_GUIDS) do
+ pcall(function()
+ RE.HeroStand:FireServer({
+ heroGuid = hGuid,
+ userId = MY_USER_ID,
+ standPos = safePos3b + Vector3.new(1, 0, 1),
+ })
+ end)
+ end
+ end
+ end
 
-    -- 2) TP semua hero client-side ke offset dari boss
-    pcall(function()
-     if not _tpPos then return end
-     local heroFolder = workspace:FindFirstChild("Heros")
-     if heroFolder then
-      for _, hModel in ipairs(heroFolder:GetChildren()) do
-       local hHrp = hModel:FindFirstChild("HumanoidRootPart")
-       if hHrp then hHrp.CFrame = CFrame.new(_tpPos) end
-      end
-     end
-    end)
+ -- 4) UnEquip -> EquipBest (refresh hero di posisi boss)
+ PingWait(0.3)
+ if RE.UnEquipHero then
+ pcall(function() RE.UnEquipHero:FireServer() end)
+ end
+ PingWait(0.3)
+ if RE.EquipBestHero then
+ pcall(function() RE.EquipBestHero:FireServer() end)
+ end
+ PingWait(0.3)
 
-    -- 3) Fire HeroMove ke posisi boss (server-side)
-    pcall(function()
-     if _bossStaticPos then FireHeroRemotes(nil, _bossStaticPos) end
-    end)
+ -- 5) TP ulang semua hero setelah re-equip (offset dari boss)
+ pcall(function()
+ local safePos5 = _raidOffsetFromBoss(GetSafeBossPos())
+ if not safePos5 then return end
+ local heroFolder = workspace:FindFirstChild("Heros")
+ if heroFolder then
+ for _, hModel in ipairs(heroFolder:GetChildren()) do
+ local hHrp = hModel:FindFirstChild("HumanoidRootPart")
+ if hHrp then hHrp.CFrame = CFrame.new(safePos5) end
+ end
+ end
+ end)
+ pcall(function()
+ local safePos5b = GetSafeBossPos()
+ if safePos5b then FireHeroRemotes(bossGuid, safePos5b) end
+ end)
 
-    -- 4) UnEquip -> EquipBest
-    PingWait(0.3)
-    if RE.UnEquipHero then pcall(function() RE.UnEquipHero:FireServer() end) end
-    PingWait(0.3)
-    if RE.EquipBestHero then pcall(function() RE.EquipBestHero:FireServer() end) end
-    PingWait(0.3)
-
-    -- 5) TP ulang hero setelah re-equip
-    pcall(function()
-     if not _tpPos then return end
-     local heroFolder = workspace:FindFirstChild("Heros")
-     if heroFolder then
-      for _, hModel in ipairs(heroFolder:GetChildren()) do
-       local hHrp = hModel:FindFirstChild("HumanoidRootPart")
-       if hHrp then hHrp.CFrame = CFrame.new(_tpPos) end
-      end
-     end
-    end)
-
-    -- 6) Freeze player di posisi offset boss
-    local _frozenCFrame = _tpPos and CFrame.new(_tpPos) or nil
-    local _freezeConn = nil
-    pcall(function()
-     local char = LP.Character
-     local hrp = char and char:FindFirstChild("HumanoidRootPart")
-     if hrp and _frozenCFrame then
-      hrp.Anchored = true
-      hrp.CFrame = _frozenCFrame
-      _freezeConn = RunService.Heartbeat:Connect(function()
-       if not RAID.running or RAID._raidDone then
-        pcall(function() hrp.Anchored = false end)
-        if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
-        return
-       end
-       if hrp and hrp.Parent and _frozenCFrame then
-        hrp.CFrame = _frozenCFrame
-       end
-      end)
-     end
-    end)
-
-    local function UnfreezePlayer()
-     pcall(function()
-      local char = LP.Character
-      local hrp = char and char:FindFirstChild("HumanoidRootPart")
-      if hrp then hrp.Anchored = false end
-     end)
+ -- 6) KUNCI posisi player di titik offset dari boss - cegah physics overlap
+ -- Freeze HumanoidRootPart agar tidak jatuh/bergeser selama attack
+ local _frozenCFrame = nil
+ local _freezeConn = nil
+ pcall(function()
+  local char = LP.Character
+  local hrp = char and char:FindFirstChild("HumanoidRootPart")
+  local safePos6 = _raidOffsetFromBoss(GetSafeBossPos())
+  if hrp and safePos6 then
+   _frozenCFrame = CFrame.new(safePos6)
+   hrp.Anchored = true
+   hrp.CFrame = _frozenCFrame
+   -- Pastikan tetap di posisi jika ada physics push
+   _freezeConn = RunService.Heartbeat:Connect(function()
+    if not RAID.running or RAID._raidDone then
+     pcall(function() hrp.Anchored = false end)
      if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
+     return
     end
+    if hrp and hrp.Parent and _frozenCFrame then
+     hrp.CFrame = _frozenCFrame
+    end
+   end)
+  end
+ end)
 
-    -- Helper: ambil enemy dari workspace.Enemys dalam radius 5 studs dari player
-    local function GetNearbyBossData()
-     local char = LP.Character
-     local pHrp = char and char:FindFirstChild("HumanoidRootPart")
-     if not pHrp then return nil end
-     local pPos = pHrp.Position
-     local folder = workspace:FindFirstChild("Enemys")
-     if not folder then return nil end
-     for _, obj in ipairs(folder:GetChildren()) do
-      if obj:IsA("Model") then
-       local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
-       local eHrp = obj:FindFirstChild("HumanoidRootPart")
-       local hum = obj:FindFirstChildOfClass("Humanoid")
-       if g and eHrp and hum and hum.Health > 0 then
-        local dist = (eHrp.Position - pPos).Magnitude
-        if dist <= 5 then
-         return {guid=g, hrp=eHrp, model=obj}
-        end
-       end
+ -- Helper: lepas freeze saat selesai
+ local function UnfreezePlayer()
+  pcall(function()
+   local char = LP.Character
+   local hrp = char and char:FindFirstChild("HumanoidRootPart")
+   if hrp then hrp.Anchored = false end
+  end)
+  if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
+ end
+
+ local _tpTh = nil -- tidak ada background TP thread lagi
+
+ -- 7) SERANG BOSS - langsung tanpa jeda
+ RaidStatusUpdate("[FLa] Attack: " .. boss.model.Name, Color3.fromRGB(255,80,80))
+ local _outOfMapCount = 0
+ while RAID.running do
+ -- [PRIORITY DUNGEON] Jika dungeon aktif di tengah RAID, RAID harus berhenti dan antri.
+ -- Dungeon adalah priority tertinggi - tidak boleh diganggu oleh apapun.
+ if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
+  RaidStatusUpdate("[||] Dungeon aktif - RAID berhenti, menunggu antrian...", Color3.fromRGB(255,140,0))
+  RAID._raidDone = true
+  break
+ end
+ -- Stop jika server sudah konfirmasi sukses
+ if _raidServerDone then break end
+ local _curMap = GetCurrentMapId()
+ if _curMap and (_curMap < 50101 or _curMap > 50120) then
+  _outOfMapCount = _outOfMapCount + 1
+  if _outOfMapCount >= 3 then
+   RaidStatusUpdate("[!] Player keluar raid map - stop attack boss", Color3.fromRGB(255,140,0))
+   break
+  end
+ else
+  _outOfMapCount = 0
+ end
+ -- Boss model hilang dari workspace = mati
+ if not boss.model or not boss.model.Parent then break end
+ local hum = boss.model:FindFirstChildOfClass("Humanoid")
+ -- HP <= 0 atau Humanoid hilang = boss mati
+ if not hum or hum.Health <= 0 then break end
+ local p = GetSafeBossPos()
+ -- Jika posisi boss tidak valid tapi boss masih ada: coba maksimal 2 detik, setelah itu anggap mati
+ if not p then
+  PingWait(0.08)
+  -- Cek lagi apakah boss masih ada
+  if not boss.model or not boss.model.Parent then break end
+  local hum2 = boss.model:FindFirstChildOfClass("Humanoid")
+  if not hum2 or hum2.Health <= 0 then break end
+  continue
+ end
+ task.spawn(function() pcall(function() RaidFireDamage(bossGuid, p) end) end)
+ PingWait(0.08)
+ end
+
+ pcall(function() task.cancel(_tpTh) end)
+ UnfreezePlayer() -- lepas freeze player setelah boss mati
+ -- Boss mati (apapun yang menyebabkan break dari attack loop).
+ -- _raidSuccess = true selalu setelah attack loop selesai dari dalam map.
+ _raidSuccess = true
+ if _raidServerDone then _raidSuccess = true end -- preserve
+ RAID._raidDone = true
+ RaidStatusUpdate("[FLa] Boss Dead!", Color3.fromRGB(100,255,150))
+ end -- if RAID.running after delay
+ else
+ -- [BOSS DATA v35-FIX] Boss tidak ditemukan setelah 10s scan
+ -- Last chance: scan penuh workspace dengan exact name + validasi posisi ±5 studs
+ if _bossNameExact and _bossRefPos and RAID.running and not RAID._raidDone then
+  local _lastChance = nil
+  pcall(function()
+   for _, obj in ipairs(workspace:GetDescendants()) do
+    if obj:IsA("Model") and obj.Name:lower() == _bossNameExact then
+     local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+     local hrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChild("Head")
+     local hum = obj:FindFirstChildOfClass("Humanoid")
+     if g and hrp and hum and hum.Health > 0 then
+      local _dist = (hrp.Position - _bossRefPos).Magnitude
+      if _dist <= 5 then
+       _lastChance = {guid=g, hrp=hrp, model=obj}; break
       end
      end
-     return nil
     end
-
-    -- Helper: cek apakah masih ada enemy dalam 5 studs (apapun, HP > 0)
-    local function HasNearbyEnemy()
-     local char = LP.Character
-     local pHrp = char and char:FindFirstChild("HumanoidRootPart")
-     if not pHrp then return false end
-     local pPos = pHrp.Position
-     local folder = workspace:FindFirstChild("Enemys")
-     if not folder then return false end
-     for _, obj in ipairs(folder:GetChildren()) do
-      if obj:IsA("Model") then
-       local eHrp = obj:FindFirstChild("HumanoidRootPart")
-       local hum = obj:FindFirstChildOfClass("Humanoid")
-       if eHrp and hum and hum.Health > 0 then
-        local dist = (eHrp.Position - pPos).Magnitude
-        if dist <= 5 then return true end
-       end
-      end
-     end
-     return false
-    end
-
-    -- 7) SERANG BOSS - scan radius 5 studs dari player di workspace.Enemys
-    RaidStatusUpdate("[FLa] Attack Boss!", Color3.fromRGB(255,80,80))
-    while RAID.running do
-     -- Priority: dungeon interrupt
-     if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
-      RaidStatusUpdate("[||] Dungeon aktif - RAID berhenti, menunggu antrian...", Color3.fromRGB(255,140,0))
-      RAID._raidDone = true
-      break
-     end
-     -- Stop jika server konfirmasi sukses
-     if _raidServerDone then break end
-     -- Stop jika keluar range mapId RAID normal
-     local _curMap = GetCurrentMapId()
-     if _curMap and (_curMap < 50101 or _curMap > 50120) then break end
-     -- Stop jika tidak ada enemy dalam radius 5 studs (boss mati/hilang)
-     if not HasNearbyEnemy() then break end
-     -- Ambil data enemy terdekat dan serang
-     local _nearEnemy = GetNearbyBossData()
-     if _nearEnemy then
-      local _eGuid = _nearEnemy.guid
-      local _ePos  = _nearEnemy.hrp.Position
-      task.spawn(function() pcall(function() RaidFireDamage(_eGuid, _ePos) end) end)
-     end
-     PingWait(0.08)
-    end
-
-    UnfreezePlayer()
-    _raidSuccess = true
-    if _raidServerDone then _raidSuccess = true end
-    RAID._raidDone = true
-    RaidStatusUpdate("[FLa] Boss Dead!", Color3.fromRGB(100,255,150))
-   end -- if RAID.running after delay
-  end -- if _bossStaticPos
+   end
+  end)
+  if _lastChance then
+   boss = _lastChance
+   RaidStatusUpdate("[!] Boss found (last chance): " .. boss.model.Name, Color3.fromRGB(255,200,50))
+  end
+ end
+ -- Jika masih tidak ada boss setelah last chance, keluar
+ if not boss and RAID.running then
+  RaidStatusUpdate("[FLa] Boss not found (10s) - Go Out...", Color3.fromRGB(255,150,50))
+  PingWait(3)
+ end
+ end -- if boss
  elseif RAID.running and not RAID._raidDone then
  -- Auto Kill Boss OFF - tunggu event ChallengeRaidsSuccess max 5 menit
  local _wt = 0

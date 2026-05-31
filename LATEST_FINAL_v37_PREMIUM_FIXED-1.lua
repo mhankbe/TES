@@ -10354,14 +10354,12 @@ function StartAscensionLoop()
     if ASC.autoKillBoss then
      -- BOSS_KEYS untuk Ascension Tower (semua boss AT + boss normal)
      local BOSS_KEYS_ASC = {
-      "goblin king","giant arachnid","buryura","igris",
-      "leader of the polar","arch lich","kargalgan","baran",
-      "beru","grendal","monarch plague","frostborne","legia",
-      "monarch beastly","beastly fangs","silas","unbreakable monarch",
-      "yogumunt","monarch of transfiguration","transfiguration",
-      "antares","ashborn","dominion","absolute","monarch","fragment","boss",
-      "legendary super saiyan","broly",
-      "goku[super4]","goku super4","goku super 4",
+      "goblin king","giant arachnid buryura","igris",
+      "the leader of the polar bears","arch lich","kargalgan","baran",
+      "beru","giant monarch","monarch of plague","frostborne","legia",
+      "silas","yogumunt",
+      "antares","ashborn","dominion","absolute",
+      "broly","goku[super4]",
      }
      local function IsBossAsc(name)
       local n = name:lower()
@@ -12122,14 +12120,12 @@ local function ResolveEntry()
  end
 
  local BOSS_KEYS_EARLY = {
-  "goblin king","giant arachnid","buryura","igris",
-  "leader of the polar","arch lich","kargalgan","baran",
-  "beru","grendal","monarch plague","frostborne","legia",
-  "monarch beastly","beastly fangs","silas","unbreakable monarch",
-  "yogumunt","monarch of transfiguration","transfiguration",
-  "antares","ashborn","dominion","absolute","monarch","fragment","boss",
-  "legendary super saiyan","broly",
-  "goku[super4]","goku super4","goku super 4",
+  "goblin king","giant arachnid buryura","igris",
+  "the leader of the polar bears","arch lich","kargalgan","baran",
+  "beru","giant monarch","monarch of plague","frostborne","legia",
+  "silas","yogumunt",
+  "antares","ashborn","dominion","absolute",
+  "broly","goku[super4]",
  }
  local function IsBossEarly(name)
   local n = name:lower()
@@ -12231,14 +12227,12 @@ local function ResolveEntry()
 
  if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
   local BOSS_KEYS = {
-   "goblin king","giant arachnid","buryura","igris",
-   "leader of the polar","arch lich","kargalgan","baran",
-   "beru","grendal","monarch plague","frostborne","legia",
-   "monarch beastly","beastly fangs","silas","unbreakable monarch",
-   "yogumunt","monarch of transfiguration","transfiguration",
-   "antares","ashborn","dominion","absolute","monarch","fragment","boss",
-   "legendary super saiyan","broly",
-   "goku[super4]","goku super4","goku super 4",
+   "goblin king","giant arachnid buryura","igris",
+   "the leader of the polar bears","arch lich","kargalgan","baran",
+   "beru","giant monarch","monarch of plague","frostborne","legia",
+   "silas","yogumunt",
+   "antares","ashborn","dominion","absolute",
+   "broly","goku[super4]",
   }
   local function IsBoss(name)
    local n = name:lower()

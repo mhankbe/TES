@@ -8069,58 +8069,29 @@ MAP_NAMES = {
 
 }
 
--- ============================================================
--- RAID_SPAWN_POS: Koordinat spawn player saat masuk map (dipakai GetRaidEnemies refPos)
--- ============================================================
+-- Koordinat spawn boss per map Raid (tpMapId = raidMapId + 100)
+-- Karakter + hero langsung TP ke sini setelah masuk map
 RAID_SPAWN_POS = {
- [50101] = Vector3.new(2424.9, 8.5, 482.9),   -- Map 1  Shadow Gate City
- [50102] = Vector3.new(1683.1, 8.6, -24.1),   -- Map 2  Level Grinding Cavern
- [50103] = Vector3.new(1913.1, 12, -194.4),   -- Map 3  Shadow Castle
- [50104] = Vector3.new( 515.8, 7.6, -98.0),   -- Map 4  Seolhan Forest
- [50105] = Vector3.new(-229.3, 9.6, -2.3),    -- Map 5  Demon Castle Tier 1
- [50106] = Vector3.new(1998.2, 8.0, 237.7),   -- Map 6  Orc Palace
- [50107] = Vector3.new( -42.0, 8.4, 334.0),   -- Map 7  Demon Castle Tier 2
- [50108] = Vector3.new(-925.8,-396.2,-901.6),  -- Map 8  Ant Island
- [50109] = Vector3.new(   8.7, 13.0, 244.2),  -- Map 9  Land of Giant
- [50110] = Vector3.new(2003.0, 8.1, 344.0),   -- Map 10 Plagueheart
- [50111] = Vector3.new(2068.0, 49.4,-155.8),  -- Map 11 Umbralfrost Domain
- [50112] = Vector3.new(  16.5, 9.0, 269.5),   -- Map 12 Kamish's Demise
- [50113] = Vector3.new(2100.7, 63.1, 423.1),  -- Map 13 Lava Hell
- [50114] = Vector3.new(  27.8, 49.8, 303.9),  -- Map 14 Illusory World
- [50115] = Vector3.new(  -0.9, 24.0, 185.3),  -- Map 15 Inferno Altar
- [50116] = Vector3.new(1999.6, 17.0, 236.5),  -- Map 16 Shadow Throne
- [50117] = Vector3.new(  -0.4, 18.5,  93.5),  -- Map 17 Angel Holy Realm
- [50118] = Vector3.new(2000.0, 45.4, 234.7),  -- Map 18 Golden Throne
- [50119] = Vector3.new(   0.0, 10.0,   0.0),  -- Map 19 Dragon Ball City
- [50120] = Vector3.new(   0.0, 10.0,   0.0),  -- Map 20 Dragon Ball Wasteland
-}
-
--- ============================================================
--- BOSS_HRP_POS: Koordinat HRP boss tiap map (dipakai Auto Kill Boss v2)
--- Sumber: data pengukuran langsung in-game per map
--- Player akan TP ke titik ini + offset 3 studs, hero juga TP ke sini
--- ============================================================
-BOSS_HRP_POS = {
- [50101] = Vector3.new( 2424.9,  7.5,  482.9),  -- Map 1  Goblin King
- [50102] = Vector3.new( -316.9,  9.0,  -24.1),  -- Map 2  Giant Arachnid Buryura
- [50103] = Vector3.new( 1913.1,  9.3, -194.4),  -- Map 3  Igris
- [50104] = Vector3.new( 2515.8, 13.7,  -98.0),  -- Map 4  The Leader Of The Polar Bears
- [50105] = Vector3.new( 1770.7,  8.7,   -2.3),  -- Map 5  Arch Lich
- [50106] = Vector3.new( 1998.2,  7.1,  237.7),  -- Map 6  Kargalgan
- [50107] = Vector3.new( 1958.0,  7.4,  334.0),  -- Map 7  Baran
- [50108] = Vector3.new( 1074.2,-397.0, -901.6), -- Map 8  Beru
- [50109] = Vector3.new( 2008.7, 12.6,  244.2),  -- Map 9  Giant Monarch
- [50110] = Vector3.new( 2003.0,  7.0,  344.0),  -- Map 10 Monarch of Plague
- [50111] = Vector3.new(   68.0, 48.2, -155.8),  -- Map 11 Frostborne
- [50112] = Vector3.new(   16.5,  8.8,  269.5),  -- Map 12 Legia
- [50113] = Vector3.new(  100.7, 61.9,  423.1),  -- Map 13 Silas
- [50114] = Vector3.new( 2027.8, 51.3,  303.9),  -- Map 14 Yogumunt
- [50115] = Vector3.new( 1999.1, 23.1,  185.3),  -- Map 15 Antares
- [50116] = Vector3.new(   -0.4, 16.0,  236.5),  -- Map 16 Ashborn
- [50117] = Vector3.new( 1999.6, 17.5,   93.5),  -- Map 17 Dominion
- [50118] = Vector3.new(   -0.0, 44.4,  234.7),  -- Map 18 Absolute
- [50119] = Vector3.new(   13.9, 17.3,   96.8),  -- Map 19 Broly
- [50120] = Vector3.new( -145.2, 15.9,  260.1),  -- Map 20 Goku[Super4]
+ [50101] = Vector3.new(2424.9, 8.5, 482.9), -- Map 1 Shadow Gate City
+ [50102] = Vector3.new(1683.1, 8.6, -24.1), -- Map 2 Level Grinding Cavern
+ [50103] = Vector3.new(1913.1, 12, -194.4), -- Map 3 Shadow Castle
+ [50104] = Vector3.new( 515.8, 7.6, -98.0), -- Map 4 Seolhan Forest
+ [50105] = Vector3.new(-229.3, 9.6, -2.3), -- Map 5 Demon Castle Tier 1
+ [50106] = Vector3.new(1998.2, 8.0, 237.7), -- Map 6 Orc Palace
+ [50107] = Vector3.new( -42.0, 8.4, 334.0), -- Map 7 Demon Castle Tier 2
+ [50108] = Vector3.new(-925.8,-396.2, -901.6), -- Map 8 Ant Island
+ [50109] = Vector3.new( 8.7, 13.0, 244.2), -- Map 9 Land of Giant
+ [50110] = Vector3.new(2003.0, 8.1, 344.0), -- Map 10 Plagueheart
+ [50111] = Vector3.new(2068.0, 49.4, -155.8), -- Map 11 Umbralfrost Domain
+ [50112] = Vector3.new( 16.5, 9.0, 269.5), -- Map 12 Kamish's Demise
+ [50113] = Vector3.new(2100.7, 63.1, 423.1), -- Map 13 Lava Hell
+ [50114] = Vector3.new( 27.8, 49.8, 303.9), -- Map 14 Illusory World
+ [50115] = Vector3.new( -0.9, 24.0, 185.3), -- Map 15 Inferno Altar
+ [50116] = Vector3.new(1999.6, 17.0, 236.5), -- Map 16 Shadow Throne
+ [50117] = Vector3.new( -0.4, 18.5, 93.5), -- Map 17 Angel Holy Realm
+ [50118] = Vector3.new(2000.0, 45.4, 234.7), -- Map 18 Golden Throne
+ [50119] = Vector3.new(0, 10.0, 0), -- Map 19 Dragon Ball City (update posisi jika perlu)
+ [50120] = Vector3.new(0, 10.0, 0), -- Map 20 Dragon Ball Wasteland (update posisi jika perlu)
 }
 end -- chat listener + grade cache
 
@@ -12042,324 +12013,501 @@ local function ResolveEntry()
  end)
  end
 
+ -- 
+ -- STEP 4: Di dalam raid - cari boss, TP, serang
  --
- -- STEP 4: Di dalam raid - loading → countdown → TP ke boss (koordinat HRP) → attack
- -- [v_NEWFLOW] Tidak ada scan nama boss. Pakai BOSS_HRP_POS hardcode per map.
- -- Deteksi mati: event ChallengeRaidsSuccess dari server.
- -- Attack: fire remote ke koordinat HRP, player berdiri 3 studs dari titik itu.
- --
+ -- [FIX v260] Jika sebelumnya Siege baru saja selesai, tunggu workspace bersih dulu.
+ -- Cek aktif sampai 5 detik: jika masih ada enemy Siege di workspace, tunggu terus.
+ -- Tanpa ini scan boss bisa menemukan sisa enemy Siege dan salah TP ke sana.
+ if SIEGE and SIEGE._lastExitTime and (os.time() - SIEGE._lastExitTime) < 5 then
+  RaidStatusUpdate("[~] Clearing Siege remnants...", Color3.fromRGB(160,148,135))
+  local _siegeWait = 0
+  while _siegeWait < 5 and RAID.running do
+   local _curMId = GetCurrentMapId()
+   -- Selama mapId masih di range Siege, tunggu
+   if _curMId and (_curMId >= 50201 and _curMId <= 50204) then
+    PingWait(0.5); _siegeWait = _siegeWait + 0.5
+   else
+    break -- mapId sudah bersih, lanjut
+   end
+  end
+ end
 
  RAID._raidDone = false
  local _raidSuccess = false
 
- -- ── Pasang event listener mati dari server ──────────────────────────────────
- -- ChallengeRaidsSuccess  → boss mati, raid berhasil → set _raidServerDone
- -- ChallengeRaidsFail     → raid gagal (timeout/disconnect) → keluar paksa
  local connS, connF
+ -- _raidServerDone = flag bahwa server sudah bilang sukses
+ -- (attack loop tetap jalan sampai boss model hilang dari workspace)
  local _raidServerDone = false
  local _reS = Remotes:FindFirstChild("ChallengeRaidsSuccess")
  local _reF = Remotes:FindFirstChild("ChallengeRaidsFail")
- if _reS then
-  connS = _reS.OnClientEvent:Connect(function()
-   _raidServerDone = true
-   _raidSuccess    = true
+ if _reS then connS = _reS.OnClientEvent:Connect(function()
+  _raidServerDone = true; _raidSuccess = true
+ end) end
+ if _reF then connF = _reF.OnClientEvent:Connect(function()
+  RAID._raidDone = true
+ end) end
+
+ -- ── HELPER: Cleanup semua koneksi + unfreeze player ──────────────────────────
+ -- Dipanggil di SETIAP jalur keluar dari STEP 4 (boss mati, boss tidak ketemu,
+ -- dungeon interrupt, fail, timeout). Dijamin hanya ada SATU titik cleanup.
+ local _freezeConn  = nil  -- RunService.Heartbeat conn untuk lock posisi player
+ local _frozenCFrame = nil -- CFrame terkunci saat attack
+ local function _step4Cleanup()
+  -- 1) Lepas freeze player - pastikan Anchored = false
+  pcall(function()
+   local char = LP.Character
+   local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+   if hrp then hrp.Anchored = false end
   end)
- end
- if _reF then
-  connF = _reF.OnClientEvent:Connect(function()
-   RAID._raidDone = true -- fail: keluar langsung dari attack loop
-  end)
+  -- 2) Disconnect Heartbeat freeze (idempoten - aman dipanggil berkali-kali)
+  if _freezeConn then
+   pcall(function() _freezeConn:Disconnect() end)
+   _freezeConn  = nil
+   _frozenCFrame = nil
+  end
+  -- 3) Disconnect server event listeners
+  if connS then pcall(function() connS:Disconnect() end); connS = nil end
+  if connF then pcall(function() connF:Disconnect() end); connF = nil end
  end
 
- -- ── STEP 4A: Loading wait 2 detik ────────────────────────────────────────────
- -- Beri server waktu populate map sebelum kita bergerak
- repeat -- [FIX goto→repeat/break]
- RaidStatusUpdate("[..] Enter Map - loading 2s...", Color3.fromRGB(160,148,135))
- local _lw = 0
- while _lw < 2 and RAID.running and not RAID._raidDone do
-  PingWait(0.5); _lw = _lw + 0.5
- end
- if not RAID.running or RAID._raidDone then
-  if connS then pcall(function() connS:Disconnect() end) end
-  if connF then pcall(function() connF:Disconnect() end) end
-  break -- [FIX] was: goto _step4_cleanup
+ -- ── LOADING WAIT: tunggu enemies muncul via ChildAdded ───────────────────────
+ -- [FIX v260] Tidak pakai polling GetRaidEnemies() - pakai ChildAdded murni.
+ -- ChildAdded lebih ringan dan instan - langsung terpantik saat server spawn enemy.
+ RaidStatusUpdate("[..] Enter Map - loading...", Color3.fromRGB(160,148,135))
+
+ -- Snapshot mapId saat pertama masuk - dipakai sebagai referensi validasi sepanjang STEP 4
+ local _raidMapIdSnapshot = GetCurrentMapId()
+ -- Validasi: harus di range RAID (50101-50120) atau ASC (50301-50326)
+ local function _isValidRaidMap(mId)
+  if not mId then return false end
+  return (mId >= 50101 and mId <= 50120) or (mId >= 50301 and mId <= 50326)
  end
 
- -- ── STEP 4B: Ambil koordinat HRP boss dari tabel hardcode ───────────────────
- -- raidMapId sudah diset oleh STEP 2/3 (nilai 50101-50120)
- local _bossHrpPos = BOSS_HRP_POS and BOSS_HRP_POS[RAID.raidMapId]
- if not _bossHrpPos then
-  -- Map tidak ada di tabel (misal Map 19/20 masih Vector3.new(0,10,0))
-  -- Fallback: pakai spawn pos saja agar tidak crash
-  _bossHrpPos = RAID_SPAWN_POS and RAID_SPAWN_POS[RAID.raidMapId]
-  RaidStatusUpdate("[!] BOSS_HRP_POS map "..tostring(RAID.raidMapId).." tidak ada - fallback spawn pos", Color3.fromRGB(255,140,0))
+ -- [FIX v260] Ambil referensi posisi player saat masuk map sebagai anchor filter jarak.
+ -- Referensi ini diambil SETELAH TP ke dalam map, jadi koordinatnya sudah benar.
+ -- MAX_DIST_BOSS: radius maksimal musuh dari posisi player agar dianggap enemy map ini.
+ -- 3000 studs cukup untuk semua map RAID (umumnya <500 studs), tapi cukup sempit
+ -- untuk menolak enemy dari event lain yang bisa ada di koordinat >10000 studs.
+ local _playerAnchorPos = GetPlayerPos()
+ local MAX_DIST_BOSS = 3000
+
+ -- Helper validasi enemy: mapId benar + jarak wajar dari player anchor
+ local function _isEnemyInThisMap(hrp)
+  -- 1) MapId harus tetap sama dengan snapshot saat masuk
+  local _nowMapId = GetCurrentMapId()
+  if _nowMapId and _raidMapIdSnapshot and _nowMapId ~= _raidMapIdSnapshot then
+   return false -- mapId sudah berubah = bukan map yang sama
+  end
+  -- 2) Range mapId harus valid (RAID atau ASC)
+  if not _isValidRaidMap(_nowMapId or _raidMapIdSnapshot) then return false end
+  -- 3) Filter jarak dari anchor posisi player
+  if _playerAnchorPos and _playerAnchorPos.Magnitude > 1 and hrp and hrp.Parent then
+   local dist = (hrp.Position - _playerAnchorPos).Magnitude
+   if dist > MAX_DIST_BOSS then return false end
+  end
+  return true
  end
+
+ local BOSS_KEYS_EARLY = {
+  "goblin king","giant arachnid","buryura","igris",
+  "leader of the polar","arch lich","kargalgan","baran",
+  "beru","grendal","monarch plague","frostborne","legia",
+  "monarch beastly","beastly fangs","silas","unbreakable monarch",
+  "yogumunt","monarch of transfiguration","transfiguration",
+  "antares","ashborn","dominion","absolute","monarch","fragment","boss",
+  "legendary super saiyan","broly",
+  "goku[super4]","goku super4","goku super 4",
+ }
+ local function IsBossEarly(name)
+  local n = name:lower()
+  for _, k in ipairs(BOSS_KEYS_EARLY) do if n:find(k,1,true) then return true end end
+  return false
+ end
+ local _earlyAscHint = (raidEntry and raidEntry.isAscension and raidEntry.bossName) or nil
+ local function IsBossEarlyWithHint(name)
+  local n = name:lower()
+  if _earlyAscHint and n:find(_earlyAscHint, 1, true) then return true end
+  return IsBossEarly(name)
+ end
+
+ -- [FIX v260] Loading wait via ChildAdded - instan, tanpa polling
+ local _earlyBoss      = nil
+ local _mapHasEnemies  = false
+ local _loadEventConns = {}
+ local _loadDone       = false
+
+ local function _onLoadObj(obj)
+  if _loadDone or not obj:IsA("Model") then return end
+  local g   = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid")
+           or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+  local hrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+           or obj:FindFirstChild("UpperTorso") or obj:FindFirstChild("Torso")
+           or obj:FindFirstChildWhichIsA("BasePart")
+  local hum = obj:FindFirstChildOfClass("Humanoid")
+  if not (g and hrp and hum and hum.Health > 0) then return end
+  if not _isEnemyInThisMap(hrp) then return end -- [FIX] tolak enemy dari map lain
+  _mapHasEnemies = true
+  if not _earlyBoss and IsBossEarlyWithHint(obj.Name) then
+   local p = hrp.Position
+   if p.Y > -200 and p.Magnitude > 1 then
+    _earlyBoss = {guid=g, hrp=hrp, model=obj}
+   end
+  end
+ end
+
+ -- Pasang listener ke semua folder enemy yang sudah ada
+ for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters","Monster"}) do
+  local folder = workspace:FindFirstChild(fname)
+  if folder then
+   -- Scan existing children langsung (mungkin enemy sudah ada sebelum listener dipasang)
+   for _, child in ipairs(folder:GetChildren()) do pcall(_onLoadObj, child) end
+   table.insert(_loadEventConns, folder.ChildAdded:Connect(_onLoadObj))
+  end
+ end
+ -- Listener workspace untuk folder baru yang muncul belakangan
+ table.insert(_loadEventConns, workspace.ChildAdded:Connect(function(obj)
+  if obj:IsA("Folder") or obj:IsA("Model") then
+   pcall(_onLoadObj, obj)
+   if obj:IsA("Folder") then
+    -- Pantau isi folder baru - simpan koneksi agar bisa disconnect
+    local c = obj.ChildAdded:Connect(function(child) pcall(_onLoadObj, child) end)
+    table.insert(_loadEventConns, c)
+    for _, child in ipairs(obj:GetChildren()) do pcall(_onLoadObj, child) end
+   end
+  end
+ end))
+
+ -- Tunggu sampai ada enemy (max 12s) - tidak pakai polling GetRaidEnemies()
+ local _loadWait = 0
+ while _loadWait < 12 and RAID.running and not RAID._raidDone do
+  -- [FIX v260] Update anchor posisi player secara berkala selama loading
+  -- (player mungkin baru selesai di-TP saat loop ini jalan)
+  local _newPos = GetPlayerPos()
+  if _newPos and _newPos.Magnitude > 1 then _playerAnchorPos = _newPos end
+
+  if _earlyBoss and _loadWait >= 1.5 then break end
+  if _mapHasEnemies and _loadWait >= 2 and not RAID.autoKillBoss then break end
+  if _mapHasEnemies and _loadWait >= 2 and RAID.autoKillBoss and _earlyBoss then break end
+  PingWait(0.5); _loadWait = _loadWait + 0.5
+ end
+ _loadDone = true
+ -- Bersihkan semua listener loading
+ for _, c in ipairs(_loadEventConns) do pcall(function() c:Disconnect() end) end
+ _loadEventConns = {}
 
  if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
-
-  -- ── STEP 4C: Countdown bossDelay (1-10s) ──────────────────────────────────
-  local _bd = math.max(1, math.min(10, RAID.bossDelay or 3))
-  local _mapNum = RAID.raidMapId and (RAID.raidMapId - 50100) or 0
-  for _ci = _bd, 1, -1 do
-   if not RAID.running or RAID._raidDone then break end
-   RaidStatusUpdate(
-    "[K] Map ".._mapNum.." - TP ke Boss ".._ci.."s...",
-    Color3.fromRGB(255,160,60)
-   )
-   PingWait(1)
-  end
-  if not RAID.running or RAID._raidDone then
-   if connS then pcall(function() connS:Disconnect() end) end
-   if connF then pcall(function() connF:Disconnect() end) end
-   break -- [FIX] was: goto _step4_cleanup
+  local BOSS_KEYS = {
+   "goblin king","giant arachnid","buryura","igris",
+   "leader of the polar","arch lich","kargalgan","baran",
+   "beru","grendal","monarch plague","frostborne","legia",
+   "monarch beastly","beastly fangs","silas","unbreakable monarch",
+   "yogumunt","monarch of transfiguration","transfiguration",
+   "antares","ashborn","dominion","absolute","monarch","fragment","boss",
+   "legendary super saiyan","broly",
+   "goku[super4]","goku super4","goku super 4",
+  }
+  local function IsBoss(name)
+   local n = name:lower()
+   for _, k in ipairs(BOSS_KEYS) do if n:find(k,1,true) then return true end end
+   return false
   end
 
-  -- ── STEP 4D: Scan GUID boss dari jarak ke koordinat HRP hardcode ──────────
-  -- Tidak pakai filter nama. Ambil enemy terdekat dari titik BOSS_HRP_POS.
-  -- Radius 500 studs — cukup luas untuk variasi posisi spawn, cukup sempit
-  -- untuk tidak salah ambil enemy lain yang jauh.
-  local _bossGuid = nil
-  local _bossHrpRef = nil -- referensi HRP model boss (untuk attack pos fallback)
-  local _bossModel  = nil
-  local GUID_SCAN_RADIUS = 500
+  local _ascHintName = (raidEntry and raidEntry.isAscension and raidEntry.bossName) or nil
+  local function IsBossWithHint(name)
+   local n = name:lower()
+   if _ascHintName and n:find(_ascHintName, 1, true) then return true end
+   return IsBoss(name)
+  end
 
-  local function _scanBossGuid()
-   local _closest  = nil
-   local _closestD = math.huge
-   local _refPos   = _bossHrpPos
-   if not _refPos then return end
+  -- Pakai boss dari early detection kalau sudah ada DAN nama valid
+  local boss = (_earlyBoss and IsBossWithHint(_earlyBoss.model.Name)) and _earlyBoss or nil
+  if not boss and _earlyBoss and _ascHintName then
+   if _earlyBoss.model.Name:lower():find(_ascHintName, 1, true) then boss = _earlyBoss end
+  end
 
-   local function _tryObj(obj)
-    if not obj:IsA("Model") then return end
-    local g = obj:GetAttribute("EnemyGuid")
-           or obj:GetAttribute("BossGuid")
-           or obj:GetAttribute("Guid")
-           or obj:GetAttribute("GUID")
-    if not g then return end
-    local hrp = obj:FindFirstChild("HumanoidRootPart")
-             or obj.PrimaryPart
-             or obj:FindFirstChildWhichIsA("BasePart")
-    local hum = obj:FindFirstChildOfClass("Humanoid")
-    if not (hrp and hum and hum.Health > 0) then return end
-    local d = (hrp.Position - _refPos).Magnitude
-    if d < _closestD and d <= GUID_SCAN_RADIUS then
-     _closestD = d
-     _closest  = {guid=g, hrp=hrp, model=obj}
+  -- ── [FIX v260] BOSS SCAN: ChildAdded ONLY - tanpa polling, tanpa GetDescendants ──
+  -- GetDescendants() dihapus total karena:
+  -- 1) Sangat berat (scan semua objek di workspace termasuk terrain, efek, dll)
+  -- 2) Tidak punya filter mapId -> bisa menemukan enemy dari Siege/Anniversary
+  --    yang masih nyangkut di workspace -> TP ke sana -> nyemplung jurang -> crash
+  -- ChildAdded cukup: event ini fire instan saat enemy di-add server ke folder
+  local _bossEventConns = {}
+  local _bossScanDone   = false
+
+  local function _tryAddBoss(obj)
+   if boss or _bossScanDone or not obj:IsA("Model") then return end
+   if not IsBossWithHint(obj.Name) then return end
+   local g   = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid")
+            or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+   local hrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+            or obj:FindFirstChild("Head") or obj:FindFirstChild("UpperTorso")
+            or obj:FindFirstChild("Torso") or obj:FindFirstChildWhichIsA("BasePart")
+   local hum = obj:FindFirstChildOfClass("Humanoid")
+   if not (g and hrp and hum and hum.Health > 0) then return end
+   -- [FIX v260] Wajib lulus validasi map + jarak - tolak enemy dari map lain
+   if not _isEnemyInThisMap(hrp) then
+    RaidStatusUpdate("[!] Tolak enemy luar map: "..obj.Name, Color3.fromRGB(255,140,0))
+    return
+   end
+   boss = {guid=g, hrp=hrp, model=obj}
+  end
+
+  -- Pasang ChildAdded ke semua folder enemy + scan existing children
+  for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters","Monster"}) do
+   local folder = workspace:FindFirstChild(fname)
+   if folder then
+    -- Scan existing dulu (boss mungkin sudah ada)
+    for _, child in ipairs(folder:GetChildren()) do pcall(_tryAddBoss, child) end
+    -- Baru pasang listener untuk yang muncul belakangan
+    table.insert(_bossEventConns, folder.ChildAdded:Connect(_tryAddBoss))
+   end
+  end
+  -- Listener workspace untuk folder yang belum ada saat ini
+  table.insert(_bossEventConns, workspace.ChildAdded:Connect(function(obj)
+   if obj:IsA("Folder") or obj:IsA("Model") then
+    pcall(_tryAddBoss, obj)
+    if obj:IsA("Folder") then
+     -- Simpan koneksi agar bisa disconnect - tidak tabel-insert di dalam callback lain
+     local c = obj.ChildAdded:Connect(function(child) pcall(_tryAddBoss, child) end)
+     table.insert(_bossEventConns, c)
+     for _, child in ipairs(obj:GetChildren()) do pcall(_tryAddBoss, child) end
     end
    end
+  end))
 
-   -- Scan semua folder enemy yang mungkin ada di workspace
-   for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters"}) do
-    local folder = workspace:FindFirstChild(fname)
-    if folder then
-     for _, child in ipairs(folder:GetChildren()) do
-      pcall(_tryObj, child)
+  -- Tunggu boss via event (max 15s) - tidak ada polling loop di sini
+  local _waitBoss = 0
+  while RAID.running and not boss and _waitBoss < 15 and not RAID._raidDone do
+   RaidStatusUpdate("Find Boss... (" .. math.floor(_waitBoss) .. "s/15s)", Color3.fromRGB(160,148,135))
+   PingWait(0.5); _waitBoss = _waitBoss + 0.5
+  end
+
+  -- Bersihkan SEMUA listener boss scan (termasuk folder baru)
+  _bossScanDone = true
+  for _, c in ipairs(_bossEventConns) do pcall(function() c:Disconnect() end) end
+  _bossEventConns = {}
+
+  if boss and RAID.running and not RAID._raidDone then
+   local bossGuid = boss.guid
+   -- Helper posisi boss: prioritas HRP, validasi Y > -200 (bukan void/jurang)
+   local function GetSafeBossPos()
+    local part = boss.model:FindFirstChild("HumanoidRootPart")
+              or boss.model.PrimaryPart
+              or boss.model:FindFirstChild("Head")
+    if part and part.Parent then
+     local p = part.Position
+     if p.Y > -200 then return p end
+    end
+    return nil
+   end
+
+   local bossPos = GetSafeBossPos()
+   if not bossPos then
+    local _waitPos = 0
+    while not bossPos and _waitPos < 3 and RAID.running and not RAID._raidDone do
+     PingWait(0.3); _waitPos = _waitPos + 0.3
+     bossPos = GetSafeBossPos()
+    end
+   end
+   if not bossPos then
+    RaidStatusUpdate("[!] Boss pos tidak valid - skip TP boss", Color3.fromRGB(255,80,80))
+   end
+
+   -- Countdown delay sebelum TP ke boss (1-10s, user-controlled)
+   local _bd = math.max(1, math.min(10, RAID.bossDelay or 3))
+   for _ci = _bd, 1, -1 do
+    if not RAID.running or RAID._raidDone then break end
+    RaidStatusUpdate("[K] Boss: "..boss.model.Name.." - TP ".._ci.."s...", Color3.fromRGB(255,160,60))
+    PingWait(1)
+   end
+
+   -- [FIX] Refresh posisi boss SETELAH countdown - mungkin belum stabil saat spawn
+   local _refreshWait = 0
+   bossPos = GetSafeBossPos()
+   while not bossPos and _refreshWait < 3 and RAID.running and not RAID._raidDone do
+    PingWait(0.3); _refreshWait = _refreshWait + 0.3
+    bossPos = GetSafeBossPos()
+   end
+   -- Validasi Y: bukan void/jurang
+   if bossPos and bossPos.Y < -100 then
+    RaidStatusUpdate("[!] Posisi boss terlalu rendah - tunggu stabilisasi...", Color3.fromRGB(255,160,60))
+    PingWait(1)
+    bossPos = GetSafeBossPos()
+   end
+
+   if RAID.running and not RAID._raidDone and bossPos then
+    RaidStatusUpdate("[K] Boss: " .. boss.model.Name .. " - Attack!", Color3.fromRGB(255,80,80))
+
+    local function _raidOffsetFromBoss(basePos)
+     if not basePos then return nil end
+     local char = LP.Character
+     local pHrp = char and char:FindFirstChild("HumanoidRootPart")
+     local dir
+     if pHrp then
+      local d     = pHrp.Position - basePos
+      local dFlat = Vector3.new(d.X, 0, d.Z)
+      dir = dFlat.Magnitude > 0.5 and dFlat.Unit or Vector3.new(1, 0, 0)
+     else
+      dir = Vector3.new(1, 0, 0)
      end
+     return basePos + dir * 3
     end
-   end
-   -- Fallback: scan langsung anak workspace
-   for _, obj in ipairs(workspace:GetChildren()) do
-    if obj:IsA("Model") then pcall(_tryObj, obj) end
-   end
 
-   if _closest then
-    _bossGuid   = _closest.guid
-    _bossHrpRef = _closest.hrp
-    _bossModel  = _closest.model
-   end
-  end
-
-  -- Coba scan GUID, max 3x dengan jeda 0.5s jika belum dapat
-  -- (boss kadang butuh ~1 detik lagi untuk muncul setelah loading selesai)
-  for _attempt = 1, 3 do
-   pcall(_scanBossGuid)
-   if _bossGuid then break end
-   RaidStatusUpdate(
-    "[..] Scan GUID boss... attempt ".._attempt.."/3",
-    Color3.fromRGB(160,148,135)
-   )
-   PingWait(0.5)
-  end
-
-  if not _bossGuid then
-   -- Tidak dapat GUID → attack tetap jalan ke koordinat HRP, GUID pakai "" (server kadang masih terima)
-   _bossGuid = ""
-   RaidStatusUpdate("[!] GUID boss tidak dapat - attack ke koordinat HRP", Color3.fromRGB(255,140,0))
-  else
-   local _mn = _bossModel and _bossModel.Name or "?"
-   RaidStatusUpdate("[K] Boss: ".._mn.." - GUID OK → Attack!", Color3.fromRGB(255,80,80))
-  end
-
-  -- ── STEP 4E: Hitung posisi player = HRP boss + offset 3 studs ────────────
-  -- Arah offset: sumbu X+3 sebagai default; jika HRP model ada, ambil arah
-  -- dari HRP model ke titik HRP boss lalu geser 3 studs ke arah berlawanan
-  -- agar player berdiri di samping boss, tidak menindih.
-  local function _calcPlayerPos()
-   local base = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
-   if not base then return nil end
-   local char = LP.Character
-   local pHrp = char and char:FindFirstChild("HumanoidRootPart")
-   local dir  = Vector3.new(1, 0, 0) -- default arah
-   if pHrp then
-    local d     = pHrp.Position - base
-    local dFlat = Vector3.new(d.X, 0, d.Z)
-    if dFlat.Magnitude > 0.5 then dir = dFlat.Unit end
-   end
-   return base + dir * 3
-  end
-
-  local _playerPos = _calcPlayerPos()
-
-  -- ── STEP 4F: TP Player ke offset 3 studs dari HRP boss ───────────────────
-  pcall(function()
-   local char = LP.Character
-   local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-   if hrp and _playerPos then
-    hrp.CFrame = CFrame.new(_playerPos)
-   end
-  end)
-
-  -- ── STEP 4G: TP semua hero ke koordinat HRP boss ──────────────────────────
-  pcall(function()
-   local heroFolder = workspace:FindFirstChild("Heros")
-   if heroFolder then
-    for _, hModel in ipairs(heroFolder:GetChildren()) do
-     local hHrp = hModel:FindFirstChild("HumanoidRootPart")
-     if hHrp and _bossHrpPos then
-      hHrp.CFrame = CFrame.new(_bossHrpPos)
-     end
-    end
-   end
-  end)
-
-  -- ── STEP 4H: FireHeroRemotes ke koordinat HRP boss ───────────────────────
-  local _atkPos = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
-  pcall(function()
-   if _atkPos then FireHeroRemotes(_bossGuid, _atkPos) end
-  end)
-  -- HeroStand: arahkan hero berdiri di titik boss
-  if RE.HeroStand and #HERO_GUIDS > 0 and _atkPos then
-   for _, hGuid in ipairs(HERO_GUIDS) do
+    -- 1) TP Player ke offset 3u dari boss
     pcall(function()
-     RE.HeroStand:FireServer({
-      heroGuid = hGuid,
-      userId   = MY_USER_ID,
-      standPos = _atkPos + Vector3.new(1, 0, 1),
-     })
+     local char = LP.Character
+     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+     local safePos = _raidOffsetFromBoss(GetSafeBossPos())
+     if hrp and safePos then hrp.CFrame = CFrame.new(safePos) end
     end)
-   end
-  end
 
-  -- ── STEP 4I: UnEquip → EquipBest → TP hero ulang ─────────────────────────
-  PingWait(0.3)
-  if RE.UnEquipHero  then pcall(function() RE.UnEquipHero:FireServer()  end) end
-  PingWait(0.3)
-  if RE.EquipBestHero then pcall(function() RE.EquipBestHero:FireServer() end) end
-  PingWait(0.3)
-  -- TP hero ulang setelah re-equip
-  pcall(function()
-   local heroFolder = workspace:FindFirstChild("Heros")
-   if heroFolder then
-    for _, hModel in ipairs(heroFolder:GetChildren()) do
-     local hHrp = hModel:FindFirstChild("HumanoidRootPart")
-     if hHrp and _bossHrpPos then
-      hHrp.CFrame = CFrame.new(_bossHrpPos)
+    -- 2) TP semua hero ke offset dari boss
+    pcall(function()
+     local safePos2 = _raidOffsetFromBoss(GetSafeBossPos())
+     if not safePos2 then return end
+     local heroFolder = workspace:FindFirstChild("Heros")
+     if heroFolder then
+      for _, hModel in ipairs(heroFolder:GetChildren()) do
+       local hHrp = hModel:FindFirstChild("HumanoidRootPart")
+       if hHrp then hHrp.CFrame = CFrame.new(safePos2) end
+      end
+     end
+    end)
+
+    -- 3) Fire hero remotes ke boss
+    pcall(function()
+     local safePos3 = GetSafeBossPos()
+     if safePos3 then FireHeroRemotes(bossGuid, safePos3) end
+    end)
+    if RE.HeroStand and #HERO_GUIDS > 0 then
+     local safePos3b = GetSafeBossPos()
+     if safePos3b then
+      for _, hGuid in ipairs(HERO_GUIDS) do
+       pcall(function()
+        RE.HeroStand:FireServer({heroGuid=hGuid, userId=MY_USER_ID,
+         standPos=safePos3b + Vector3.new(1,0,1)})
+       end)
+      end
      end
     end
-   end
-  end)
-  _atkPos = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
-  pcall(function()
-   if _atkPos then FireHeroRemotes(_bossGuid, _atkPos) end
-  end)
 
-  -- ── STEP 4J: Freeze player di posisi offset 3 studs (Heartbeat) ──────────
-  local _frozenCFrame = _playerPos and CFrame.new(_playerPos) or nil
-  local _freezeConn   = nil
-  pcall(function()
-   local char = LP.Character
-   local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-   if hrp and _frozenCFrame then
-    hrp.Anchored = true
-    hrp.CFrame   = _frozenCFrame
-    _freezeConn  = RunService.Heartbeat:Connect(function()
-     if not RAID.running or RAID._raidDone then
-      pcall(function() hrp.Anchored = false end)
-      if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
-      return
-     end
-     if hrp and hrp.Parent and _frozenCFrame then
-      hrp.CFrame = _frozenCFrame
+    -- 4) UnEquip -> EquipBest
+    PingWait(0.3)
+    if RE.UnEquipHero  then pcall(function() RE.UnEquipHero:FireServer()  end) end
+    PingWait(0.3)
+    if RE.EquipBestHero then pcall(function() RE.EquipBestHero:FireServer() end) end
+    PingWait(0.3)
+
+    -- 5) TP ulang semua hero setelah re-equip
+    pcall(function()
+     local safePos5 = _raidOffsetFromBoss(GetSafeBossPos())
+     if not safePos5 then return end
+     local heroFolder = workspace:FindFirstChild("Heros")
+     if heroFolder then
+      for _, hModel in ipairs(heroFolder:GetChildren()) do
+       local hHrp = hModel:FindFirstChild("HumanoidRootPart")
+       if hHrp then hHrp.CFrame = CFrame.new(safePos5) end
+      end
      end
     end)
-   end
-  end)
+    pcall(function()
+     local safePos5b = GetSafeBossPos()
+     if safePos5b then FireHeroRemotes(bossGuid, safePos5b) end
+    end)
 
-  local function _unfreezePlayer()
-   pcall(function()
-    local char = LP.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then hrp.Anchored = false end
-   end)
-   if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
-  end
+    -- 6) Kunci posisi player selama attack (Heartbeat freeze)
+    pcall(function()
+     local char = LP.Character
+     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+     local safePos6 = _raidOffsetFromBoss(GetSafeBossPos())
+     if hrp and safePos6 then
+      _frozenCFrame = CFrame.new(safePos6)
+      hrp.Anchored  = true
+      hrp.CFrame    = _frozenCFrame
+      -- [FIX v260] _freezeConn disimpan di scope luar agar _step4Cleanup() bisa disconnect
+      _freezeConn = RunService.Heartbeat:Connect(function()
+       if not RAID.running or RAID._raidDone then
+        -- Auto-disconnect saat kondisi stop - tidak bergantung pada UnfreezePlayer()
+        pcall(function() if hrp and hrp.Parent then hrp.Anchored = false end end)
+        if _freezeConn then _freezeConn:Disconnect(); _freezeConn = nil end
+        _frozenCFrame = nil
+        return
+       end
+       if hrp and hrp.Parent and _frozenCFrame then
+        hrp.CFrame = _frozenCFrame
+       end
+      end)
+     end
+    end)
 
-  -- ── STEP 4K: Attack loop ──────────────────────────────────────────────────
-  -- Fire RaidFireDamage ke koordinat HRP boss tiap 0.08s.
-  -- Berhenti saat: ChallengeRaidsSuccess (server) | keluar map | Dungeon aktif.
-  RaidStatusUpdate("[FLa] Attacking boss...", Color3.fromRGB(255,80,80))
-  local _outOfMapCount = 0
-  while RAID.running do
-   -- Dungeon: prioritas tertinggi, hentikan segera
-   if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
-    RaidStatusUpdate("[||] Dungeon aktif - RAID pause...", Color3.fromRGB(255,140,0))
+    -- 7) Attack loop
+    RaidStatusUpdate("[FLa] Attack: " .. boss.model.Name, Color3.fromRGB(255,80,80))
+    local _outOfMapCount = 0
+    while RAID.running do
+     if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
+      RaidStatusUpdate("[||] Dungeon aktif - RAID berhenti...", Color3.fromRGB(255,140,0))
+      RAID._raidDone = true
+      break
+     end
+     if _raidServerDone then break end
+     local _curMap = GetCurrentMapId()
+     if _curMap and (_curMap < 50101 or _curMap > 50120) then
+      _outOfMapCount = _outOfMapCount + 1
+      if _outOfMapCount >= 3 then
+       RaidStatusUpdate("[!] Player keluar raid map - stop attack boss", Color3.fromRGB(255,140,0))
+       break
+      end
+     else
+      _outOfMapCount = 0
+     end
+     if not boss.model or not boss.model.Parent then break end
+     local hum = boss.model:FindFirstChildOfClass("Humanoid")
+     if not hum or hum.Health <= 0 then break end
+     local p = GetSafeBossPos()
+     if not p then
+      PingWait(0.08)
+      if not boss.model or not boss.model.Parent then break end
+      local hum2 = boss.model:FindFirstChildOfClass("Humanoid")
+      if not hum2 or hum2.Health <= 0 then break end
+      continue
+     end
+     task.spawn(function() pcall(function() RaidFireDamage(bossGuid, p) end) end)
+     PingWait(0.08)
+    end
+
+    -- [FIX v260] Cleanup terpusat - satu titik keluar untuk semua kasus
+    _step4Cleanup()
+    _raidSuccess = true
     RAID._raidDone = true
-    break
-   end
-   -- Event server: ChallengeRaidsSuccess → boss sudah mati di server
-   if _raidServerDone then break end
-   -- Cek masih di dalam map raid
-   local _curMap = GetCurrentMapId()
-   if _curMap and (_curMap < 50101 or _curMap > 50120) then
-    _outOfMapCount = _outOfMapCount + 1
-    if _outOfMapCount >= 3 then
-     RaidStatusUpdate("[!] Keluar dari map raid - stop attack", Color3.fromRGB(255,140,0))
-     break
-    end
-   else
-    _outOfMapCount = 0
-   end
-   -- Update posisi attack: prioritaskan HRP model live, fallback ke hardcode
-   _atkPos = (_bossHrpRef and _bossHrpRef.Parent and _bossHrpRef.Position) or _bossHrpPos
-   if _atkPos then
-    task.spawn(function()
-     pcall(function() RaidFireDamage(_bossGuid, _atkPos) end)
-    end)
-   end
-   PingWait(0.08)
-  end
-
-  _unfreezePlayer()
-  _raidSuccess = true
-  RAID._raidDone = true
-  RaidStatusUpdate("[FLa] Boss Dead!", Color3.fromRGB(100,255,150))
-
+    RaidStatusUpdate("[FLa] Boss Dead!", Color3.fromRGB(100,255,150))
+   end -- if bossPos valid
+  else
+   -- Boss tidak ditemukan setelah 15s
+   -- [FIX v260] GetDescendants() DIHAPUS - diganti dengan pesan timeout saja.
+   -- GetDescendants() tanpa filter bisa menemukan enemy dari Siege/Anniversary
+   -- dan menyebabkan TP ke koordinat salah -> nyemplung jurang -> game crash.
+   _step4Cleanup()
+   RaidStatusUpdate("[FLa] Boss not found (15s) - Go Out...", Color3.fromRGB(255,150,50))
+   PingWait(2)
+  end -- if boss
  elseif RAID.running and not RAID._raidDone then
-  -- Auto Kill Boss OFF → tunggu event ChallengeRaidsSuccess max 5 menit
-  local _wt = 0
-  while RAID.running and not RAID._raidDone and _wt < 300 do
-   if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
-    RaidStatusUpdate("[||] Dungeon aktif - RAID pause...", Color3.fromRGB(255,140,0))
-    RAID._raidDone = true
-    break
-   end
-   PingWait(1); _wt = _wt + 1
+ -- Auto Kill Boss OFF - tunggu event ChallengeRaidsSuccess max 5 menit
+ local _wt = 0
+ while RAID.running and not RAID._raidDone and _wt < 300 do
+  -- [PRIORITY DUNGEON] Berhenti menunggu jika dungeon aktif
+  if (DUNGEON and DUNGEON.inMap) or (DUNGEON and DUNGEON.interrupt) then
+   RaidStatusUpdate("[||] Dungeon aktif - RAID berhenti, menunggu antrian...", Color3.fromRGB(255,140,0))
+   RAID._raidDone = true
+   break
   end
+  PingWait(1); _wt = _wt + 1
+ end
  end
 
- until true -- [FIX goto→repeat/break] cleanup label diganti dengan penutup repeat
- if connS then pcall(function() connS:Disconnect() end) end
- if connF then pcall(function() connF:Disconnect() end) end
+ -- [FIX v260] Cleanup terpusat (idempoten - aman meski sudah dipanggil dari dalam autoKillBoss path)
+ _step4Cleanup()
 
  if _raidSuccess then
  RAID.sukses = RAID.sukses + 1

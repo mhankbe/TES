@@ -8093,71 +8093,6 @@ RAID_SPAWN_POS = {
  [50119] = Vector3.new(0, 10.0, 0), -- Map 19 Dragon Ball City (update posisi jika perlu)
  [50120] = Vector3.new(0, 10.0, 0), -- Map 20 Dragon Ball Wasteland (update posisi jika perlu)
 }
-
--- ============================================================
--- [FIX] RAID_BOSS_MAP - Mapping deterministik mapId -> boss yang benar per map
--- Mencegah musuh nyasar dari map lain dijadikan target TP saat race condition server.
--- Keyword lowercase, dicocokkan via name:lower():find(keyword, 1, true)
--- ============================================================
-RAID_BOSS_MAP = {
- -- Keyword UNIK per map - tidak overlap ke map lain.
- -- Jika nil -> fallback ke _isBossFallback() (keyword list lama).
- -- Tujuan: HANYA menolak musuh dari map BERBEDA yang nyasar ke workspace.Enemys,
- -- bukan memperketat filter boss di map yang sedang aktif.
- [50101] = "goblin king",
- [50102] = "giant arachnid",
- [50103] = "igris",
- [50104] = "leader of the polar",
- [50105] = "arch lich",
- [50106] = "kargalgan",
- [50107] = "baran",
- [50108] = "beru",
- [50109] = nil,           -- "Monarch" terlalu generik, bisa overlap -> fallback
- [50110] = "monarch plague",
- [50111] = "frostborne",
- [50112] = "legia",
- [50113] = "silas",
- [50114] = "yogumunt",
- [50115] = "antares",
- [50116] = "ashborn",
- [50117] = "dominion",
- [50118] = "absolute",
- [50119] = "broly",
- [50120] = "goku",
-}
-
--- [FIX] IsCorrectBossForMap(name, mapId)
--- Validasi deterministik: apakah nama musuh cocok dengan boss yang BENAR untuk map ini?
--- - mapId dikenal di RAID_BOSS_MAP -> HARUS cocok keyword map itu, lainnya ditolak
--- - mapId tidak dikenal (Ascension Tower, dll) -> fallback ke IsBoss() lama
--- - mapId nil -> fallback ke IsBoss() lama (tidak blokir)
--- Keyword fallback untuk map yang tidak ada di RAID_BOSS_MAP (Ascension Tower, dll)
-local _BOSS_KEYS_FALLBACK = {
- "goblin king","giant arachnid","buryura","igris",
- "leader of the polar","arch lich","kargalgan","baran",
- "beru","grendal","monarch plague","frostborne","legia",
- "monarch beastly","beastly fangs","silas","unbreakable monarch",
- "yogumunt","monarch of transfiguration","transfiguration",
- "antares","ashborn","dominion","absolute","monarch","fragment","boss",
- "legendary super saiyan","broly",
- "goku[super4]","goku super4","goku super 4",
-}
-local function _isBossFallback(name)
- local n = name:lower()
- for _, k in ipairs(_BOSS_KEYS_FALLBACK) do if n:find(k,1,true) then return true end end
- return false
-end
-
-function IsCorrectBossForMap(name, mapId)
- -- mapId tidak diketahui -> fallback ke keyword lama, tidak blokir apapun
- if not mapId then return _isBossFallback(name) end
- local expected = RAID_BOSS_MAP[mapId]
- -- Map tidak ada di tabel (Ascension Tower, dll) -> fallback ke keyword lama
- if not expected then return _isBossFallback(name) end
- -- Map dikenal -> HARUS cocok keyword boss yang benar untuk map ini
- return name:lower():find(expected, 1, true) ~= nil
-end
-
 end -- chat listener + grade cache
 
 -- ============================================================
@@ -12311,16 +12246,11 @@ local function ResolveEntry()
    return false
   end
 
-  local _ascHintName  = (raidEntry and raidEntry.isAscension and raidEntry.bossName) or nil
-
+  local _ascHintName = (raidEntry and raidEntry.isAscension and raidEntry.bossName) or nil
   local function IsBossWithHint(name)
    local n = name:lower()
-   -- Ascension Tower: hint nama boss dari entry lebih spesifik, prioritaskan
    if _ascHintName and n:find(_ascHintName, 1, true) then return true end
-   -- [FIX] Ambil mapId fresh setiap kali dipanggil (bukan snapshot awal yang bisa stale)
-   -- IsCorrectBossForMap() fallback ke keyword lama jika mapId tidak ada di RAID_BOSS_MAP
-   local _mapNow = GetCurrentMapId()
-   return IsCorrectBossForMap(name, _mapNow)
+   return IsBoss(name)
   end
 
   -- Pakai boss dari early detection kalau sudah ada DAN nama valid
@@ -12461,19 +12391,7 @@ local function ResolveEntry()
     bossPos = GetSafeBossPos()
    end
 
-   -- [FIX] Re-validasi final sebelum TP: pastikan mapId masih valid RAID range.
-   -- Hanya cek range mapId - tidak cek nama boss lagi di sini karena keyword
-   -- bisa tidak cocok dengan nama objek aktual di workspace dan justru batalkan boss benar.
-   -- Filter nama boss sudah dilakukan di IsBossWithHint() saat scan.
-   if boss then
-    local _preTPMapId = GetCurrentMapId()
-    if not _isValidRaidMap(_preTPMapId) then
-     RaidStatusUpdate("[!] MapId tidak valid sebelum TP ("..tostring(_preTPMapId)..") - batalkan", Color3.fromRGB(255,80,80))
-     boss = nil
-    end
-   end
-
-   if RAID.running and not RAID._raidDone and boss and bossPos then
+   if RAID.running and not RAID._raidDone and bossPos then
     RaidStatusUpdate("[K] Boss: " .. boss.model.Name .. " - Attack!", Color3.fromRGB(255,80,80))
 
     local function _raidOffsetFromBoss(basePos)

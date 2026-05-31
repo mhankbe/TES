@@ -12074,13 +12074,37 @@ local function ResolveEntry()
   [50120] = { name = "Goku[Super4]",                 pos = Vector3.new(-145.2, 15.9,  260.1) }, -- Map 20
  }
 
- -- Ambil data boss dari tpMapId (serverMapId yang sudah di-set sebelumnya)
- -- Fallback: derive dari raidEntry.mapId + 100
+ -- [FIX] Tunggu RAID.serverMapId dikonfirmasi server (max 2s) sebelum derive _tpMapKey
+ -- Ini mencegah race condition dimana event EnterRaidsUpdateInfo belum tiba
+ -- saat kode _tpMapKey sudah dijalankan (terutama saat server lag)
+ do
+  local _sWait = 0
+  while RAID.serverMapId == nil and _sWait < 2 and RAID.running and not RAID._raidDone do
+   PingWait(0.1); _sWait = _sWait + 0.1
+  end
+ end
+
+ -- Derive _tpMapKey: prioritas serverMapId (akurat dari server)
+ -- Fallback 1: workspace MapId (aktual map yang player sedang di dalamnya)
+ -- Fallback 2: runeMapTarget jika rune aktif
+ -- Fallback 3: raidEntry.mapId + 100 (pick mode normal)
  local _tpMapKey = RAID.serverMapId
+ if not _tpMapKey then
+  -- Fallback 1: baca langsung dari workspace attribute
+  local _wsMap = nil
+  pcall(function()
+   _wsMap = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
+  end)
+  if _wsMap and _wsMap >= 50101 and _wsMap <= 50120 then
+   _tpMapKey = _wsMap
+  end
+ end
  if not _tpMapKey and raidEntry then
+  -- Fallback 2: rune map target (jika rune aktif, map tujuan sudah pasti runeMapTarget)
   if RAID.runeEnabled and RAID.runeMapTarget >= 1 and RAID.runeMapTarget <= 20 then
    _tpMapKey = 50100 + RAID.runeMapTarget
   else
+   -- Fallback 3: derive dari raidEntry (valid untuk easy/hard/byrank/bymap/manual/list)
    _tpMapKey = raidEntry.mapId + 100
   end
  end
@@ -12115,22 +12139,44 @@ local function ResolveEntry()
  local _bossRefPos   = _bossData and _bossData.pos or nil
 
  if _bossNameExact and _bossRefPos then
-  -- Scan workspace: cari model dengan nama exact + posisi valid (±5 studs dari referensi)
+  -- [FIX] Scan boss langsung dari workspace:GetDescendants() (bukan GetRaidEnemies)
+  -- Alasan: saat scan pertama player belum di-TP ke boss, sehingga filter jarak
+  -- di GetRaidEnemies bisa reject boss yang valid karena refPos = posisi player lama.
+  -- Kita sudah punya validasi posisi sendiri (±5 studs dari _bossRefPos) yang lebih akurat.
+  local function _scanBossInWorkspace()
+   local _found = nil
+   pcall(function()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+     if not obj:IsA("Model") then continue end
+     -- Exact match nama (case-insensitive, strip whitespace leading/trailing)
+     local _objName = obj.Name:lower():match("^%s*(.-)%s*$")
+     if _objName ~= _bossNameExact then continue end
+     local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid")
+           or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+     if not g then continue end
+     local hrp = obj:FindFirstChild("HumanoidRootPart")
+           or obj.PrimaryPart
+           or obj:FindFirstChild("Head")
+           or obj:FindFirstChild("UpperTorso")
+           or obj:FindFirstChild("Torso")
+           or obj:FindFirstChildWhichIsA("BasePart")
+     local hum = obj:FindFirstChildOfClass("Humanoid")
+     if not (hrp and hrp.Parent and hum and hum.Health > 0) then continue end
+     -- Validasi posisi: harus ±5 studs dari koordinat referensi
+     local _dist = (hrp.Position - _bossRefPos).Magnitude
+     if _dist > 5 then
+      RaidStatusUpdate("[~] Boss name match tapi pos jauh ("..math.floor(_dist).."u) - tunggu stabilisasi...", Color3.fromRGB(200,150,50))
+      continue
+     end
+     _found = {guid=g, hrp=hrp, model=obj}; break
+    end
+   end)
+   return _found
+  end
+
   local _scanWait = 0
   while not boss and _scanWait < 10 and RAID.running and not RAID._raidDone do
-   for _, e in ipairs(GetRaidEnemies()) do
-    if e.model.Name:lower() == _bossNameExact then
-     local _ep = e.hrp and e.hrp.Parent and e.hrp.Position
-     if _ep then
-      local _dist = (_ep - _bossRefPos).Magnitude
-      if _dist <= 5 then
-       boss = e; break -- lolos: nama exact + posisi dalam 5 studs
-      else
-       RaidStatusUpdate("[~] Boss name match tapi pos jauh ("..math.floor(_dist).."u) - tunggu stabilisasi...", Color3.fromRGB(200,150,50))
-      end
-     end
-    end
-   end
+   boss = _scanBossInWorkspace()
    if not boss then
     RaidStatusUpdate("[~] Scan boss: "..(_bossData.name).." ("..math.floor(_scanWait).."s/10s)", Color3.fromRGB(160,148,135))
     PingWait(0.3); _scanWait = _scanWait + 0.3
@@ -12358,19 +12404,23 @@ local function ResolveEntry()
  -- [BOSS DATA v35-FIX] Boss tidak ditemukan setelah 10s scan
  -- Last chance: scan penuh workspace dengan exact name + validasi posisi ±5 studs
  if _bossNameExact and _bossRefPos and RAID.running and not RAID._raidDone then
+  -- [FIX] Last chance: strip whitespace + toleransi posisi sama seperti scan utama
   local _lastChance = nil
   pcall(function()
    for _, obj in ipairs(workspace:GetDescendants()) do
-    if obj:IsA("Model") and obj.Name:lower() == _bossNameExact then
-     local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
-     local hrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart or obj:FindFirstChild("Head")
-     local hum = obj:FindFirstChildOfClass("Humanoid")
-     if g and hrp and hum and hum.Health > 0 then
-      local _dist = (hrp.Position - _bossRefPos).Magnitude
-      if _dist <= 5 then
-       _lastChance = {guid=g, hrp=hrp, model=obj}; break
-      end
-     end
+    if not obj:IsA("Model") then continue end
+    local _objName = obj.Name:lower():match("^%s*(.-)%s*$")
+    if _objName ~= _bossNameExact then continue end
+    local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid")
+          or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
+    local hrp = obj:FindFirstChild("HumanoidRootPart") or obj.PrimaryPart
+          or obj:FindFirstChild("Head") or obj:FindFirstChild("UpperTorso")
+          or obj:FindFirstChild("Torso") or obj:FindFirstChildWhichIsA("BasePart")
+    local hum = obj:FindFirstChildOfClass("Humanoid")
+    if not (g and hrp and hrp.Parent and hum and hum.Health > 0) then continue end
+    local _dist = (hrp.Position - _bossRefPos).Magnitude
+    if _dist <= 5 then
+     _lastChance = {guid=g, hrp=hrp, model=obj}; break
     end
    end
   end)

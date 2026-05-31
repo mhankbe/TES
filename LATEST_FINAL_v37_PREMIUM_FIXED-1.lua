@@ -8127,10 +8127,30 @@ RAID_BOSS_MAP = {
 -- - mapId dikenal di RAID_BOSS_MAP -> HARUS cocok keyword map itu, lainnya ditolak
 -- - mapId tidak dikenal (Ascension Tower, dll) -> fallback ke IsBoss() lama
 -- - mapId nil -> fallback ke IsBoss() lama (tidak blokir)
+-- Keyword fallback untuk map yang tidak ada di RAID_BOSS_MAP (Ascension Tower, dll)
+local _BOSS_KEYS_FALLBACK = {
+ "goblin king","giant arachnid","buryura","igris",
+ "leader of the polar","arch lich","kargalgan","baran",
+ "beru","grendal","monarch plague","frostborne","legia",
+ "monarch beastly","beastly fangs","silas","unbreakable monarch",
+ "yogumunt","monarch of transfiguration","transfiguration",
+ "antares","ashborn","dominion","absolute","monarch","fragment","boss",
+ "legendary super saiyan","broly",
+ "goku[super4]","goku super4","goku super 4",
+}
+local function _isBossFallback(name)
+ local n = name:lower()
+ for _, k in ipairs(_BOSS_KEYS_FALLBACK) do if n:find(k,1,true) then return true end end
+ return false
+end
+
 function IsCorrectBossForMap(name, mapId)
- if not mapId then return IsBoss and IsBoss(name) or false end
+ -- mapId tidak diketahui -> fallback ke keyword lama, tidak blokir apapun
+ if not mapId then return _isBossFallback(name) end
  local expected = RAID_BOSS_MAP[mapId]
- if not expected then return IsBoss and IsBoss(name) or false end
+ -- Map tidak ada di tabel (Ascension Tower, dll) -> fallback ke keyword lama
+ if not expected then return _isBossFallback(name) end
+ -- Map dikenal -> HARUS cocok keyword boss yang benar untuk map ini
  return name:lower():find(expected, 1, true) ~= nil
 end
 
@@ -12288,16 +12308,15 @@ local function ResolveEntry()
   end
 
   local _ascHintName  = (raidEntry and raidEntry.isAscension and raidEntry.bossName) or nil
-  -- [FIX] Ambil mapId aktual sekarang untuk validasi deterministik boss per map
-  local _currentMapId = GetCurrentMapId()
 
   local function IsBossWithHint(name)
    local n = name:lower()
    -- Ascension Tower: hint nama boss dari entry lebih spesifik, prioritaskan
    if _ascHintName and n:find(_ascHintName, 1, true) then return true end
-   -- [FIX] RAID normal: validasi deterministik -> harus boss yang benar untuk map ini
-   -- IsCorrectBossForMap() fallback ke IsBoss() jika mapId tidak ada di RAID_BOSS_MAP
-   return IsCorrectBossForMap(name, _currentMapId)
+   -- [FIX] Ambil mapId fresh setiap kali dipanggil (bukan snapshot awal yang bisa stale)
+   -- IsCorrectBossForMap() fallback ke keyword lama jika mapId tidak ada di RAID_BOSS_MAP
+   local _mapNow = GetCurrentMapId()
+   return IsCorrectBossForMap(name, _mapNow)
   end
 
   -- Pakai boss dari early detection kalau sudah ada DAN nama valid

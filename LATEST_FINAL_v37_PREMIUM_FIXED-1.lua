@@ -11956,11 +11956,13 @@ local function ResolveEntry()
   return nil
  end
  _tpMapId = _readMapId()
+ print("[DBG-BK] _tpMapId awal=", _tpMapId)
  while not _tpMapId and _mapsWait < 10 and RAID.running and not RAID._raidDone do
   RaidStatusUpdate("[..] Wait map load... (" .. math.floor(_mapsWait) .. "s)", Color3.fromRGB(160,148,135))
   PingWait(0.5); _mapsWait = _mapsWait + 0.5
   _tpMapId = _readMapId()
  end
+ print("[DBG-BK] _tpMapId final=", _tpMapId, "_mapsWait=", _mapsWait)
  local BOSS_HRP_POS = {
   [50101] = Vector3.new(2424.9,  7.5,  482.9),  -- Map 1  Goblin King
   [50102] = Vector3.new(-316.9,  9.0,  -24.1),  -- Map 2  Giant Arachnid Buryura
@@ -11984,12 +11986,15 @@ local function ResolveEntry()
   [50120] = Vector3.new(-145.2, 15.9,  260.1),  -- Map 20 Goku[Super4]
  }
 
+ print("[DBG-BK] autoKillBoss=", RAID.autoKillBoss, "_tpMapId=", _tpMapId, "_raidDone=", RAID._raidDone, "running=", RAID.running)
  if RAID.autoKillBoss then
   -- Resolve mapId yang sedang aktif
   local _bossStaticPos = _tpMapId and BOSS_HRP_POS[_tpMapId] or nil
+  print("[DBG-BK] _bossStaticPos=", _bossStaticPos)
 
   if not _bossStaticPos then
    RaidStatusUpdate("[!] Boss HRP data tidak ditemukan untuk mapId: " .. tostring(_tpMapId), Color3.fromRGB(255,80,80))
+   print("[DBG-BK] SKIP: _bossStaticPos nil")
   else
    -- Helper offset: player berdiri 3u samping dari titik boss agar tidak overlap physics
    local function _raidOffsetFromStatic(basePos)

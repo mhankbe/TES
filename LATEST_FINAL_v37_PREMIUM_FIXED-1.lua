@@ -17027,7 +17027,7 @@ do
     local scanBtn = Btn(jtpInner, Color3.fromRGB(25,65,45), UDim2.new(1,0,0,36))
     scanBtn.LayoutOrder = 2; Corner(scanBtn,10)
     Stroke(scanBtn, Color3.fromRGB(80,200,120), 1.5, 0.15)
-    local scanLbl = Label(scanBtn,"[SCAN]  SCAN  Player",13,
+    local scanLbl = Label(scanBtn,"[SCAN]Player",13,
         Color3.fromRGB(100,230,150), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
     scanLbl.Size = UDim2.new(1,0,1,0)
 
@@ -17056,7 +17056,7 @@ do
     local joinBtn = Btn(jtpInner, Color3.fromRGB(15,35,110), UDim2.new(1,0,0,40))
     joinBtn.LayoutOrder = 4; Corner(joinBtn,10)
     Stroke(joinBtn, Color3.fromRGB(55,105,255), 2, 0.05)
-    local joinLbl = Label(joinBtn,"[JOIN]  JOIN  ke Tower Map 2",15,
+    local joinLbl = Label(joinBtn,"[JOIN]to Tower Map 2",15,
         Color3.fromRGB(148,195,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
     joinLbl.Size = UDim2.new(1,0,1,0)
 
@@ -17135,7 +17135,7 @@ do
 
             JTP_players = found
             _jtpBusy = false
-            scanLbl.Text = "[SCAN]  SCAN  Player (Global Server)"
+            scanLbl.Text = "[SCAN]Player (Global Server)"
 
             if #found == 0 then
                 JTPStat("[!] Tidak ada player lain di server ini.", C.YEL)
@@ -17240,7 +17240,7 @@ do
             end)
 
             JTP_joining = false
-            joinLbl.Text = "[JOIN]  JOIN  ke Tower Map 2"
+            joinLbl.Text = "[JOIN]to Tower Map 2"
             joinLbl.TextColor3 = Color3.fromRGB(148,195,255)
 
             if ok then
@@ -17323,7 +17323,7 @@ do
         PaddingTop=UDim.new(0,6), PaddingBottom=UDim.new(0,6),
         PaddingLeft=UDim.new(0,10), PaddingRight=UDim.new(0,10)})
     local infoLbl = Label(infoCard,
-        "SCAN player di server -> pilih -> JOIN.\nmapId auto-sync dari RAID_LIVE (ASC/Normal).",
+        "WAJIB SCAN-> PILIH PLAYER -> PILIH MAP -> JOIN.\nSETELAH KELUAR WAJIB TEKAN SCAN ULANG.",
         10, C.TXT3, Enum.Font.Gotham)
     infoLbl.Size = UDim2.new(1,0,0,0); infoLbl.AutomaticSize = Enum.AutomaticSize.Y
     infoLbl.TextWrapped = true; infoLbl.LineHeight = 1.3
@@ -17344,7 +17344,7 @@ do
     local scanBtn = Btn(jtrInner, Color3.fromRGB(25,45,65), UDim2.new(1,0,0,36))
     scanBtn.LayoutOrder = 2; Corner(scanBtn, 10)
     Stroke(scanBtn, Color3.fromRGB(80,160,255), 1.5, 0.15)
-    local scanLbl = Label(scanBtn, "[SCAN]  SCAN  Player", 13,
+    local scanLbl = Label(scanBtn, "[SCAN]Player", 13,
         Color3.fromRGB(120,180,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
     scanLbl.Size = UDim2.new(1,0,1,0)
 
@@ -17371,7 +17371,7 @@ do
     local joinBtn = Btn(jtrInner, Color3.fromRGB(15,35,110), UDim2.new(1,0,0,40))
     joinBtn.LayoutOrder = 4; Corner(joinBtn, 10)
     Stroke(joinBtn, Color3.fromRGB(80,160,255), 2, 0.05)
-    local joinLbl = Label(joinBtn, "[JOIN]  JOIN  ke Raid Player", 15,
+    local joinLbl = Label(joinBtn, "[JOIN]to Raid Player", 15,
         Color3.fromRGB(148,195,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
     joinLbl.Size = UDim2.new(1,0,1,0)
 
@@ -17436,7 +17436,7 @@ do
             end
             JTR_players = found
             _jtrBusy = false
-            scanLbl.Text = "[SCAN]  SCAN  Player"
+            scanLbl.Text = "[SCAN]Player"
 
             if #found == 0 then
                 JTRStat("[!] Tidak ada player lain di server ini.", C.YEL)
@@ -17515,13 +17515,13 @@ do
     local function UpdateMapDisplay()
         if JTR_isAsc then
             JTR_mapId = 50302  -- ASC selalu mapId 50302
-            mapDisplayLbl.Text = "Tower "..JTR_mapNum.."  (mapId=50302)"
+            mapDisplayLbl.Text = "Tower "..JTR_mapNum
             mapDisplayLbl.TextColor3 = Color3.fromRGB(200,150,255)
             Stroke(mapDisplay, Color3.fromRGB(120,60,220), 1.5, 0.3)
             Stroke(mapSelOuter, Color3.fromRGB(120,60,220), 1.5, 0.3)
         else
             JTR_mapId = MAP_NORMAL_BASE + (JTR_mapNum - 1)
-            mapDisplayLbl.Text = "Map "..JTR_mapNum.."  (mapId="..JTR_mapId..")"
+            mapDisplayLbl.Text = "Map "..JTR_mapNum
             mapDisplayLbl.TextColor3 = Color3.fromRGB(100,190,255)
             Stroke(mapDisplay, Color3.fromRGB(60,100,180), 1.5, 0.3)
             Stroke(mapSelOuter, Color3.fromRGB(60,120,200), 1.5, 0.45)
@@ -17603,7 +17603,7 @@ do
             end)
 
             JTR_joining = false
-            joinLbl.Text = "[JOIN]  JOIN  ke Raid Player"
+            joinLbl.Text = "[JOIN]to Raid Player"
             joinLbl.TextColor3 = Color3.fromRGB(148,195,255)
 
             if ok then

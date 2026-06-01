@@ -17258,6 +17258,399 @@ do
     end -- if p
 end -- do JTP
 
+-- ============================================================
+-- PANEL : JOIN TO RAID PLAYER (UI)
+-- SCAN  = ambil semua player di server (Players:GetPlayers())
+-- RAID  = ambil dari RAID_LIVE yang sedang aktif
+-- JOIN  = CreateRaidTeam -> StartChallengeRaidMap -> StartLocalPlayerTeleport
+--         (slotIndex loop 1-50) -> EquipHeroWithData -> LocalPlayerTeleportSuccess
+-- ============================================================
+do
+    local p = Panels["autoraid"]
+    if p then
+
+    -- -- State --------------------------------------------------------------
+    local JTR_players  = {}    -- { {name, userId} } semua player di server
+    local JTR_raids    = {}    -- { {label, raidId, mapId, isAscension} } dari RAID_LIVE
+    local JTR_selPlr   = nil   -- index player yang dipilih
+    local JTR_selRaid  = nil   -- index raid yang dipilih
+    local JTR_joining  = false
+
+    -- -- Header collapsible ------------------------------------------------
+    local jtrOpen = false
+
+    local jtrHeader = Btn(p, Color3.fromRGB(16, 28, 48), UDim2.new(1,0,0,42))
+    jtrHeader.LayoutOrder = 28; Corner(jtrHeader, 10)
+    Stroke(jtrHeader, Color3.fromRGB(80, 160, 255), 1.5, 0.3)
+
+    local jtrArrow = Label(jtrHeader, ">", 13, Color3.fromRGB(80,160,255), Enum.Font.GothamBold)
+    jtrArrow.Size = UDim2.new(0,22,1,0); jtrArrow.Position = UDim2.new(0,10,0,0)
+
+    local jtrHeaderLbl = Label(jtrHeader, "JOIN TO RAID PLAYER", 14, C.TXT2, Enum.Font.GothamBold)
+    jtrHeaderLbl.Size = UDim2.new(1,-50,1,0); jtrHeaderLbl.Position = UDim2.new(0,34,0,0)
+
+    local jtrBody = Frame(p, C.BG2, UDim2.new(1,0,0,0))
+    jtrBody.LayoutOrder = 29; jtrBody.ClipsDescendants = true
+    Corner(jtrBody, 10); Stroke(jtrBody, Color3.fromRGB(80,160,255), 1.5, 0.25)
+    jtrBody.Visible = false
+
+    local jtrInner = Frame(jtrBody, C.BLACK, UDim2.new(1,-16,0,0))
+    jtrInner.BackgroundTransparency = 1; jtrInner.Position = UDim2.new(0,8,0,8)
+    local jtrLayout = New("UIListLayout", {
+        Parent = jtrInner, SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0,6)
+    })
+
+    -- -- Resize helper (sama seperti JTP) -----------------------------------
+    local function ResizeJTRBody()
+        task.spawn(function()
+            PingWait(0)
+            jtrLayout:ApplyLayout()
+            local h = jtrLayout.AbsoluteContentSize.Y + 16
+            jtrInner.Size = UDim2.new(1,0,0,h)
+            jtrBody.Size  = UDim2.new(1,0,0,h+16)
+        end)
+    end
+
+    -- -- Toggle slide up/down (sama seperti JTP) ----------------------------
+    jtrHeader.MouseButton1Click:Connect(function()
+        jtrOpen = not jtrOpen
+        jtrBody.Visible = jtrOpen
+        jtrArrow.Text = jtrOpen and "v" or ">"
+        if jtrOpen then task.defer(ResizeJTRBody) end
+    end)
+
+    -- -- Info card ----------------------------------------------------------
+    local infoCard = Frame(jtrInner, C.BG3, UDim2.new(1,0,0,0))
+    infoCard.LayoutOrder = 0; infoCard.AutomaticSize = Enum.AutomaticSize.Y; Corner(infoCard, 10)
+    New("UIPadding", {Parent=infoCard,
+        PaddingTop=UDim.new(0,6), PaddingBottom=UDim.new(0,6),
+        PaddingLeft=UDim.new(0,10), PaddingRight=UDim.new(0,10)})
+    local infoLbl = Label(infoCard,
+        "1) REFRESH untuk muat player & raid aktif.\n2) Pilih player yang sedang di Raid.\n3) Pilih Raid dari list RAID_LIVE.\n4) Tekan JOIN.",
+        10, C.TXT3, Enum.Font.Gotham)
+    infoLbl.Size = UDim2.new(1,0,0,0); infoLbl.AutomaticSize = Enum.AutomaticSize.Y
+    infoLbl.TextWrapped = true; infoLbl.LineHeight = 1.3
+
+    -- -- Status bar ---------------------------------------------------------
+    local jtrStatCard = Frame(jtrInner, C.SURFACE, UDim2.new(1,0,0,28))
+    jtrStatCard.LayoutOrder = 1; Corner(jtrStatCard, 10)
+    New("UIPadding", {Parent=jtrStatCard, PaddingLeft=UDim.new(0,10), PaddingRight=UDim.new(0,10)})
+    local jtrStatLbl = Label(jtrStatCard, "Tekan REFRESH untuk muat data.", 10, C.TXT3, Enum.Font.Gotham)
+    jtrStatLbl.Size = UDim2.new(1,0,1,0)
+    jtrStatLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local function JTRStat(msg, col)
+        pcall(function() jtrStatLbl.Text = msg; jtrStatLbl.TextColor3 = col or C.TXT3 end)
+    end
+
+    -- -- REFRESH button -----------------------------------------------------
+    local refreshBtn = Btn(jtrInner, Color3.fromRGB(30, 30, 55), UDim2.new(1,0,0,36))
+    refreshBtn.LayoutOrder = 2; Corner(refreshBtn, 10)
+    Stroke(refreshBtn, Color3.fromRGB(120,120,255), 1.5, 0.15)
+    local refreshLbl = Label(refreshBtn, "[↺]  REFRESH  Player & Raid", 13,
+        Color3.fromRGB(160,160,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    refreshLbl.Size = UDim2.new(1,0,1,0)
+
+    -- ── Section: Player List ─────────────────────────────────────────────
+    local plrSection = Frame(jtrInner, C.BG3, UDim2.new(1,0,0,0))
+    plrSection.LayoutOrder = 3; plrSection.AutomaticSize = Enum.AutomaticSize.Y
+    plrSection.Visible = false; Corner(plrSection, 10)
+    Stroke(plrSection, C.BORD, 1.5, 0.5)
+    New("UIPadding", {Parent=plrSection,
+        PaddingTop=UDim.new(0,4), PaddingBottom=UDim.new(0,4),
+        PaddingLeft=UDim.new(0,6), PaddingRight=UDim.new(0,6)})
+
+    local plrTitleLbl = Label(plrSection, "Pilih Player (hostId) :", 10, C.TXT3, Enum.Font.GothamBold)
+    plrTitleLbl.LayoutOrder = 0; plrTitleLbl.Size = UDim2.new(1,0,0,20)
+
+    local plrInner = Frame(plrSection, C.BLACK, UDim2.new(1,0,0,0))
+    plrInner.BackgroundTransparency = 1; plrInner.LayoutOrder = 1
+    plrInner.AutomaticSize = Enum.AutomaticSize.Y
+    New("UIListLayout", {Parent=plrInner, SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,4)})
+
+    local plrRows = {}
+
+    -- ── Section: Raid List ───────────────────────────────────────────────
+    local raidSection = Frame(jtrInner, C.BG3, UDim2.new(1,0,0,0))
+    raidSection.LayoutOrder = 4; raidSection.AutomaticSize = Enum.AutomaticSize.Y
+    raidSection.Visible = false; Corner(raidSection, 10)
+    Stroke(raidSection, C.BORD, 1.5, 0.5)
+    New("UIPadding", {Parent=raidSection,
+        PaddingTop=UDim.new(0,4), PaddingBottom=UDim.new(0,4),
+        PaddingLeft=UDim.new(0,6), PaddingRight=UDim.new(0,6)})
+
+    local raidTitleLbl = Label(raidSection, "Pilih Raid (dari RAID_LIVE) :", 10, C.TXT3, Enum.Font.GothamBold)
+    raidTitleLbl.LayoutOrder = 0; raidTitleLbl.Size = UDim2.new(1,0,0,20)
+
+    local raidInner = Frame(raidSection, C.BLACK, UDim2.new(1,0,0,0))
+    raidInner.BackgroundTransparency = 1; raidInner.LayoutOrder = 1
+    raidInner.AutomaticSize = Enum.AutomaticSize.Y
+    New("UIListLayout", {Parent=raidInner, SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,4)})
+
+    local raidRows = {}
+
+    -- -- Helper: clear rows ------------------------------------------------
+    local function ClearPlrRows()
+        for _, r in ipairs(plrRows) do pcall(function() r:Destroy() end) end
+        plrRows = {}; JTR_selPlr = nil
+    end
+    local function ClearRaidRows()
+        for _, r in ipairs(raidRows) do pcall(function() r:Destroy() end) end
+        raidRows = {}; JTR_selRaid = nil
+    end
+
+    -- -- Helper: render player list ----------------------------------------
+    local function RenderPlayers()
+        ClearPlrRows()
+        plrSection.Visible = (#JTR_players > 0)
+        for i, entry in ipairs(JTR_players) do
+            local ii = i
+            local row = Btn(plrInner, C.SURFACE, UDim2.new(1,0,0,34))
+            row.LayoutOrder = i; Corner(row, 8); Stroke(row, C.BORD, 1.5, 0.65)
+
+            local nLbl = Label(row, entry.name, 11, C.TXT2, Enum.Font.GothamBold)
+            nLbl.Size = UDim2.new(0.6,0,1,0); nLbl.Position = UDim2.new(0,10,0,0)
+            nLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+            local uLbl = Label(row, "UID: "..tostring(entry.userId), 9, C.TXT3, Enum.Font.Gotham, Enum.TextXAlignment.Right)
+            uLbl.Size = UDim2.new(0.4,-14,1,0); uLbl.Position = UDim2.new(0.6,0,0,0)
+            uLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+            local dot = Frame(row, Color3.fromRGB(80,180,255), UDim2.new(0,7,0,7))
+            dot.AnchorPoint = Vector2.new(0,0.5); dot.Position = UDim2.new(0,1,0.5,0)
+            Corner(dot,4); dot.Visible = false
+
+            row.MouseButton1Click:Connect(function()
+                JTR_selPlr = ii
+                for j, r2 in ipairs(plrRows) do
+                    local d2 = r2:FindFirstChildOfClass("Frame")
+                    if d2 then d2.Visible = (j == ii) end
+                    r2.BackgroundColor3 = (j == ii) and Color3.fromRGB(14,30,58) or C.SURFACE
+                end
+                JTRStat("[v] Player: "..entry.name.." (hostId="..entry.userId..")", Color3.fromRGB(100,200,255))
+            end)
+
+            table.insert(plrRows, row)
+        end
+        task.defer(ResizeJTRBody)
+    end
+
+    -- -- Helper: render raid list ------------------------------------------
+    local function RenderRaids()
+        ClearRaidRows()
+        raidSection.Visible = (#JTR_raids > 0)
+        for i, entry in ipairs(JTR_raids) do
+            local ii = i
+            local row = Btn(raidInner, C.SURFACE, UDim2.new(1,0,0,38))
+            row.LayoutOrder = i; Corner(row, 8); Stroke(row, C.BORD, 1.5, 0.65)
+
+            -- Badge ASC / RAID
+            local badgeColor = entry.isAscension
+                and Color3.fromRGB(180,100,255)
+                or  Color3.fromRGB(80,160,255)
+            local badgeTxt = entry.isAscension and "ASC" or "RAID"
+            local badge = Frame(row, badgeColor, UDim2.new(0,34,0,16))
+            badge.AnchorPoint = Vector2.new(0,0.5); badge.Position = UDim2.new(0,8,0.5,0)
+            Corner(badge,4)
+            local badgeLbl = Label(badge, badgeTxt, 8, Color3.fromRGB(255,255,255), Enum.Font.GothamBold)
+            badgeLbl.Size = UDim2.new(1,0,1,0); badgeLbl.TextXAlignment = Enum.TextXAlignment.Center
+
+            local rLbl = Label(row, entry.label, 10, C.TXT2, Enum.Font.Gotham)
+            rLbl.Size = UDim2.new(1,-56,1,0); rLbl.Position = UDim2.new(0,48,0,0)
+            rLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+            local dot = Frame(row, badgeColor, UDim2.new(0,7,0,7))
+            dot.AnchorPoint = Vector2.new(1,0.5); dot.Position = UDim2.new(1,-4,0.5,0)
+            Corner(dot,4); dot.Visible = false
+
+            row.MouseButton1Click:Connect(function()
+                JTR_selRaid = ii
+                for j, r2 in ipairs(raidRows) do
+                    -- dot adalah child terakhir Frame
+                    for _, ch in ipairs(r2:GetChildren()) do
+                        if ch:IsA("Frame") and ch.Size == UDim2.new(0,7,0,7) then
+                            ch.Visible = (j == ii)
+                        end
+                    end
+                    r2.BackgroundColor3 = (j == ii) and Color3.fromRGB(18,18,46) or C.SURFACE
+                end
+                JTRStat("[v] Raid: "..entry.label:sub(1,50), Color3.fromRGB(160,160,255))
+            end)
+
+            table.insert(raidRows, row)
+        end
+        task.defer(ResizeJTRBody)
+    end
+
+    -- -- REFRESH logic ------------------------------------------------------
+    local _jtrBusy = false
+    refreshBtn.MouseButton1Click:Connect(function()
+        if _jtrBusy then return end
+        _jtrBusy = true
+        refreshLbl.Text = "[...]  Refreshing..."
+        JTRStat("[~] Memuat player & raid aktif...", C.YEL)
+        plrSection.Visible  = false
+        raidSection.Visible = false
+        ClearPlrRows(); ClearRaidRows()
+
+        task.spawn(function()
+            -- 1. Ambil semua player di server
+            local foundPlr = {}
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LP then
+                    table.insert(foundPlr, {name = plr.Name, userId = plr.UserId})
+                end
+            end
+            JTR_players = foundPlr
+
+            -- 2. Ambil raid aktif dari RAID_LIVE
+            local foundRaid = {}
+            if RAID_ID_LIST and #RAID_ID_LIST > 0 then
+                for _, r in ipairs(RAID_ID_LIST) do
+                    table.insert(foundRaid, {
+                        label       = r.label,
+                        raidId      = r.id,
+                        mapId       = r.mapId,
+                        isAscension = r.isAscension,
+                    })
+                end
+            end
+            JTR_raids = foundRaid
+
+            _jtrBusy = false
+            refreshLbl.Text = "[↺]  REFRESH  Player & Raid"
+
+            local plrCount  = #foundPlr
+            local raidCount = #foundRaid
+
+            if plrCount == 0 and raidCount == 0 then
+                JTRStat("[!] Tidak ada player lain & tidak ada raid aktif.", C.YEL)
+            elseif plrCount == 0 then
+                JTRStat("[!] Tidak ada player lain di server ini.", C.YEL)
+            elseif raidCount == 0 then
+                JTRStat("[!] Tidak ada raid aktif di RAID_LIVE.", C.YEL)
+            else
+                JTRStat("[OK] "..plrCount.." player, "..raidCount.." raid ditemukan.", Color3.fromRGB(100,230,150))
+            end
+
+            RenderPlayers()
+            RenderRaids()
+        end)
+    end)
+
+    -- -- JOIN button --------------------------------------------------------
+    local joinBtn = Btn(jtrInner, Color3.fromRGB(15,35,110), UDim2.new(1,0,0,40))
+    joinBtn.LayoutOrder = 5; Corner(joinBtn, 10)
+    Stroke(joinBtn, Color3.fromRGB(80,160,255), 2, 0.05)
+    local joinLbl = Label(joinBtn, "[JOIN]  JOIN  ke Raid Player", 15,
+        Color3.fromRGB(148,195,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    joinLbl.Size = UDim2.new(1,0,1,0)
+
+    joinBtn.MouseButton1Click:Connect(function()
+        if JTR_joining then return end
+
+        if not JTR_selPlr then
+            JTRStat("[!] Belum pilih player!", C.YEL); return
+        end
+        if not JTR_selRaid then
+            JTRStat("[!] Belum pilih raid!", C.YEL); return
+        end
+
+        local plrEntry  = JTR_players[JTR_selPlr]
+        local raidEntry = JTR_raids[JTR_selRaid]
+        if not plrEntry or not raidEntry then
+            JTRStat("[!] Data tidak valid, coba REFRESH ulang.", C.YEL); return
+        end
+
+        JTR_joining = true
+        joinLbl.Text = "JOINING..."
+        joinLbl.TextColor3 = C.YEL
+        JTRStat("[JOIN] "..plrEntry.name.." -> "..raidEntry.label:sub(1,40).."...", C.YEL)
+
+        task.spawn(function()
+            local ok, err = pcall(function()
+                local hostId = plrEntry.userId
+                local raidId = raidEntry.raidId
+                local mapId  = raidEntry.mapId
+
+                -- Step 1: CreateRaidTeam
+                PingGuard()
+                RE.CreateRaidTeam:InvokeServer(raidId)
+                PingWait(0.4)
+
+                -- Step 2: StartChallengeRaidMap
+                RE.StartChallengeRaidMap:FireServer()
+                PingWait(0.35)
+
+                -- Step 3: StartLocalPlayerTeleport — loop slotIndex 1–50
+                local joined = false
+                for slot = 1, 50 do
+                    PingGuard()
+                    local tpOk = pcall(function()
+                        RE.StartTp:FireServer({
+                            slotIndex = slot,
+                            hostId    = hostId,
+                            mapId     = mapId,
+                            raidId    = raidId,
+                        })
+                    end)
+                    if tpOk then
+                        JTRStat("[~] Mencoba slotIndex "..slot.."...", C.YEL)
+                        PingWait(0.3)
+                        -- Deteksi sukses: cek MapId workspace berubah ke mapId target
+                        local curMap = pcall(function()
+                            return workspace:GetAttribute("MapId")
+                        end)
+                        local wMapId = workspace:GetAttribute("MapId")
+                        if wMapId and wMapId == mapId then
+                            joined = true
+                            JTRStat("[OK] Berhasil masuk di slotIndex "..slot.."!", Color3.fromRGB(100,230,150))
+                            break
+                        end
+                    end
+                    PingWait(0.1)
+                end
+
+                -- Step 4: EquipHeroWithData
+                PingWait(0.3)
+                pcall(function() RE.EquipHeroWithData:FireServer() end)
+                PingWait(0.3)
+
+                -- Step 5: LocalPlayerTeleportSuccess
+                local finalSlot = joined and 1 or 1
+                -- ambil slotIndex terakhir yang dipakai (pakai 1 sebagai fallback)
+                PingGuard()
+                pcall(function()
+                    RE.LocalTpSuccess:InvokeServer({
+                        slotIndex = finalSlot,
+                        mapId     = mapId,
+                    })
+                end)
+
+                if not joined then
+                    error("Semua slotIndex 1-50 gagal. Player mungkin tidak di raid ini.")
+                end
+            end)
+
+            JTR_joining = false
+            joinLbl.Text = "[JOIN]  JOIN  ke Raid Player"
+            joinLbl.TextColor3 = Color3.fromRGB(148,195,255)
+
+            if ok then
+                JTRStat("[OK] Berhasil join raid "..raidEntry.label:sub(1,40).."!", Color3.fromRGB(80,220,140))
+                pcall(function() SystemNotify("[OK] Joined Raid: "..plrEntry.name, 4) end)
+            else
+                JTRStat("[ERR] "..(tostring(err):sub(1,60)), Color3.fromRGB(220,80,80))
+                pcall(function() SystemNotify("[ERR] Join Raid gagal!", 3) end)
+            end
+        end)
+    end)
+
+    task.defer(ResizeJTRBody)
+
+    end -- if p
+end -- do JTR
+
 -- Pasang listener dungeon segera setelah GUI load (scan state walau toggle OFF)
 task.spawn(function()
  PingWait(6) -- buffer setelah ConnectUpdateCityRaidListener
@@ -17590,7 +17983,7 @@ do
 
     -- Header
     local annivHeader = Btn(p, Color3.fromRGB(26, 16, 0), UDim2.new(1,0,0,42))
-    annivHeader.LayoutOrder = 28
+    annivHeader.LayoutOrder = 30
     Corner(annivHeader, 10)
     Stroke(annivHeader, Color3.fromRGB(107, 58, 0), 1.5, 0.3)
 
@@ -17613,7 +18006,7 @@ do
 
     -- Body
     local annivBody = Frame(p, Color3.fromRGB(16, 12, 0), UDim2.new(1,0,0,0))
-    annivBody.LayoutOrder = 29
+    annivBody.LayoutOrder = 31
     annivBody.ClipsDescendants = true
     Corner(annivBody, 10)
     Stroke(annivBody, Color3.fromRGB(58, 32, 0), 1.5, 0.25)

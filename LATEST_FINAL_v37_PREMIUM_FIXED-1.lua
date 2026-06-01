@@ -1,105 +1,4 @@
 -- ASH Auto Farm - by FLa Project
--- ============================================================
--- FREE USER MODE CONFIG
--- ============================================================
-IS_FREE_USER = true  -- set false untuk Premium
-
--- Helper: tampilkan popup "Premium Only" di tengah layar
-local function ShowPremiumPopup()
- local pg = game:GetService("Players").LocalPlayer.PlayerGui
- local existing = pg:FindFirstChild("_FLaPremiumPopup")
- if existing then existing:Destroy() end
- local sg = Instance.new("ScreenGui")
- sg.Name = "_FLaPremiumPopup"
- sg.ResetOnSpawn = false
- sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
- sg.Parent = pg
- local overlay = Instance.new("Frame", sg)
- overlay.Size = UDim2.new(1,0,1,0)
- overlay.BackgroundColor3 = Color3.fromRGB(0,0,0)
- overlay.BackgroundTransparency = 0.5
- overlay.BorderSizePixel = 0
- overlay.ZIndex = 9998
- local box = Instance.new("Frame", overlay)
- box.Size = UDim2.new(0,300,0,140)
- box.AnchorPoint = Vector2.new(0.5,0.5)
- box.Position = UDim2.new(0.5,0,0.5,0)
- box.BackgroundColor3 = Color3.fromRGB(20,20,28)
- box.BorderSizePixel = 0
- box.ZIndex = 9999
- Instance.new("UICorner",box).CornerRadius = UDim.new(0,14)
- local stroke = Instance.new("UIStroke",box)
- stroke.Color = Color3.fromRGB(255,180,0)
- stroke.Thickness = 2
- stroke.Transparency = 0.15
- local ico = Instance.new("TextLabel",box)
- ico.Size = UDim2.new(1,0,0,36)
- ico.Position = UDim2.new(0,0,0,12)
- ico.BackgroundTransparency = 1
- ico.Text = "🔒 Premium Service"
- ico.TextColor3 = Color3.fromRGB(255,200,60)
- ico.TextSize = 16
- ico.Font = Enum.Font.GothamBold
- ico.ZIndex = 9999
- local msg = Instance.new("TextLabel",box)
- msg.Size = UDim2.new(1,-20,0,44)
- msg.Position = UDim2.new(0,10,0,50)
- msg.BackgroundTransparency = 1
- msg.Text = "This feature is exclusive to Premium!\nContact admin for access."
- msg.TextColor3 = Color3.fromRGB(200,200,210)
- msg.TextSize = 12
- msg.Font = Enum.Font.Gotham
- msg.TextWrapped = true
- msg.ZIndex = 9999
- local closeBtn = Instance.new("TextButton",box)
- closeBtn.Size = UDim2.new(0,100,0,28)
- closeBtn.AnchorPoint = Vector2.new(0.5,0)
- closeBtn.Position = UDim2.new(0.5,0,0,100)
- closeBtn.BackgroundColor3 = Color3.fromRGB(255,180,0)
- closeBtn.BorderSizePixel = 0
- closeBtn.Text = "OK"
- closeBtn.TextColor3 = Color3.fromRGB(10,10,10)
- closeBtn.TextSize = 13
- closeBtn.Font = Enum.Font.GothamBold
- closeBtn.ZIndex = 9999
- Instance.new("UICorner",closeBtn).CornerRadius = UDim.new(0,8)
- closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
- overlay.MouseButton1Click:Connect(function() sg:Destroy() end)
- task.delay(4, function() if sg and sg.Parent then sg:Destroy() end end)
-end
-
--- Helper: buat banner lock Premium pada sebuah accordion section
--- headerBtn  = tombol header accordion (Btn)
--- bodyFrame  = frame body yg berisi konten asli
--- layoutOrder = LayoutOrder untuk banner pengganti
--- parentFrame = parent dari banner (biasanya Panels["autoraid"])
-local function LockAccordionSection(headerBtn, bodyFrame, parentFrame, lockLabel)
- -- Disable header, ubah tampilan
- headerBtn.AutoButtonColor = false
- -- Hapus semua koneksi lama dengan cara replace
- local oldClick = headerBtn.MouseButton1Click
- -- Pasang koneksi baru -> hanya tampilkan popup
- headerBtn.MouseButton1Click:Connect(function()
-  ShowPremiumPopup()
- end)
- -- Sembunyikan body agar tidak bisa dibuka
- bodyFrame.Visible = false
-
- -- Tambah label 🔒 di sisi kanan header
- local lockLbl = Instance.new("TextLabel", headerBtn)
- lockLbl.Size = UDim2.new(0,130,0,20)
- lockLbl.AnchorPoint = Vector2.new(1,0.5)
- lockLbl.Position = UDim2.new(1,-8,0.5,0)
- lockLbl.BackgroundColor3 = Color3.fromRGB(40,28,0)
- lockLbl.BorderSizePixel = 0
- lockLbl.Text = "🔒 Premium Service"
- lockLbl.TextColor3 = Color3.fromRGB(255,185,0)
- lockLbl.TextSize = 10
- lockLbl.Font = Enum.Font.GothamBold
- lockLbl.ZIndex = 10
- Instance.new("UICorner",lockLbl).CornerRadius = UDim.new(0,6)
-end
-
 do
  local _RS2 = game:GetService("ReplicatedStorage")
  local _LP2 = game:GetService("Players").LocalPlayer
@@ -1111,17 +1010,7 @@ for i, item in ipairs(NAV_ITEMS) do
  icoL.Size = UDim2.new(0,0,0,0)
  icoL.BackgroundTransparency = 1
 NavRefs[i] = {tag=item.tag, bg=bg, bar=bar, ico=icoL, lbl=lblL}
- -- FREE USER: lock Reroll & Config tab
- local _isLockedTab = IS_FREE_USER and (item.tag == "autoroll" or item.tag == "config")
- if _isLockedTab then
-  lblL.Text = "🔒 "..item.lbl
-  lblL.TextColor3 = Color3.fromRGB(140,120,60)
-  bg.BackgroundColor3 = Color3.fromRGB(30,22,5)
-  bg.BackgroundTransparency = 0.6
-  bg.MouseButton1Click:Connect(function() ShowPremiumPopup() end)
- else
-  bg.MouseButton1Click:Connect(function() SwitchTab(item.tag) end)
- end
+ bg.MouseButton1Click:Connect(function() SwitchTab(item.tag) end)
 end
 
 -- ============================================================
@@ -10465,12 +10354,8 @@ function StartAscensionLoop()
     if ASC.autoKillBoss then
      -- BOSS_KEYS untuk Ascension Tower (semua boss AT + boss normal)
      local BOSS_KEYS_ASC = {
-      "goblin king","giant arachnid buryura","igris",
-      "the leader of the polar bears","arch lich","kargalgan","baran",
-      "beru","giant monarch","monarch of plague","frostborne","legia",
-      "silas","yogumunt",
-      "antares","ashborn","dominion","absolute",
-      "broly","goku[super4]",
+      "baran","grendal","plague","frostborne","legia",
+      "silas","yogumunt","antares","ashborn",
      }
      local function IsBossAsc(name)
       local n = name:lower()
@@ -10498,7 +10383,7 @@ function StartAscensionLoop()
        if #_eList == 0 then _eList = GetEnemiesLocal() end
        for _, e in ipairs(_eList) do
         if IsBossAscWithHint(e.model.Name) then
-         -- [FIX] Validasi jarak - cegah boss dari map lain
+         -- [FIX] Validasi jarak 500 studs - cegah boss dari map lain
          local _hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
          if _hrp and _pp and _pp.Magnitude > 1 then
           if (_hrp.Position - _pp).Magnitude <= 500 then _earlyBoss = e; break end
@@ -10519,7 +10404,7 @@ function StartAscensionLoop()
              local hrp = obj:FindFirstChild("HumanoidRootPart")
              local hum = obj:FindFirstChildOfClass("Humanoid")
              if g and hrp and hum and hum.Health > 0 then
-              -- [FIX] Validasi jarak - cegah boss dari map lain
+              -- [FIX] Validasi jarak 500 studs - cegah boss dari map lain
               if _pp and _pp.Magnitude > 1 then
                if (hrp.Position - _pp).Magnitude <= 500 then
                 _earlyBoss = {guid=g, hrp=hrp, model=obj}; break
@@ -10555,7 +10440,7 @@ function StartAscensionLoop()
        local hrp = obj:FindFirstChild("HumanoidRootPart")
        local hum = obj:FindFirstChildOfClass("Humanoid")
        if g and hrp and hum and hum.Health > 0 then
-        -- [BUG FIX] Validasi jarak ke posisi player sebelum set sebagai boss target.
+        -- [BUG FIX] Validasi jarak 500 studs ke posisi player sebelum set sebagai boss target.
         local _pp = GetPlayerPos()
         if _pp and _pp.Magnitude > 1 then
          if (hrp.Position - _pp).Magnitude > 500 then return end
@@ -10596,7 +10481,7 @@ function StartAscensionLoop()
       if #_bList == 0 then _bList = GetEnemiesLocal() end
       for _, e in ipairs(_bList) do
        if IsBossAscWithHint(e.model.Name) then
-        -- [FIX] Validasi jarak - cegah boss dari map lain
+        -- [FIX] Validasi jarak 500 studs - cegah boss dari map lain
         local _hrp = e.model and e.model:FindFirstChild("HumanoidRootPart")
         if _hrp and _pp and _pp.Magnitude > 1 then
          if (_hrp.Position - _pp).Magnitude <= 500 then boss = e; break end
@@ -10614,7 +10499,7 @@ function StartAscensionLoop()
           local hrp = obj:FindFirstChild("HumanoidRootPart")
           local hum = obj:FindFirstChildOfClass("Humanoid")
           if g and hrp and hum and hum.Health > 0 then
-           -- [FIX] Validasi jarak - cegah boss dari map lain
+           -- [FIX] Validasi jarak 500 studs - cegah boss dari map lain
            if _pp and _pp.Magnitude > 1 then
             if (hrp.Position - _pp).Magnitude <= 500 then
              boss = {guid=g, hrp=hrp, model=obj}; break
@@ -13109,25 +12994,19 @@ do
  ll.Padding=UDim.new(0,2); ll.SortOrder=Enum.SortOrder.LayoutOrder
  Instance.new("UIPadding",popup).PaddingTop=UDim.new(0,4)
  for i,opt in ipairs(PM_OPTS) do
- -- FREE USER: lock By Rank (2), By Map (3), Manual (6)
- local _pmLocked = IS_FREE_USER and (i==2 or i==3 or i==6)
  local item=Instance.new("TextButton",popup)
  item.Size=UDim2.new(1,-8,0,IH); item.LayoutOrder=i
- item.BackgroundColor3= _pmLocked and Color3.fromRGB(30,22,5) or (i==curPM and C.SURFACE or C.BG3)
- item.BackgroundTransparency= _pmLocked and 0.3 or (i==curPM and 0.18 or 0.42)
+ item.BackgroundColor3=i==curPM and C.SURFACE or C.BG3
+ item.BackgroundTransparency=i==curPM and 0.18 or 0.42
  item.BorderSizePixel=0; item.Text=""; item.AutoButtonColor=false; item.ZIndex=9999
  Instance.new("UICorner",item).CornerRadius=UDim.new(0,6)
  local iL=Instance.new("TextLabel",item)
  iL.Size=UDim2.new(1,-8,1,0); iL.Position=UDim2.new(0,8,0,0)
- iL.BackgroundTransparency=1
- iL.Text= _pmLocked and ("🔒 "..opt) or opt
- iL.TextSize=12
- iL.Font=Enum.Font.Gotham
- iL.TextColor3= _pmLocked and Color3.fromRGB(140,110,40) or PM_COLORS[i]
+ iL.BackgroundTransparency=1; iL.Text=opt; iL.TextSize=12
+ iL.Font=Enum.Font.Gotham; iL.TextColor3=PM_COLORS[i]
  iL.TextXAlignment=Enum.TextXAlignment.Left; iL.ZIndex=9999
  local ii=i
  item.MouseButton1Click:Connect(function()
- if _pmLocked then CloseActiveDD(); ShowPremiumPopup(); return end
  CloseActiveDD()
  curPM=ii; RAID.pickMode=PM_KEYS[ii]
  RAID.difficulty=PM_TO_DIFF[PM_KEYS[ii]]; RAID.snapshotMapId=nil
@@ -13858,7 +13737,6 @@ do
   Corner(listKnob, 9)
 
   listPill.MouseButton1Click:Connect(function()
-   if IS_FREE_USER then ShowPremiumPopup(); return end
    RAID.listEnabled = not RAID.listEnabled
    local on = RAID.listEnabled
    TweenService:Create(listPill, TweenInfo.new(0.18, Enum.EasingStyle.Quad), {BackgroundColor3 = on and C.PILL_ON or C.PILL_OFF}):Play()
@@ -13879,21 +13757,11 @@ do
   end
 
   -- Tombol Save Entry
-  local saveBtn = Btn(listCtrlRow, IS_FREE_USER and Color3.fromRGB(40,30,10) or C.ACC, UDim2.new(1,-136,1,-4))
+  local saveBtn = Btn(listCtrlRow, C.ACC, UDim2.new(1,-136,1,-4))
   saveBtn.Position = UDim2.new(0,132,0,2)
-  Corner(saveBtn, 7); Stroke(saveBtn, IS_FREE_USER and Color3.fromRGB(120,90,20) or C.ACC2, 1, 0.3)
-  local saveLbl = Label(saveBtn, IS_FREE_USER and "🔒 Premium Service" or "+ Save Entry", 11,
-   IS_FREE_USER and Color3.fromRGB(140,110,40) or Color3.fromRGB(255,255,255),
-   Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+  Corner(saveBtn, 7); Stroke(saveBtn, C.ACC2, 1, 0.3)
+  local saveLbl = Label(saveBtn, "+ Save Entry", 11, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
   saveLbl.Size = UDim2.new(1,0,1,0)
-
-  -- FREE USER: override saveBtn click
-  if IS_FREE_USER then
-   listTogLbl.TextColor3 = Color3.fromRGB(140,110,40)
-   listPill.BackgroundColor3 = Color3.fromRGB(40,30,10)
-   listKnob.BackgroundColor3 = Color3.fromRGB(90,70,20)
-   saveBtn.MouseButton1Click:Connect(function() ShowPremiumPopup() end)
-  end
 
   -- Container untuk list rows (ScrollingFrame)
   local listContainer = Instance.new("ScrollingFrame")
@@ -14071,11 +13939,6 @@ do
    ascBody.Size = UDim2.new(1,0,0,h+16)
   end)
  end
-
- -- FREE USER LOCK
- if IS_FREE_USER then
-  LockAccordionSection(ascHeader, ascBody, p, "Auto RAID Ascension")
- else
 
  ascHeader.MouseButton1Click:Connect(function()
   ascOpen = not ascOpen; ascBody.Visible = ascOpen
@@ -14710,7 +14573,6 @@ do
 
  ApplyAscPickModeLock()
  task.defer(ResizeAscBody)
- end -- end IS_FREE_USER else
 end -- end Auto Ascension do block
 
 
@@ -15401,11 +15263,6 @@ do
         if siegeOpen then task.defer(ResizeSiegeBody) end
     end)
 
-    -- FREE USER LOCK
-    if IS_FREE_USER then
-        LockAccordionSection(siegeHeader, siegeBody, p, "Auto Siege")
-    else
-
     local p = siegeInner
 
     -- Status bar
@@ -15541,7 +15398,6 @@ do
     end)
 
     task.defer(ResizeSiegeBody)
-    end -- end IS_FREE_USER else
 end
 
 
@@ -16171,11 +16027,6 @@ do
  if dungeonOpen then task.defer(ResizeDungeonBody) end
  end)
 
- -- FREE USER LOCK
- if IS_FREE_USER then
-  LockAccordionSection(dungeonHeader, dungeonBody, p, "Auto Dungeon")
- else
-
  local p2 = dungeonInner -- alias
 
  -- Status bar
@@ -16234,8 +16085,10 @@ do
  end)
 
  task.defer(ResizeDungeonBody)
- end -- end IS_FREE_USER else
 end
+
+-- ============================================================
+-- AUTO SINGLE TOWER MAP 2 (MapId 50301)
 -- Remote: StartLocalPlayerTeleport:FireServer({mapId=50301})
 -- Keluar : StartLocalPlayerTeleport:FireServer({mapId=50002})
 -- Logic: masuk map -> Mass Attack max 10 menit -> keluar -> delay 2s -> ulang
@@ -16706,11 +16559,6 @@ do
         if st2Open then task.defer(ResizeST2Body) end
     end)
 
-    -- FREE USER LOCK
-    if IS_FREE_USER then
-        LockAccordionSection(st2Header, st2Body, p, "Auto Single Tower Map 2")
-    else
-
     local inner = st2Inner
 
     -- Status bar
@@ -16865,8 +16713,12 @@ do
     end)
 
     task.defer(ResizeST2Body)
-    end -- end IS_FREE_USER else
+
 end
+
+
+-- ============================================================
+-- PANEL : JOIN TO TOWER PLAYER (UI) - mapId 50301
 -- SCAN = ambil semua player dari Players service (global workspace)
 -- JOIN = LocalPlayerTeleport:FireServer({mapId=50301, hostId=UserId})
 -- Tidak ada cara mengetahui siapa yg ada di Tower Map 2 dari client,
@@ -16922,11 +16774,6 @@ do
         jtpArrow.Text = jtpOpen and "v" or ">"
         if jtpOpen then task.defer(ResizeJTPBody) end
     end)
-
-    -- FREE USER LOCK
-    if IS_FREE_USER then
-        LockAccordionSection(jtpHeader, jtpBody, p, "Join To Tower Map 2")
-    else
 
     -- -- Info card --------------------------------------------------------?
     local infoCard = Frame(jtpInner, C.BG3, UDim2.new(1,0,0,0))
@@ -17184,7 +17031,6 @@ do
 
     task.defer(ResizeJTPBody)
 
-    end -- end IS_FREE_USER else
     end -- if p
 end -- do JTP
 
@@ -17571,11 +17417,6 @@ do
         annivArrow.Text = annivOpen and "v" or ">"
         if annivOpen then task.defer(ResizeAnnivBody) end
     end)
-
-    -- FREE USER LOCK
-    if IS_FREE_USER then
-        LockAccordionSection(annivHeader, annivBody, p, "Anniversary Celebration")
-    else
 
     local inner = annivInner
 
@@ -18051,8 +17892,10 @@ do
     end)
 
     task.defer(ResizeAnnivBody)
-    end -- end IS_FREE_USER else
 end
+
+-- ============================================================
+-- WEBHOOK SENDER
 -- ============================================================
 -- ============================================================
 -- PANEL : SETTINGS

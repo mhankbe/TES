@@ -1310,6 +1310,9 @@ ASC = {
  _rrIdx            = 0,      -- [v48] Round-robin index untuk Pick Mode Default
  autoKillBoss = false, -- AUTO BOSS KILL toggle
  bossDelay    = 3,     -- delay sebelum TP ke boss (1-10s)
+ listEnabled      = false, -- toggle aktif/nonaktif fitur List Entry ASC
+ listEntries      = {},    -- { {maps={[mn]=true,...}, ranks={[grade]=true,...}} , ... }
+ _listVisitedMaps = {},    -- [mapNum] = true, sudah dikunjungi di siklus ini
  statusLbl = nil,
  dot       = nil,
  suksesLbl = nil,
@@ -1472,6 +1475,9 @@ _ascBossToggleVis      = nil  -- sync visual pill ASC Auto Kill Boss
 _ascBossDelaySet       = nil  -- set ASC boss delay slider + visual
 -- Raid List Entry rebuild
 _raidRebuildListRows   = nil  -- rebuild UI rows dari RAID.listEntries
+-- ASC List Entry rebuild + toggle visual
+_ascRebuildListRows    = nil  -- rebuild UI rows dari ASC.listEntries
+_setAscListEnabledVis  = nil  -- sync visual pill ASC List Entry toggle
 -- HR/WR slot refresh fns (set during panel build)
 -- accessed via _HR_RPT.slotRefreshFns and _WR_RPT.slotRefreshFns
 
@@ -9719,9 +9725,71 @@ function StartAscensionLoop()
  -- MapId masuk ke tower tetap 503xx — tidak diubah di sini
  -- ============================================================
  -- Return: entry (match), nil+"no_tower" (tidak ada tower), nil+"no_match" (ada tower tapi filter tidak cocok)
+ -- ============================================================
+ -- LIST ENTRY ASC: cari tower yang match list, fallback ke Pick Mode
+ -- ============================================================
+ local function ResolveAscEntryFromList()
+  if not ASC.listEnabled then return nil end
+  if #ASC.listEntries == 0 then return nil end
+  local ascList = GetAscensionList()
+  if #ascList == 0 then return nil end
+
+  -- Grade helper
+  local function _getGradeL(r)
+   local g = GetBestGrade(r.mapNum, true)
+   if not g or g == "?" then g = r.grade end
+   return (g and g ~= "?") and g or nil
+  end
+
+  -- Kumpulkan semua tower yang match dari semua entry
+  local function collectAllMatched(skipVisited)
+   local allMatched = {}
+   local seen = {}
+   for i = 1, #ASC.listEntries do
+    local ent = ASC.listEntries[i]
+    local hasMaps  = next(ent.maps)  ~= nil
+    local hasRanks = next(ent.ranks) ~= nil
+    for _, r in ipairs(ascList) do
+     if seen[r.mapNum] then continue end
+     if skipVisited and ASC._listVisitedMaps[r.mapNum] then continue end
+     local mapsOk = (not hasMaps) or ent.maps[r.mapNum]
+     if not mapsOk then continue end
+     if hasRanks then
+      local grade = _getGradeL(r)
+      if grade and ent.ranks[grade] then
+       table.insert(allMatched, r); seen[r.mapNum] = true
+      end
+     else
+      table.insert(allMatched, r); seen[r.mapNum] = true
+     end
+    end
+   end
+   return allMatched
+  end
+
+  -- Tahap 1: cari yang belum dikunjungi
+  local allMatched = collectAllMatched(true)
+  -- Tahap 2: kalau semua sudah dikunjungi -> reset visited dan loop ulang
+  if #allMatched == 0 then
+   for k in pairs(ASC._listVisitedMaps) do ASC._listVisitedMaps[k] = nil end
+   allMatched = collectAllMatched(true)
+  end
+  if #allMatched == 0 then return nil end
+  -- Pilih mapNum terkecil dari semua yang match
+  table.sort(allMatched, function(a, b) return a.mapNum < b.mapNum end)
+  return allMatched[1]
+ end
+
  local function ResolveAscEntry()
   local ascList = GetAscensionList()
   if #ascList == 0 then return nil, "no_tower" end
+
+  -- [LIST ENTRY ASC] Cek List Entry dulu sebelum logika Pick Mode
+  if ASC.listEnabled and #ASC.listEntries > 0 then
+   local listResult = ResolveAscEntryFromList()
+   if listResult then return listResult end
+   -- Tidak ada match -> fallback ke Pick Mode normal (lanjut ke bawah)
+  end
 
   -- Prune expired entries (sama seperti RAID)
   local _now0 = os.time()
@@ -10068,6 +10136,10 @@ function StartAscensionLoop()
     end
 
     local mn = raidEntry.mapNum
+    -- [LIST ENTRY ASC] Tandai tower ini sudah dikunjungi di siklus ini
+    if ASC.listEnabled and #ASC.listEntries > 0 then
+     ASC._listVisitedMaps[mn] = true
+    end
     local bossHint = raidEntry.bossName and (" - "..raidEntry.bossName) or ""
     AscStatusUpdate("Masuk: Tower "..mn..bossHint.." ["..raidEntry.grade.."]", Color3.fromRGB(100,200,255))
 
@@ -14408,7 +14480,159 @@ do
  end)
 
  -- ============================================================
- -- ROW 12-13: PICK MODE (sama persis dengan AUTO RAID)
+ -- ROW 11b: LIST ENTRY ASC
+ -- ============================================================
+ do
+  -- Header label
+  local ascListHdr = Label(ascInner,"LIST ENTRY",10,C.TXT3,Enum.Font.GothamBold)
+  ascListHdr.LayoutOrder = 12; ascListHdr.Size = UDim2.new(1,0,0,14)
+
+  -- Control card: toggle + save button
+  local ascListCtrlCard = Frame(ascInner, C.SURFACE, UDim2.new(1,0,0,40))
+  ascListCtrlCard.LayoutOrder = 13; Corner(ascListCtrlCard,10); Stroke(ascListCtrlCard,C.BORD,1.5,0.3); Padding(ascListCtrlCard,6,6,10,10)
+  local ascListCtrlRow = Frame(ascListCtrlCard, C.BLACK, UDim2.new(1,0,1,0))
+  ascListCtrlRow.BackgroundTransparency = 1
+
+  local ascListTogLbl = Label(ascListCtrlRow,"List Entry",12,C.TXT,Enum.Font.GothamBold)
+  ascListTogLbl.Size = UDim2.new(0,70,1,0)
+
+  local ascListPill = Btn(ascListCtrlRow, ASC.listEnabled and C.PILL_ON or C.PILL_OFF, UDim2.new(0,48,0,26))
+  ascListPill.Position = UDim2.new(0,76,0.5,-13); Corner(ascListPill,12)
+  local ascListKnob = Frame(ascListPill, ASC.listEnabled and C.KNOB_ON or C.KNOB_OFF, UDim2.new(0,20,0,20))
+  ascListKnob.AnchorPoint = Vector2.new(0,0.5)
+  ascListKnob.Position = ASC.listEnabled and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0)
+  Corner(ascListKnob,10)
+
+  ascListPill.MouseButton1Click:Connect(function()
+   ASC.listEnabled = not ASC.listEnabled
+   local on = ASC.listEnabled
+   TweenService:Create(ascListPill,TweenInfo.new(0.18,Enum.EasingStyle.Quad),{BackgroundColor3=on and C.PILL_ON or C.PILL_OFF}):Play()
+   TweenService:Create(ascListKnob,TweenInfo.new(0.16),{
+    Position=on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+    BackgroundColor3=on and C.KNOB_ON or C.KNOB_OFF,
+   }):Play()
+   if _ascWakeup then pcall(function() _ascWakeup:Fire() end) end
+  end)
+
+  -- Expose visual setter ke global untuk ApplyConfig
+  _setAscListEnabledVis = function(on)
+   ASC.listEnabled = on
+   TweenService:Create(ascListPill,TweenInfo.new(0.18,Enum.EasingStyle.Quad),{BackgroundColor3=on and C.PILL_ON or C.PILL_OFF}):Play()
+   TweenService:Create(ascListKnob,TweenInfo.new(0.16),{
+    Position=on and UDim2.new(1,-23,0.5,0) or UDim2.new(0,3,0.5,0),
+    BackgroundColor3=on and C.KNOB_ON or C.KNOB_OFF,
+   }):Play()
+  end
+
+  -- Tombol Save Entry
+  local ascSaveBtn = Btn(ascListCtrlRow, C.ACC, UDim2.new(1,-136,1,-4))
+  ascSaveBtn.Position = UDim2.new(0,132,0,2)
+  Corner(ascSaveBtn,7); Stroke(ascSaveBtn,C.ACC2,1,0.3)
+  local ascSaveLbl = Label(ascSaveBtn,"+ Save Entry",11,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+  ascSaveLbl.Size = UDim2.new(1,0,1,0)
+
+  -- Scroll container untuk daftar entry
+  local ascListScroll = Instance.new("ScrollingFrame", ascInner)
+  ascListScroll.LayoutOrder = 14
+  ascListScroll.Size = UDim2.new(1,0,0,0)
+  ascListScroll.BackgroundTransparency = 1
+  ascListScroll.BorderSizePixel = 0
+  ascListScroll.ScrollBarThickness = 3
+  ascListScroll.ScrollBarImageColor3 = C.ACC
+  ascListScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+  ascListScroll.CanvasSize = UDim2.new(0,0,0,0)
+  local ascListLayout = New("UIListLayout",{Parent=ascListScroll,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
+  ascListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+  -- Rebuild rows dari ASC.listEntries
+  local function AscBuildEntryRow(entIdx)
+   local ent = ASC.listEntries[entIdx]
+   if not ent then return end
+
+   local rowH = 32
+   local row = Frame(ascListScroll, C.BG3, UDim2.new(1,0,0,rowH))
+   row.LayoutOrder = entIdx; Corner(row,8); Stroke(row,C.BORD,1,0.4)
+
+   -- Label: maps
+   local mapsStr = ""
+   local mList = {}
+   for mn=1,26 do if ent.maps[mn] then table.insert(mList,"T"..mn) end end
+   if #mList > 0 then mapsStr = table.concat(mList,"|") else mapsStr = "Any Tower" end
+   -- Label: ranks
+   local ranksStr = ""
+   local rList = {}
+   for _, g in ipairs(GRADE_LIST or {}) do if ent.ranks[g] then table.insert(rList,g) end end
+   if #rList > 0 then ranksStr = " ["..table.concat(rList,"|").."]" end
+
+   local entLbl = Label(row, mapsStr..ranksStr, 11, C.TXT, Enum.Font.Gotham)
+   entLbl.Size = UDim2.new(1,-36,1,0); entLbl.Position = UDim2.new(0,8,0,0)
+   entLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+   -- Tombol hapus
+   local delBtn = Btn(row, Color3.fromRGB(180,50,50), UDim2.new(0,24,0,24))
+   delBtn.Position = UDim2.new(1,-28,0.5,-12); Corner(delBtn,6)
+   local delLbl = Label(delBtn,"×",13,Color3.fromRGB(255,255,255),Enum.Font.GothamBold,Enum.TextXAlignment.Center)
+   delLbl.Size = UDim2.new(1,0,1,0)
+
+   local capturedIdx = entIdx
+   delBtn.MouseButton1Click:Connect(function()
+    table.remove(ASC.listEntries, capturedIdx)
+    -- Rebuild semua row
+    for _, ch in ipairs(ascListScroll:GetChildren()) do
+     if ch:IsA("Frame") then ch:Destroy() end
+    end
+    for i = 1, #ASC.listEntries do AscBuildEntryRow(i) end
+    -- Update tinggi scroll
+    local totalH = math.min(#ASC.listEntries * 36, 180)
+    ascListScroll.Size = UDim2.new(1,0,0,totalH)
+    task.defer(ResizeAscBody)
+   end)
+  end
+
+  _ascRebuildListRows = function()
+   for _, ch in ipairs(ascListScroll:GetChildren()) do
+    if ch:IsA("Frame") then ch:Destroy() end
+   end
+   for i = 1, #ASC.listEntries do AscBuildEntryRow(i) end
+   local totalH = math.min(#ASC.listEntries * 36, 180)
+   ascListScroll.Size = UDim2.new(1,0,0,totalH)
+   task.defer(ResizeAscBody)
+  end
+
+  -- Rebuild awal (untuk ApplyConfig)
+  if #ASC.listEntries > 0 then _ascRebuildListRows() end
+
+  -- Tombol Save Entry: snapshot state Pick Mode + preferMaps + runeGrades saat ini
+  ascSaveBtn.MouseButton1Click:Connect(function()
+   -- Snapshot maps dari ASC.preferMaps
+   local snapMaps = {}
+   for mn=1,26 do if ASC.preferMaps[mn] then snapMaps[mn] = true end end
+   -- Snapshot ranks dari ASC.runeGrades
+   local snapRanks = {}
+   for _, g in ipairs(GRADE_LIST or {}) do
+    if ASC.runeGrades[g] then snapRanks[g] = true end
+   end
+   -- Cegah duplikat
+   for _, ent in ipairs(ASC.listEntries) do
+    local dupMap, dupRank = true, true
+    for mn=1,26 do
+     if (snapMaps[mn] ~= nil) ~= (ent.maps[mn] ~= nil) then dupMap = false; break end
+    end
+    for _, g in ipairs(GRADE_LIST or {}) do
+     if (snapRanks[g] ~= nil) ~= (ent.ranks[g] ~= nil) then dupRank = false; break end
+    end
+    if dupMap and dupRank then return end
+   end
+   table.insert(ASC.listEntries, {maps=snapMaps, ranks=snapRanks})
+   AscBuildEntryRow(#ASC.listEntries)
+   local totalH = math.min(#ASC.listEntries * 36, 180)
+   ascListScroll.Size = UDim2.new(1,0,0,totalH)
+   task.defer(ResizeAscBody)
+  end)
+ end -- end LIST ENTRY ASC do block
+
+ -- ============================================================
+ -- ROW 12: PICK MODE (sama persis dengan AUTO RAID)
  -- ============================================================
  local APM_OPTS  = {"Default","By Rank","By Map","Hard","Easy","Manual"}
  local APM_KEYS  = {"default","byrank","bymap","hard","easy","manual"}
@@ -19630,6 +19854,17 @@ do
    local APM_KEYS = {"default","byrank","bymap","hard","easy","manual"}
    for i,k in ipairs(APM_KEYS) do if ASC and k == ASC.pickMode then cfg.ascPMIdx=i; break end end
   end)
+  -- ASC List Entry
+  cfg.ascListEnabled = ASC and ASC.listEnabled or false
+  cfg.ascListEntries = {}
+  if ASC and ASC.listEntries then
+   for i, ent in ipairs(ASC.listEntries) do
+    local saveMaps = {}; local saveRanks = {}
+    for k,v in pairs(ent.maps)  do if v then saveMaps[tostring(k)]  = true end end
+    for k,v in pairs(ent.ranks) do if v then saveRanks[tostring(k)] = true end end
+    cfg.ascListEntries[i] = {maps=saveMaps, ranks=saveRanks}
+   end
+  end
 
   cfg.siegeOn      = _siegeToggleState or false
   cfg.siegeExclude = {}
@@ -19981,6 +20216,22 @@ do
    else
     ASC.bossDelay = cfg.ascBossDelay or 3
    end
+   -- [FIX] Restore ASC List Entry
+   if ASC.listEntries and cfg.ascListEntries then
+    for k in pairs(ASC.listEntries) do ASC.listEntries[k] = nil end
+    for i, ent in ipairs(cfg.ascListEntries) do
+     local maps = {}; local ranks = {}
+     if ent.maps  then for k,v in pairs(ent.maps)  do local n=tonumber(k); if n then maps[n]=true  end end end
+     if ent.ranks then for k,v in pairs(ent.ranks) do ranks[k]=true end end
+     ASC.listEntries[i] = {maps=maps, ranks=ranks}
+    end
+   end
+   if _setAscListEnabledVis then
+    _setAscListEnabledVis(cfg.ascListEnabled == true)
+   else
+    ASC.listEnabled = cfg.ascListEnabled == true
+   end
+   if _ascRebuildListRows then _ascRebuildListRows() end
    task.delay(0.7, function()
     if _setAscToggle then _setAscToggle(cfg.ascOn == true) end
    end)

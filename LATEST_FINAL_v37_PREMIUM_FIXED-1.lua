@@ -10428,6 +10428,7 @@ function StartAscensionLoop()
      local BOSS_KEYS_ASC = {
       "baran","grendal","plague","frostborne","legia",
       "silas","yogumunt","antares","ashborn",
+      -- [CUSTOM] Boss Ascension Tower
      }
      local function IsBossAsc(name)
       local n = name:lower()
@@ -11078,7 +11079,7 @@ function GetRaidEnemies()
  local refPos = (playerPos and playerPos.Magnitude > 1) and playerPos
             or (spawnPos and spawnPos.Magnitude > 1) and spawnPos
             or nil
- local MAX_DIST = 8000
+ local MAX_DIST = 4000
  local useDistFilter = refPos ~= nil
 
  local function addEnemy(e)
@@ -11100,25 +11101,10 @@ function GetRaidEnemies()
  table.insert(list, {guid=g, hrp=hrp, model=e})
  end
 
- -- Scan folder-folder utama
- for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters","Monster"}) do
- local folder = workspace:FindFirstChild(fname)
+ -- Scan HANYA folder Enemys di workspace
+ local folder = workspace:FindFirstChild("Enemys")
  if folder then
- for _, e in ipairs(folder:GetChildren()) do addEnemy(e) end
- end
- end
-
- -- [GODMODE FIX] Fallback: scan langsung children workspace jika folder tidak ketemu / list kosong
- if #list == 0 then
- for _, obj in ipairs(workspace:GetChildren()) do
- if obj:IsA("Model") then
- addEnemy(obj)
- -- Scan nested (beberapa game taruh enemy di sub-model)
- for _, child in ipairs(obj:GetChildren()) do
- addEnemy(child)
- end
- end
- end
+  for _, e in ipairs(folder:GetChildren()) do addEnemy(e) end
  end
 
  return list
@@ -12221,11 +12207,11 @@ local function ResolveEntry()
 
  local BOSS_KEYS_EARLY = {
   "goblin king","giant arachnid buryura","igris",
-  "the leader of the polar bears","arch lich","kargalgan","baran",
-  "beru","giant monarch","monarch of plague","frostborne","legia",
-  "silas","yogumunt",
-  "antares","ashborn","dominion","absolute",
-  "broly","goku[super4]",
+  "leader of the polar bears","beru","baran","kargalgan",
+  "monarch of plague","frostborne","legia",
+  "silas","yogumunt","antares","ashborn",
+  "dominion","absolute","broly","goku[super4]",
+  -- [CUSTOM RAID] Boss keys
  }
  local function IsBossEarly(name)
   local n = name:lower()
@@ -12328,11 +12314,11 @@ local function ResolveEntry()
  if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
   local BOSS_KEYS = {
    "goblin king","giant arachnid buryura","igris",
-   "the leader of the polar bears","arch lich","kargalgan","baran",
-   "beru","giant monarch","monarch of plague","frostborne","legia",
-   "silas","yogumunt",
-   "antares","ashborn","dominion","absolute",
-   "broly","goku[super4]",
+   "leader of the polar bears","beru","baran","kargalgan",
+   "monarch of plague","frostborne","legia",
+   "silas","yogumunt","antares","ashborn",
+   "dominion","absolute","broly","goku[super4]",
+   -- [CUSTOM RAID] Boss keys
   }
   local function IsBoss(name)
    local n = name:lower()

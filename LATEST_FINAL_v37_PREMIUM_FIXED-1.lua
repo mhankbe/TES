@@ -5621,16 +5621,18 @@ do
 
  -- ═══════════════════════════════════════════════════════════
  -- ENEMY HP MONITOR - HP, persentase, timer, rate 1%
- -- Source: ShowEnemyTakeDamageInfo (hp, maxHp, enemyGuid)
- -- Auto reset saat ganti target (enemyGuid berubah)
+ -- Source: ShowEnemyTakeDamageInfo (hp, maxHp, enemyId)
+ -- Reset HANYA saat enemyId berubah (ganti musuh berbeda)
+ -- Timer terus jalan meski berhenti serang sebentar
  -- ═══════════════════════════════════════════════════════════
  do
-  local _ehpLastGuid  = nil
-  local _ehpMaxHp     = 0
-  local _ehpConn      = nil
-  local _ehpStartTime = nil   -- tick() saat hit pertama ke musuh ini
-  local _ehpStartPct  = nil   -- persentase HP saat hit pertama (untuk hitung rate)
-  local _ehpTimerConn = nil   -- RunService loop untuk update timer tiap detik
+  local _ehpLastEnemyId = nil  -- pakai enemyId (stabil), bukan enemyGuid
+  local _ehpMaxHp       = 0
+  local _ehpConn        = nil
+  local _ehpStartTime   = nil  -- tick() saat hit pertama ke musuh ini
+  local _ehpStartPct    = nil  -- persen HP saat hit pertama (untuk rate)
+  local _ehpCurPct      = 0    -- persen HP terkini (dibaca oleh timer loop)
+  local _ehpTimerConn   = nil
 
   -- Format angka ke scientific notation: 1.23E+25
   local function FmtHp(n)
@@ -5641,10 +5643,11 @@ do
    return string.format("%.2fE+%02d", mant, exp)
   end
 
-  -- Format detik ke mm:ss
+  -- Format detik ke mm:ss (support > 60 menit)
   local function FmtTime(secs)
    local s = math.floor(secs)
-   return string.format("%02d:%02d", math.floor(s/60), s%60)
+   local m = math.floor(s / 60)
+   return string.format("%02d:%02d", m, s % 60)
   end
 
   -- Warna HP bar berdasarkan persentase
@@ -5654,44 +5657,38 @@ do
    else return Color3.fromRGB(255, 70, 70) end
   end
 
-  -- ── UI Card (diperbesar untuk timer) ────────────────────
+  -- ── UI Card ────────────────────────────────────────────────────
   local ehpCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,90))
   ehpCard.LayoutOrder = 0
   Corner(ehpCard, 10)
   Stroke(ehpCard, C.ACC, 1.5, 0.5)
 
-  -- Label judul
   local ehpTitle = Label(ehpCard, "❤ ENEMY HP MONITOR", 10, C.ACC, Enum.Font.GothamBold)
   ehpTitle.Size     = UDim2.new(1,-16,0,16)
   ehpTitle.Position = UDim2.new(0,10,0,5)
 
-  -- HP saat ini (angka besar)
   local ehpValLbl = Label(ehpCard, "— / —", 15, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
   ehpValLbl.Size     = UDim2.new(1,-16,0,20)
   ehpValLbl.Position = UDim2.new(0,8,0,20)
 
-  -- HP bar background
   local ehpBarBg = Frame(ehpCard, C.BG2, UDim2.new(1,-16,0,7))
   ehpBarBg.Position               = UDim2.new(0,8,0,44)
   ehpBarBg.BackgroundTransparency = 0.3
   Corner(ehpBarBg, 4)
 
-  -- HP bar fill
   local ehpBarFill = Frame(ehpBarBg, Color3.fromRGB(80,220,100), UDim2.new(1,0,1,0))
   ehpBarFill.BackgroundTransparency = 0.2
   Corner(ehpBarFill, 4)
 
-  -- Persentase label di kanan bar
   local ehpPctLbl = Label(ehpCard, "", 9, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
   ehpPctLbl.Size     = UDim2.new(0,60,0,10)
   ehpPctLbl.Position = UDim2.new(1,-68,0,54)
 
-  -- Timer + rate row
-  local ehpTimerLbl = Label(ehpCard, "⏱ --:--  |  1% setiap  ~--:--", 9, C.DIM, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+  local ehpTimerLbl = Label(ehpCard, "⏱ --:--  |  1% setiap ~--:--", 9, C.DIM, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
   ehpTimerLbl.Size     = UDim2.new(1,-16,0,13)
   ehpTimerLbl.Position = UDim2.new(0,8,0,74)
 
-  -- ── Timer loop (update tiap 1 detik) ────────────────────
+  -- ── Timer loop — jalan terus, tidak reset saat berhenti serang ───────────
   local function StartTimerLoop()
    if _ehpTimerConn then
     pcall(function() _ehpTimerConn:Disconnect() end)
@@ -5699,37 +5696,34 @@ do
    end
    _ehpTimerConn = game:GetService("RunService").Heartbeat:Connect(function()
     if not _ehpStartTime then return end
-    local elapsed = tick() - _ehpStartTime
+    local elapsed    = tick() - _ehpStartTime
     local elapsedStr = FmtTime(elapsed)
-
-    -- Hitung rate: berapa detik per 1%
-    -- Dari selisih persen sejak mulai vs elapsed
-    local rateStr = "--:--"
+    local rateStr    = "--:--"
     if _ehpStartPct and elapsed > 2 then
-     -- pctDone = persen yang sudah berkurang sejak mulai
-     local pctDone = _ehpStartPct - (ehpPctLbl.Text ~= "" and tonumber(ehpPctLbl.Text:match("([%d%.]+)")) or _ehpStartPct)
-     if pctDone and pctDone > 0.01 then
-      local secsPerPct = elapsed / pctDone  -- detik per 1%
-      rateStr = FmtTime(secsPerPct)
+     local pctDone = _ehpStartPct - _ehpCurPct
+     if pctDone > 0.01 then
+      rateStr = FmtTime(elapsed / pctDone)
      end
     end
-
-    ehpTimerLbl.Text = string.format("⏱ %s  |  1%% setiap ~%s", elapsedStr, rateStr)
+    ehpTimerLbl.Text       = string.format("⏱ %s  |  1%% setiap ~%s", elapsedStr, rateStr)
+    ehpTimerLbl.TextColor3 = C.DIM
    end)
   end
 
-  -- ── Logic ────────────────────────────────────────────────
+  -- ── Logic — reset HANYA saat enemyId berubah ──────────────────────────
   local function EhpUpdate(data)
-   local guid = tostring(data.enemyGuid or "")
+   local eid  = tostring(data.enemyId or "")
    local hp   = tonumber(data.hp)    or 0
    local mhp  = tonumber(data.maxHp) or 0
 
-   -- Reset saat ganti target
-   if guid ~= "" and guid ~= _ehpLastGuid then
-    _ehpLastGuid  = guid
-    _ehpMaxHp     = mhp
-    _ehpStartTime = tick()
-    _ehpStartPct  = nil   -- diisi setelah pct pertama terhitung
+   -- Reset HANYA saat enemyId berbeda (benar-benar ganti musuh)
+   if eid ~= "" and eid ~= _ehpLastEnemyId then
+    _ehpLastEnemyId = eid
+    _ehpMaxHp       = mhp
+    _ehpStartTime   = tick()
+    _ehpStartPct    = nil
+    _ehpCurPct      = 0
+    ehpTimerLbl.Text = "⏱ --:--  |  1% setiap ~--:--"
     StartTimerLoop()
    end
    if mhp > 0 and mhp > _ehpMaxHp then _ehpMaxHp = mhp end
@@ -5740,18 +5734,13 @@ do
    local pct = math.clamp(hp / curMaxHp * 100, 0, 100)
    local col = HpColor(pct)
 
-   -- Simpan persen pertama untuk kalkulasi rate
    if _ehpStartPct == nil then _ehpStartPct = pct end
+   _ehpCurPct = pct
 
-   -- Update HP teks
    ehpValLbl.Text       = FmtHp(hp) .. " / " .. FmtHp(curMaxHp)
    ehpValLbl.TextColor3 = col
-
-   -- Update bar
    ehpBarFill.Size             = UDim2.new(math.clamp(pct/100, 0, 1), 0, 1, 0)
    ehpBarFill.BackgroundColor3 = col
-
-   -- Update persen
    ehpPctLbl.Text       = string.format("%.3f%%", pct)
    ehpPctLbl.TextColor3 = col
   end

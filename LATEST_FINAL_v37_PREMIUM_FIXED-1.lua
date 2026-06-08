@@ -5400,11 +5400,11 @@ do
        col[g] = true
        PingGuard()
        pcall(function() RE.CollectItem:InvokeServer(g) end)
-       task.wait(0.01)
+       task.wait(0.1)
       end
      end end
     end
-    task.wait(0.01)
+    task.wait(0.1)
    end
   end)
  end
@@ -5472,9 +5472,9 @@ do
      FCharF(TA.cur.guid, TA.cur.hrp)
     end
     if RA.cur or (TA.running and TA.cur) then
-     task.wait(0.01)  -- 10x/detik
+     task.wait(0.1)  -- 10x/detik
     else
-     task.wait(0.01)  -- [FIX] percepat: tidak lagi 0.2 agar cepat scan musuh baru
+     task.wait(0.1)  -- [FIX] percepat: tidak lagi 0.2 agar cepat scan musuh baru
     end
    end
   end)
@@ -5529,9 +5529,9 @@ do
      TA.cur = tgt
      FCharF(tgt.guid, tgt.hrp)
      if onStatus then onStatus(">> ["..targetName.."] •"..(tgt.guid:sub(-5)).." Kill: "..TA.killed) end
-     task.wait(0.01)
+     task.wait(0.1)
     else
-     task.wait(0.01)  -- [FIX] percepat polling mati
+     task.wait(0.1)  -- [FIX] percepat polling mati
     end
    end
   end)
@@ -5566,7 +5566,7 @@ do
      -- Semua mati → tunggu respawn
      if onStatus then onStatus("WAITING ["..targetName.."] respawn...") end
      while TA.running do
-      task.wait(0.01)  -- [FIX] lebih cepat scan respawn
+      task.wait(0.1)  -- [FIX] lebih cepat scan respawn
       pool = FindAllByNameF(targetName)
       if #pool > 0 then break end
      end
@@ -5579,7 +5579,7 @@ do
     if not tgt or IsDeadF(tgt) then
      -- Musuh di index ini sudah mati, skip ke berikutnya
      rrIdx = rrIdx + 1
-     task.wait(0.01)  -- [FIX] percepat skip mati
+     task.wait(0.1)  -- [FIX] percepat skip mati
     else
      TA.cur = tgt
      _curDied = false
@@ -5593,7 +5593,7 @@ do
      while TA.running and not _curDied and not IsDeadF(tgt) and tgt.model.Parent do
       FCharF(tgt.guid, tgt.hrp)
       if onStatus then onStatus(">> ["..targetName.."] ["..rrIdx.."/"..#pool.."] Kill: "..TA.killed) end
-      task.wait(0.01)
+      task.wait(0.1)
      end
      -- Mati → pindah ke berikutnya
      if TA.running then
@@ -6005,7 +6005,7 @@ do
      end
      if RA.running then raKillLbl.Text = "Kill: "..RA.killed end
      if taOn then statLbl.Text = ">> ["..(TA.targetName or "?").."] Kill: "..TA.killed end
-     task.wait(0.01)
+     task.wait(0.1)
     end
    end)
   end
@@ -6026,7 +6026,7 @@ do
       end
      end
      if RA.running then raKillLbl.Text = "Kill: "..RA.killed end
-     task.wait(0.01)
+     task.wait(0.1)
     end
    end)
   end
@@ -6034,7 +6034,7 @@ do
 
  refBtn.MouseButton1Click:Connect(function()
   refBtn.Text = "Loading..."
-  task.spawn(function() RefreshEnemies(); task.wait(0.01); refBtn.Text = "Refresh" end)
+  task.spawn(function() RefreshEnemies(); task.wait(0.1); refBtn.Text = "Refresh" end)
  end)
 end
 

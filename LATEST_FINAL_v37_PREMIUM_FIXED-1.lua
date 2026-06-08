@@ -5620,19 +5620,24 @@ do
  -- ── GUI ──────────────────────────────────────────────────────
 
  -- ═══════════════════════════════════════════════════════════
- -- ENEMY HP MONITOR - HP, persentase, timer, rate 1%
- -- Source: ShowEnemyTakeDamageInfo (hp, maxHp, enemyId)
- -- Reset HANYA saat enemyId berubah (ganti musuh berbeda)
- -- Timer terus jalan meski berhenti serang sebentar
+ -- ENEMY HP MONITOR - HP, persentase + STOPWATCH manual
+ -- Tombol START: mulai timer dari 0
+ -- Tombol STOP : pause timer (bisa dilanjut lagi)
+ -- Tombol RESET: reset timer ke 0 dan pause
+ -- HP bar update otomatis dari ShowEnemyTakeDamageInfo
  -- ═══════════════════════════════════════════════════════════
  do
-  local _ehpLastEnemyId = nil  -- pakai enemyId (stabil), bukan enemyGuid
+  local _ehpLastEnemyId = nil
   local _ehpMaxHp       = 0
   local _ehpConn        = nil
-  local _ehpStartTime   = nil  -- tick() saat hit pertama ke musuh ini
-  local _ehpStartPct    = nil  -- persen HP saat hit pertama (untuk rate)
-  local _ehpCurPct      = 0    -- persen HP terkini (dibaca oleh timer loop)
-  local _ehpTimerConn   = nil
+  local _ehpStartPct    = nil
+  local _ehpCurPct      = 0
+
+  -- Stopwatch state
+  local _swRunning    = false   -- apakah stopwatch sedang jalan
+  local _swStartTick  = nil     -- tick() saat terakhir START ditekan
+  local _swAccum      = 0       -- akumulasi detik sebelum pause terakhir
+  local _swTimerConn  = nil     -- Heartbeat connection
 
   -- Format angka ke scientific notation: 1.23E+25
   local function FmtHp(n)
@@ -5643,88 +5648,158 @@ do
    return string.format("%.2fE+%02d", mant, exp)
   end
 
-  -- Format detik ke mm:ss (support > 60 menit)
+  -- Format detik ke mm:ss
   local function FmtTime(secs)
    local s = math.floor(secs)
-   local m = math.floor(s / 60)
-   return string.format("%02d:%02d", m, s % 60)
+   return string.format("%02d:%02d", math.floor(s/60), s%60)
   end
 
-  -- Warna HP bar berdasarkan persentase
+  -- Warna HP bar
   local function HpColor(pct)
    if pct > 50 then return Color3.fromRGB(80, 220, 100)
    elseif pct > 25 then return Color3.fromRGB(255, 180, 40)
    else return Color3.fromRGB(255, 70, 70) end
   end
 
-  -- ── UI Card ────────────────────────────────────────────────────
-  local ehpCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,90))
+  -- ── UI Card ─────────────────────────────────────────────
+  local ehpCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,104))
   ehpCard.LayoutOrder = 0
   Corner(ehpCard, 10)
   Stroke(ehpCard, C.ACC, 1.5, 0.5)
 
+  -- Judul
   local ehpTitle = Label(ehpCard, "❤ ENEMY HP MONITOR", 10, C.ACC, Enum.Font.GothamBold)
   ehpTitle.Size     = UDim2.new(1,-16,0,16)
   ehpTitle.Position = UDim2.new(0,10,0,5)
 
+  -- HP angka
   local ehpValLbl = Label(ehpCard, "— / —", 15, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
   ehpValLbl.Size     = UDim2.new(1,-16,0,20)
   ehpValLbl.Position = UDim2.new(0,8,0,20)
 
+  -- HP bar background
   local ehpBarBg = Frame(ehpCard, C.BG2, UDim2.new(1,-16,0,7))
   ehpBarBg.Position               = UDim2.new(0,8,0,44)
   ehpBarBg.BackgroundTransparency = 0.3
   Corner(ehpBarBg, 4)
 
+  -- HP bar fill
   local ehpBarFill = Frame(ehpBarBg, Color3.fromRGB(80,220,100), UDim2.new(1,0,1,0))
   ehpBarFill.BackgroundTransparency = 0.2
   Corner(ehpBarFill, 4)
 
+  -- Persentase label
   local ehpPctLbl = Label(ehpCard, "", 9, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Right)
   ehpPctLbl.Size     = UDim2.new(0,60,0,10)
   ehpPctLbl.Position = UDim2.new(1,-68,0,54)
 
-  local ehpTimerLbl = Label(ehpCard, "⏱ --:--  |  1% setiap ~--:--", 9, C.DIM, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-  ehpTimerLbl.Size     = UDim2.new(1,-16,0,13)
-  ehpTimerLbl.Position = UDim2.new(0,8,0,74)
+  -- Timer label (stopwatch)
+  local ehpTimerLbl = Label(ehpCard, "⏱ 00:00", 13, C.TXT, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+  ehpTimerLbl.Size     = UDim2.new(1,-16,0,16)
+  ehpTimerLbl.Position = UDim2.new(0,8,0,56)
 
-  -- ── Timer loop — jalan terus, tidak reset saat berhenti serang ───────────
-  local function StartTimerLoop()
-   if _ehpTimerConn then
-    pcall(function() _ehpTimerConn:Disconnect() end)
-    _ehpTimerConn = nil
-   end
-   _ehpTimerConn = game:GetService("RunService").Heartbeat:Connect(function()
-    if not _ehpStartTime then return end
-    local elapsed    = tick() - _ehpStartTime
-    local elapsedStr = FmtTime(elapsed)
-    local rateStr    = "--:--"
-    if _ehpStartPct and elapsed > 2 then
-     local pctDone = _ehpStartPct - _ehpCurPct
-     if pctDone > 0.01 then
-      rateStr = FmtTime(elapsed / pctDone)
-     end
-    end
-    ehpTimerLbl.Text       = string.format("⏱ %s  |  1%% setiap ~%s", elapsedStr, rateStr)
-    ehpTimerLbl.TextColor3 = C.DIM
-   end)
+  -- Rate label (1% per berapa lama)
+  local ehpRateLbl = Label(ehpCard, "1% setiap ~--:--", 9, C.DIM, Enum.Font.Gotham, Enum.TextXAlignment.Center)
+  ehpRateLbl.Size     = UDim2.new(1,-16,0,12)
+  ehpRateLbl.Position = UDim2.new(0,8,0,72)
+
+  -- Row tombol START / STOP / RESET
+  local btnRow = Instance.new("Frame")
+  btnRow.Size                  = UDim2.new(1,-16,0,18)
+  btnRow.Position              = UDim2.new(0,8,0,84)
+  btnRow.BackgroundTransparency = 1
+  btnRow.Parent                = ehpCard
+
+  local function MakeBtn(txt, xPos, w, bgCol)
+   local b = Btn(btnRow, bgCol, UDim2.new(0,w,1,0))
+   b.Position   = UDim2.new(0,xPos,0,0)
+   b.Text       = txt
+   b.TextSize   = 9
+   b.Font       = Enum.Font.GothamBold
+   b.TextColor3 = Color3.fromRGB(255,255,255)
+   Corner(b, 4)
+   return b
   end
 
-  -- ── Logic — reset HANYA saat enemyId berubah ──────────────────────────
+  local btnW    = 74
+  local btnGap  = 4
+  local startBtn = MakeBtn("▶ START", 0,            btnW, Color3.fromRGB(40,140,60))
+  local stopBtn  = MakeBtn("■ STOP",  btnW+btnGap,  btnW, Color3.fromRGB(160,60,60))
+  local resetBtn = MakeBtn("↺ RESET", (btnW+btnGap)*2, btnW, Color3.fromRGB(60,60,120))
+
+  -- ── Stopwatch logic ──────────────────────────────────────
+  local function SwGetElapsed()
+   if _swRunning and _swStartTick then
+    return _swAccum + (tick() - _swStartTick)
+   end
+   return _swAccum
+  end
+
+  local function SwUpdateDisplay()
+   local elapsed = SwGetElapsed()
+   ehpTimerLbl.Text       = "⏱ " .. FmtTime(elapsed)
+   ehpTimerLbl.TextColor3 = _swRunning and C.TXT or C.DIM
+
+   -- Rate: persen per detik → detik per 1%
+   if _ehpStartPct and elapsed > 2 then
+    local pctDone = _ehpStartPct - _ehpCurPct
+    if pctDone > 0.01 then
+     ehpRateLbl.Text = "1% setiap ~" .. FmtTime(elapsed / pctDone)
+    else
+     ehpRateLbl.Text = "1% setiap ~--:--"
+    end
+   else
+    ehpRateLbl.Text = "1% setiap ~--:--"
+   end
+  end
+
+  local function SwStart()
+   if _swRunning then return end
+   _swRunning   = true
+   _swStartTick = tick()
+   -- Rekam persen HP saat START ditekan (untuk kalkulasi rate)
+   if _ehpStartPct == nil then _ehpStartPct = _ehpCurPct end
+   startBtn.BackgroundColor3 = Color3.fromRGB(30,100,45)
+   stopBtn.BackgroundColor3  = Color3.fromRGB(200,70,70)
+   if not _swTimerConn then
+    _swTimerConn = game:GetService("RunService").Heartbeat:Connect(SwUpdateDisplay)
+   end
+  end
+
+  local function SwStop()
+   if not _swRunning then return end
+   _swAccum    = SwGetElapsed()  -- simpan elapsed sebelum pause
+   _swRunning  = false
+   _swStartTick = nil
+   startBtn.BackgroundColor3 = Color3.fromRGB(40,140,60)
+   stopBtn.BackgroundColor3  = Color3.fromRGB(160,60,60)
+   SwUpdateDisplay()
+  end
+
+  local function SwReset()
+   SwStop()
+   _swAccum     = 0
+   _swStartTick = nil
+   _swRunning   = false
+   _ehpStartPct = nil   -- reset juga kalkulasi rate
+   ehpTimerLbl.Text       = "⏱ 00:00"
+   ehpTimerLbl.TextColor3 = C.DIM
+   ehpRateLbl.Text        = "1% setiap ~--:--"
+  end
+
+  startBtn.MouseButton1Click:Connect(SwStart)
+  stopBtn.MouseButton1Click:Connect(SwStop)
+  resetBtn.MouseButton1Click:Connect(SwReset)
+
+  -- ── HP Update dari remote ────────────────────────────────
   local function EhpUpdate(data)
    local eid  = tostring(data.enemyId or "")
    local hp   = tonumber(data.hp)    or 0
    local mhp  = tonumber(data.maxHp) or 0
 
-   -- Reset HANYA saat enemyId berbeda (benar-benar ganti musuh)
    if eid ~= "" and eid ~= _ehpLastEnemyId then
     _ehpLastEnemyId = eid
     _ehpMaxHp       = mhp
-    _ehpStartTime   = tick()
-    _ehpStartPct    = nil
-    _ehpCurPct      = 0
-    ehpTimerLbl.Text = "⏱ --:--  |  1% setiap ~--:--"
-    StartTimerLoop()
    end
    if mhp > 0 and mhp > _ehpMaxHp then _ehpMaxHp = mhp end
 
@@ -5733,28 +5808,24 @@ do
 
    local pct = math.clamp(hp / curMaxHp * 100, 0, 100)
    local col = HpColor(pct)
-
-   if _ehpStartPct == nil then _ehpStartPct = pct end
    _ehpCurPct = pct
 
-   ehpValLbl.Text       = FmtHp(hp) .. " / " .. FmtHp(curMaxHp)
-   ehpValLbl.TextColor3 = col
+   ehpValLbl.Text              = FmtHp(hp) .. " / " .. FmtHp(curMaxHp)
+   ehpValLbl.TextColor3        = col
    ehpBarFill.Size             = UDim2.new(math.clamp(pct/100, 0, 1), 0, 1, 0)
    ehpBarFill.BackgroundColor3 = col
-   ehpPctLbl.Text       = string.format("%.3f%%", pct)
-   ehpPctLbl.TextColor3 = col
+   ehpPctLbl.Text              = string.format("%.3f%%", pct)
+   ehpPctLbl.TextColor3        = col
   end
 
-  -- Pasang listener
+  -- Pasang listener HP
   local _remEhp = game:GetService("ReplicatedStorage")
   pcall(function()
    local rem = _remEhp:FindFirstChild("Remotes")
             and _remEhp.Remotes:FindFirstChild("ShowEnemyTakeDamageInfo")
    if rem then
     _ehpConn = rem.OnClientEvent:Connect(function(data)
-     if type(data) == "table" then
-      pcall(EhpUpdate, data)
-     end
+     if type(data) == "table" then pcall(EhpUpdate, data) end
     end)
    end
   end)

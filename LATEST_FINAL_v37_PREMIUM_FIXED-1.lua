@@ -5028,6 +5028,82 @@ do
  -- ============================================================
  -- 3. HIDE ALL ANIMATION (versi penuh, restore sempurna)
  -- ============================================================
+ -- Cache tambahan untuk BasePart skill effects
+ local _animBpCache = {}  -- { [obj] = {Transparency, LocalTransparencyModifier} }
+
+ -- Helper: freeze semua AnimationTrack pada satu karakter
+ local function _freezeCharAnim(char)
+     if not char then return end
+     local function tryFreeze(hum)
+         if not hum then return end
+         local anim = hum:FindFirstChildOfClass("Animator")
+         if anim then
+             for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
+                 pcall(function() track:AdjustSpeed(0) end)
+             end
+         end
+     end
+     tryFreeze(char:FindFirstChildOfClass("Humanoid"))
+     tryFreeze(char:FindFirstChildOfClass("AnimationController"))
+ end
+
+ -- Helper: resume semua AnimationTrack pada satu karakter
+ local function _resumeCharAnim(char)
+     if not char then return end
+     local function tryResume(hum)
+         if not hum then return end
+         local anim = hum:FindFirstChildOfClass("Animator")
+         if anim then
+             for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
+                 pcall(function() track:AdjustSpeed(1) end)
+             end
+         end
+     end
+     tryResume(char:FindFirstChildOfClass("Humanoid"))
+     tryResume(char:FindFirstChildOfClass("AnimationController"))
+ end
+
+ -- Helper: cek apakah BasePart adalah skill/effect part yang perlu disembunyikan
+ local _SKILL_KW = {
+     "effect","skill","slash","hit","blast","projectile","magic","vfx","fx",
+     "spell","aura","wave","impact","beam","laser","circle","ring","glow",
+     "explosion","nova","strike","cast","buff","debuff","orb","shard",
+     "particle","emitter","sfx","attack","combo","special","ultimate","ult",
+ }
+ local function _isSkillPart(obj)
+     if not (obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("SpecialMesh")) then return false end
+     local n = obj.Name:lower()
+     for _, kw in ipairs(_SKILL_KW) do
+         if n:find(kw) then return true end
+     end
+     return false
+ end
+
+ -- Helper: hide satu objek efek baru (dipanggil dari DescendantAdded watcher)
+ local function _hideOneEffect(obj)
+     pcall(function()
+         if obj:IsA("BillboardGui") then
+             local n = obj.Name:lower()
+             if not n:find("name") and not n:find("health") and not n:find("tag") then
+                 _animBbCache[obj] = obj.Enabled; obj.Enabled = false
+             end
+         elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
+             or obj:IsA("PointLight") or obj:IsA("Fire") or obj:IsA("Sparkles")
+             or obj:IsA("SelectionBox") or obj:IsA("SurfaceAppearance") then
+             _animPcCache[obj] = obj.Enabled; obj.Enabled = false
+         elseif obj:IsA("Sound") then
+             _animPcCache[obj] = obj.Volume
+             obj.Volume = 0
+         elseif _isSkillPart(obj) then
+             _animBpCache[obj] = {obj.Transparency, obj.LocalTransparencyModifier}
+             obj.Transparency = 1
+             obj.LocalTransparencyModifier = 1
+             local sm = obj:FindFirstChildOfClass("SpecialMesh")
+             if sm then sm.TextureId = ""; sm.MeshId = "" end
+         end
+     end)
+ end
+
  local function ApplyHideAnim(on)
      _hideAllAnimState = on
      _hideAnimOn = on
@@ -5035,32 +5111,37 @@ do
      if on then
          _animBbCache = {}
          _animPcCache = {}
+         _animBpCache = {}
 
-         -- Stop animation tracks via RenderStepped
+         -- ── 1. RenderStepped: freeze AnimTrack di SEMUA sumber karakter ──
          if _animLoop then _animLoop:Disconnect(); _animLoop = nil end
          _animLoop = game:GetService("RunService").RenderStepped:Connect(function()
              pcall(function()
-                 for _, fname in ipairs({"Heros","Pets","Characters"}) do
+                 -- Folder karakter di workspace (Heroes, Pets, dll.)
+                 for _, fname in ipairs({"Heros","Pets","Characters","Enemys"}) do
                      local folder = workspace:FindFirstChild(fname)
                      if folder then
                          for _, char in ipairs(folder:GetChildren()) do
-                             local hum = char:FindFirstChildOfClass("Humanoid")
-                                 or char:FindFirstChildOfClass("AnimationController")
-                             if hum then
-                                 local anim = hum:FindFirstChildOfClass("Animator")
-                                 if anim then
-                                     for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
-                                         track:AdjustSpeed(0)
-                                     end
-                                 end
-                             end
+                             _freezeCharAnim(char)
+                         end
+                     end
+                 end
+                 -- Player character sendiri
+                 local pChar = LP and LP.Character
+                 if pChar then _freezeCharAnim(pChar) end
+                 -- Karakter di dalam Maps (raid/dungeon map)
+                 local mapsF = workspace:FindFirstChild("Maps")
+                 if mapsF then
+                     for _, mapObj in ipairs(mapsF:GetDescendants()) do
+                         if mapObj:IsA("Model") then
+                             _freezeCharAnim(mapObj)
                          end
                      end
                  end
              end)
          end)
 
-         -- Matikan efek di workspace + cache state awal
+         -- ── 2. Sweep awal: semua efek yang sudah ada di workspace ──
          pcall(function()
              for _, obj in ipairs(workspace:GetDescendants()) do
                  pcall(function()
@@ -5071,70 +5152,82 @@ do
                              obj.Enabled = false
                          end
                      elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
-                         or obj:IsA("PointLight") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+                         or obj:IsA("PointLight") or obj:IsA("Fire") or obj:IsA("Sparkles")
+                         or obj:IsA("SelectionBox") or obj:IsA("SurfaceAppearance") then
                          _animPcCache[obj] = obj.Enabled
                          obj.Enabled = false
+                     elseif obj:IsA("Sound") then
+                         _animPcCache[obj] = obj.Volume
+                         obj.Volume = 0
+                     elseif _isSkillPart(obj) then
+                         _animBpCache[obj] = {obj.Transparency, obj.LocalTransparencyModifier}
+                         obj.Transparency = 1
+                         obj.LocalTransparencyModifier = 1
+                         local sm = obj:FindFirstChildOfClass("SpecialMesh")
+                         if sm then sm.TextureId = ""; sm.MeshId = "" end
                      end
                  end)
              end
          end)
 
-         -- Watch objek efek baru yang spawn
+         -- ── 3. Watcher: tangkap efek baru yang spawn setelah sweep ──
          if _animWsConn then _animWsConn:Disconnect(); _animWsConn = nil end
          _animWsConn = workspace.DescendantAdded:Connect(function(obj)
              task.defer(function()
-                 pcall(function()
-                     if not _hideAnimOn then return end
-                     if obj:IsA("BillboardGui") then
-                         local n = obj.Name:lower()
-                         if not n:find("name") and not n:find("health") and not n:find("tag") then
-                             _animBbCache[obj] = obj.Enabled; obj.Enabled = false
-                         end
-                     elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
-                         or obj:IsA("PointLight") or obj:IsA("Fire") or obj:IsA("Sparkles") then
-                         _animPcCache[obj] = obj.Enabled; obj.Enabled = false
-                     end
-                 end)
+                 if not _hideAnimOn then return end
+                 _hideOneEffect(obj)
              end)
          end)
 
      else
-         -- RESTORE PENUH
-         if _animLoop    then _animLoop:Disconnect();    _animLoop    = nil end
-         if _animWsConn  then _animWsConn:Disconnect(); _animWsConn  = nil end
+         -- ── RESTORE PENUH ──
+         if _animLoop   then _animLoop:Disconnect();   _animLoop   = nil end
+         if _animWsConn then _animWsConn:Disconnect(); _animWsConn = nil end
 
-         -- Resume semua animation track
+         -- Resume AnimTrack: semua folder + player character
          pcall(function()
-             for _, fname in ipairs({"Heros","Pets","Characters"}) do
+             for _, fname in ipairs({"Heros","Pets","Characters","Enemys"}) do
                  local folder = workspace:FindFirstChild(fname)
                  if folder then
                      for _, char in ipairs(folder:GetChildren()) do
-                         local hum = char:FindFirstChildOfClass("Humanoid")
-                             or char:FindFirstChildOfClass("AnimationController")
-                         if hum then
-                             local anim = hum:FindFirstChildOfClass("Animator")
-                             if anim then
-                                 for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
-                                     pcall(function() track:AdjustSpeed(1) end)
-                                 end
-                             end
-                         end
+                         _resumeCharAnim(char)
                      end
                  end
              end
+             local pChar = LP and LP.Character
+             if pChar then _resumeCharAnim(pChar) end
          end)
 
-         -- Restore BillboardGui ke state sebelumnya (bukan selalu true)
+         -- Restore BillboardGui
          for obj, prev in pairs(_animBbCache) do
              pcall(function() if obj and obj.Parent then obj.Enabled = prev end end)
          end
          _animBbCache = {}
 
-         -- Restore Particle/Trail/Beam ke state sebelumnya
+         -- Restore ParticleEmitter / Trail / Beam / Sound dll.
          for obj, prev in pairs(_animPcCache) do
-             pcall(function() if obj and obj.Parent then obj.Enabled = prev end end)
+             pcall(function()
+                 if obj and obj.Parent then
+                     if obj:IsA("Sound") then
+                         obj.Volume = prev
+                     else
+                         obj.Enabled = prev
+                     end
+                 end
+             end)
          end
          _animPcCache = {}
+
+         -- Restore BasePart skill effects
+         for obj, prev in pairs(_animBpCache) do
+             pcall(function()
+                 if obj and obj.Parent then
+                     obj.Transparency = prev[1]
+                     obj.LocalTransparencyModifier = prev[2]
+                 end
+             end)
+         end
+         _animBpCache = {}
      end
  end
 

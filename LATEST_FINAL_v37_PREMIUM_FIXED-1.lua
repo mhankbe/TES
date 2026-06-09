@@ -1,148 +1,74 @@
 -- ============================================================
--- BUFF UI SNIFFER - FLa Project
--- Cari TextLabel yang isinya berubah (timer countdown buff)
--- Jalankan saat buff aktif, pantau [TIMER?] di console
+-- BUFF TIMER SNIFFER - FLa Project
+-- Khusus intercept UpdateBuffTimes remote event
+-- Cari nilai awal timer saat buff baru aktif
 -- ============================================================
 
-local Players   = game:GetService("Players")
-local lp        = Players.LocalPlayer
-local playerGui = lp:WaitForChild("PlayerGui", 10)
+local RS  = game:GetService("ReplicatedStorage")
+local lp  = game:GetService("Players").LocalPlayer
 
-local function getPath(obj)
-    local parts = {}
-    local cur, depth = obj, 0
-    while cur and cur ~= game and depth < 10 do
-        table.insert(parts, 1, cur.Name)
-        cur = cur.Parent
-        depth = depth + 1
-    end
-    return table.concat(parts, ".")
-end
-
--- Cek apakah string mengandung angka (kemungkinan timer)
-local function looksLikeTimer(str)
-    if not str or str == "" then return false end
-    -- Match: "1:30", "01:30", "90", "1m30s", "30s", "00:01:30"
-    if str:match("%d+:%d+") then return true end
-    if str:match("%d+[ms]") then return true end
-    if str:match("^%d+$") and tonumber(str) and tonumber(str) > 0 and tonumber(str) < 99999 then return true end
-    return false
-end
-
-local watched  = {}
-local snapshots = {}
-
---  Snapshot semua TextLabel saat ini 
-local function snapshotAll()
-    for _, obj in ipairs(playerGui:GetDescendants()) do
-        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-            local ok, txt = pcall(function() return obj.Text end)
-            if ok and txt and txt ~= "" then
-                local path = getPath(obj)
-                snapshots[path] = {obj=obj, text=txt}
-            end
-        end
-    end
-end
-
---  Watch semua TextLabel untuk perubahan 
-local function watchAll()
-    for _, obj in ipairs(playerGui:GetDescendants()) do
-        if (obj:IsA("TextLabel") or obj:IsA("TextButton")) then
-            local path = getPath(obj)
-            if not watched[path] then
-                watched[path] = true
-                local lastTxt = ""
-                pcall(function() lastTxt = obj.Text end)
-
-                obj:GetPropertyChangedSignal("Text"):Connect(function()
-                    local newTxt = ""
-                    pcall(function() newTxt = obj.Text end)
-                    if newTxt == lastTxt then return end
-
-                    -- Cek apakah perubahan ini seperti timer
-                    local isTimer = looksLikeTimer(newTxt) or looksLikeTimer(lastTxt)
-                    if isTimer then
-                        warn(string.format("[TIMER?] %s: '%s' -> '%s' | PATH: %s",
-                            obj.Name, lastTxt, newTxt, path))
-                    else
-                        -- Print semua perubahan text (mungkin buff name/status)
-                        if #newTxt < 60 then
-                            print(string.format("[TEXT CHANGE] %s: '%s' -> '%s'",
-                                obj.Name, lastTxt, newTxt))
-                        end
-                    end
-                    lastTxt = newTxt
-                end)
-            end
-        end
-    end
-end
-
---  Watch DescendantAdded (GUI baru yang muncul saat buff) 
-playerGui.DescendantAdded:Connect(function(obj)
-    if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-        task.wait(0.1)
-        local txt = ""
-        pcall(function() txt = obj.Text end)
-        local path = getPath(obj)
-
-        if looksLikeTimer(txt) then
-            warn(string.format("[NEW TIMER] '%s' = '%s' | PATH: %s", obj.Name, txt, path))
-        elseif txt ~= "" then
-            print(string.format("[NEW TEXT] '%s' = '%s' | PATH: %s", obj.Name, txt, path))
-        end
-
-        -- Langsung watch juga
-        if not watched[path] then
-            watched[path] = true
-            local lastTxt = txt
-            obj:GetPropertyChangedSignal("Text"):Connect(function()
-                local newTxt = ""
-                pcall(function() newTxt = obj.Text end)
-                if newTxt == lastTxt then return end
-                local isTimer = looksLikeTimer(newTxt) or looksLikeTimer(lastTxt)
-                if isTimer then
-                    warn(string.format("[TIMER?] %s: '%s' -> '%s' | PATH: %s",
-                        obj.Name, lastTxt, newTxt, path))
-                end
-                lastTxt = newTxt
-            end)
-        end
-    end
-
-    -- Watch juga ScreenGui baru (buff panel yang muncul)
-    if obj:IsA("ScreenGui") then
-        warn(string.format("[NEW ScreenGui] '%s' Enabled=%s | PATH: %s",
-            obj.Name, tostring(obj.Enabled), getPath(obj)))
-    end
+local remote = nil
+pcall(function()
+    remote = RS:FindFirstChild("Remotes")
+          and RS.Remotes:FindFirstChild("UpdateBuffTimes")
 end)
 
---  Print semua TextLabel yang isinya seperti timer 
-print("")
-print("====== BUFF UI SNIFFER AKTIF ======")
-print("Scanning semua TextLabel yang tampak seperti timer...")
-print("")
-
-snapshotAll()
-local timerCandidates = 0
-for path, data in pairs(snapshots) do
-    if looksLikeTimer(data.text) then
-        warn(string.format("[TIMER CANDIDATE] '%s' = '%s' | PATH: %s",
-            data.obj.Name, data.text, path))
-        timerCandidates = timerCandidates + 1
+if not remote then
+    -- Cari recursive
+    for _, obj in ipairs(RS:GetDescendants()) do
+        if obj:IsA("RemoteEvent") and obj.Name == "UpdateBuffTimes" then
+            remote = obj
+            break
+        end
     end
 end
 
-if timerCandidates == 0 then
-    print("Tidak ada TextLabel dengan format timer ditemukan saat ini.")
-    print("Pantau [TIMER?] dan [NEW TIMER] saat buff aktif/muncul.")
+if not remote then
+    warn("UpdateBuffTimes tidak ditemukan!")
 else
-    print(string.format("Total timer candidates: %d", timerCandidates))
-end
+    print("Remote ditemukan: " .. remote:GetFullName())
+    print("Pantau semua buff ID dan timer-nya di bawah ini:")
+    print("============================================================")
 
-print("")
-watchAll()
-print("Watch aktif pada " .. tostring(#playerGui:GetDescendants()) .. " descendants")
-print("Pantau [TIMER?] di console - itu lokasi timer buff")
-print("====================================")
+    local knownBuffs = {}
+
+    remote.OnClientEvent:Connect(function(data)
+        if type(data) ~= "table" then
+            warn("DATA BUKAN TABLE: " .. tostring(data))
+            return
+        end
+
+        -- Print semua entry dalam table
+        for buffId, timeVal in pairs(data) do
+            local id  = tostring(buffId)
+            local val = tonumber(timeVal) or 0
+            local prev = knownBuffs[id]
+
+            if prev == nil then
+                -- Buff baru pertama kali terdeteksi
+                warn(string.format("[NEW BUFF] ID=%s | Timer=%s detik (~%.1f menit)",
+                    id, tostring(val), val/60))
+            elseif val ~= prev then
+                -- Nilai berubah
+                if val > prev then
+                    warn(string.format("[BUFF RENEWED] ID=%s | %s -> %s (naik = buff di-refresh)",
+                        id, tostring(prev), tostring(val)))
+                elseif val == 0 and prev > 0 then
+                    warn(string.format("[BUFF EXPIRED] ID=%s | Timer habis", id))
+                else
+                    print(string.format("[BUFF TICK] ID=%s | %s -> %s",
+                        id, tostring(prev), tostring(val)))
+                end
+            end
+
+            knownBuffs[id] = val
+        end
+    end)
+
+    print("Sniffer aktif - tunggu buff baru muncul atau buff aktif di-refresh")
+    print("[NEW BUFF]     = buff baru terdeteksi + nilai timer awalnya")
+    print("[BUFF TICK]    = timer berkurang tiap update")
+    print("[BUFF RENEWED] = buff di-refresh/diperpanjang")
+    print("[BUFF EXPIRED] = timer habis")
+    print("============================================================")
+end

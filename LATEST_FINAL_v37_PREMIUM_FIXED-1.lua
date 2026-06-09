@@ -4834,8 +4834,6 @@ do
  local _uiCache      = {}  -- [obj] = state sebelum hide
  local _animBbCache  = {}
  local _animPcCache  = {}
- local _animAnimsCache = {}  -- [obj] = {prop, prevValue} untuk workspace.Anims
- local _animAnimsConn  = nil -- watcher ChildAdded di workspace.Anims
 
  local _OUR_GUI = "ASH_NightFrost"
 
@@ -5100,61 +5098,6 @@ do
              end)
          end)
 
-         -- Hide semua objek di workspace.Anims (initial scan)
-         _animAnimsCache = {}
-         pcall(function()
-             local animsFolder = workspace:FindFirstChild("Anims")
-             if animsFolder then
-                 for _, obj in ipairs(animsFolder:GetDescendants()) do
-                     pcall(function()
-                         if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
-                             or obj:IsA("PointLight") or obj:IsA("Fire") or obj:IsA("Sparkles") then
-                             _animAnimsCache[obj] = {prop="Enabled", prev=obj.Enabled}
-                             obj.Enabled = false
-                         elseif obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("SpecialMesh") then
-                             _animAnimsCache[obj] = {prop="Transparency", prev=obj.Transparency}
-                             obj.Transparency = 1
-                         elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
-                             _animAnimsCache[obj] = {prop="Enabled", prev=obj.Enabled}
-                             obj.Enabled = false
-                         elseif obj:IsA("LocalScript") or obj:IsA("Script") then
-                             _animAnimsCache[obj] = {prop="Disabled", prev=obj.Disabled}
-                             obj.Disabled = true
-                         end
-                     end)
-                 end
-             end
-         end)
-
-         -- Watcher: hide objek baru yang di-add ke workspace.Anims
-         if _animAnimsConn then _animAnimsConn:Disconnect(); _animAnimsConn = nil end
-         pcall(function()
-             local animsFolder = workspace:FindFirstChild("Anims")
-             if animsFolder then
-                 _animAnimsConn = animsFolder.DescendantAdded:Connect(function(obj)
-                     task.defer(function()
-                         pcall(function()
-                             if not _hideAnimOn then return end
-                             if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam")
-                                 or obj:IsA("PointLight") or obj:IsA("Fire") or obj:IsA("Sparkles") then
-                                 _animAnimsCache[obj] = {prop="Enabled", prev=obj.Enabled}
-                                 obj.Enabled = false
-                             elseif obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("SpecialMesh") then
-                                 _animAnimsCache[obj] = {prop="Transparency", prev=obj.Transparency}
-                                 obj.Transparency = 1
-                             elseif obj:IsA("BillboardGui") or obj:IsA("SurfaceGui") then
-                                 _animAnimsCache[obj] = {prop="Enabled", prev=obj.Enabled}
-                                 obj.Enabled = false
-                             elseif obj:IsA("LocalScript") or obj:IsA("Script") then
-                                 _animAnimsCache[obj] = {prop="Disabled", prev=obj.Disabled}
-                                 obj.Disabled = true
-                             end
-                         end)
-                     end)
-                 end)
-             end
-         end)
-
      else
          -- RESTORE PENUH
          if _animLoop    then _animLoop:Disconnect();    _animLoop    = nil end
@@ -5192,23 +5135,6 @@ do
              pcall(function() if obj and obj.Parent then obj.Enabled = prev end end)
          end
          _animPcCache = {}
-
-         -- Restore workspace.Anims ke state sebelumnya
-         if _animAnimsConn then _animAnimsConn:Disconnect(); _animAnimsConn = nil end
-         for obj, info in pairs(_animAnimsCache) do
-             pcall(function()
-                 if obj and obj.Parent then
-                     if info.prop == "Enabled" then
-                         obj.Enabled = info.prev
-                     elseif info.prop == "Transparency" then
-                         obj.Transparency = info.prev
-                     elseif info.prop == "Disabled" then
-                         obj.Disabled = info.prev
-                     end
-                 end
-             end)
-         end
-         _animAnimsCache = {}
      end
  end
 

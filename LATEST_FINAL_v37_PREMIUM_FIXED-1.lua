@@ -10658,6 +10658,27 @@ function StartAscensionLoop()
       return IsBossAsc(name)
      end
 
+     -- [FIX v50] Tunggu mapId ASC valid sebelum mulai scan boss
+     -- Identik pola RAID: snapshot mapId + anchor posisi player diambil SETELAH mapId valid
+     -- Tanpa ini: filter mapId di _tryAddBoss terlalu cepat return saat ChildAdded fire
+     PingWait(0.3) -- beri server 1 tick untuk update workspace.MapId
+     local _ascMapIdSnapshot = GetCurrentMapId()
+     local _ascSnapWait = 0
+     while (_ascMapIdSnapshot == nil or _ascMapIdSnapshot < 50301 or _ascMapIdSnapshot > 50326)
+      and _ascSnapWait < 3 and ASC.running and not _ascDone do
+      PingWait(0.3); _ascSnapWait = _ascSnapWait + 0.3
+      _ascMapIdSnapshot = GetCurrentMapId()
+     end
+     -- _ascMapIdFilterActive: hanya aktifkan filter mapId jika snapshot benar-benar valid
+     -- Jika server lambat update, filter dimatikan agar boss tidak ditolak salah
+     local _ascMapIdFilterActive = _ascMapIdSnapshot ~= nil
+      and (_ascMapIdSnapshot >= 50301 and _ascMapIdSnapshot <= 50326)
+     -- Anchor posisi player diambil setelah mapId valid
+     -- Jika diambil terlalu awal posisi masih di map lama -> semua enemy ditolak karena jarak
+     local _ascAnchorPos = GetPlayerPos()
+     local _ascAnchorValid = _ascAnchorPos and _ascAnchorPos.Magnitude > 10
+     local MAX_DIST_ASC_BOSS = 2000
+
      -- [FIX v50] Early boss detection ASC - scan agresif semua sumber
      local _earlyBoss = nil
      local _loadWait = 0
@@ -10724,9 +10745,13 @@ function StartAscensionLoop()
      local function _tryAddBoss(obj)
       if boss or not obj:IsA("Model") then return end
       if IsBossAscWithHint(obj.Name) then
-       -- [FIX ZOMBIE] Hard check: MapId wajib dalam range ASC (50301-50326)
-       local _curMap = GetCurrentMapId()
-       if not _curMap or (_curMap < 50301 or _curMap > 50326) then return end
+       -- [FIX v50] Filter mapId toleran: hanya blokir jika filter aktif DAN mapId jelas di luar range
+       -- Sebelumnya: hard reject jika mapId nil/belum update -> boss dari ChildAdded diabaikan
+       -- Sekarang: jika _ascMapIdFilterActive=false (server belum update), biarkan lolos dulu
+       if _ascMapIdFilterActive then
+        local _curMap = GetCurrentMapId()
+        if _curMap and (_curMap < 50301 or _curMap > 50326) then return end
+       end
        local g = obj:GetAttribute("EnemyGuid") or obj:GetAttribute("BossGuid") or obj:GetAttribute("Guid") or obj:GetAttribute("GUID")
        local hrp = obj:FindFirstChild("HumanoidRootPart")
        local hum = obj:FindFirstChildOfClass("Humanoid")
@@ -10738,10 +10763,16 @@ function StartAscensionLoop()
        if _ap.Magnitude <= 10 then return end
        if _ap.Y < -200 or _ap.Y > 1500 then return end
        if not hrp:IsDescendantOf(workspace) then return end
-       -- [BUG FIX] Validasi jarak 500 studs ke posisi player sebelum set sebagai boss target.
-       local _pp = GetPlayerPos()
-       if _pp and _pp.Magnitude > 1 then
-        if (_ap - _pp).Magnitude > 500 then return end
+       -- [FIX v50] Gunakan anchor posisi yang sudah divalidasi post-TP (identik pola RAID)
+       -- Sebelumnya: GetPlayerPos() on-the-fly, bisa masih transit -> filter jarak tidak akurat
+       if _ascAnchorValid then
+        if (_ap - _ascAnchorPos).Magnitude > MAX_DIST_ASC_BOSS then return end
+       else
+        -- Anchor belum valid: fallback ke GetPlayerPos() on-the-fly
+        local _pp = GetPlayerPos()
+        if _pp and _pp.Magnitude > 1 then
+         if (_ap - _pp).Magnitude > MAX_DIST_ASC_BOSS then return end
+        end
        end
        boss = {guid=g, hrp=hrp, model=obj}
        _bossFoundViaEvent = true

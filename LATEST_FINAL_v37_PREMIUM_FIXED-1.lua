@@ -8342,46 +8342,61 @@ BOSS_NAME_BY_MAP = {
  [20] = "Goku[Super4]",              -- Dragon Ball Wasteland
 }
 
--- [CUSTOM v54] RAID_TP_POS_BY_MAP: titik teleport tetap per mapNum (1-20).
--- AUTO BOSS KILL sekarang TIDAK lagi scan boss berdasarkan nama - langsung TP
--- player+hero ke koordinat hardcode ini, lalu scan musuh radius 10 studs di sekitar
--- titik tersebut. Koordinat diambil manual via Dex Explorer/Infinite Yield (RootPart
--- musuh boss tiap map, folder RaidsEnemys).
-RAID_TP_POS_BY_MAP = {
- [1]  = Vector3.new(4424.86,  1.545,   482.94),
- [2]  = Vector3.new(3683.093, 1.592,   -24.149),
- [3]  = Vector3.new(3913.126, 3.26,    -194.42),
- [4]  = Vector3.new(4515.82,  0.498,   -97.974),
- [5]  = Vector3.new(3770.695, 2.682,   -2.292),
- [6]  = Vector3.new(3998.176, 1.089,   237.737),
- [7]  = Vector3.new(3958,     1.386,   334),
- [8]  = Vector3.new(3074.156, -403.009,-901.566),
- [9]  = Vector3.new(4008.7,   6.6,     244.2),
- [10] = Vector3.new(4003,     1,       344),
- [11] = Vector3.new(4068.021, 42.239,  -155.777),
- [12] = Vector3.new(4016.55,  2.758,   269.535),
- [13] = Vector3.new(4100.676, 55.911,  423.136),
- [14] = Vector3.new(2027.832, 45.263,  2303.919),
- [15] = Vector3.new(1999.051, 17.075,  2185.332),
- [16] = Vector3.new(1999.601, 10.019,  2236.476),
- [17] = Vector3.new(3999.611, 11.47,   93.471),
- [18] = Vector3.new(4000,     38.362,  234.742),
- [19] = Vector3.new(2013.851, 2.266,   2096.837),
- [20] = Vector3.new(5854.831, 9.929,   16260.092),
+-- [v56] RAID_MAP_INFO: mapping mapNum (1-20) -> {instanceName, bossRootPartName}
+-- instanceName  = nama folder di workspace.Maps
+-- bossRootPartName = nama RootPart boss di [instanceName].Map.RaidsEnemys
+-- AUTO BOSS KILL akan ambil CFrame langsung dari RootPart tersebut (realtime).
+RAID_MAP_INFO = {
+ [1]  = { instance = "Map101", rootPart = "4025" },
+ [2]  = { instance = "Map2",   rootPart = "4050" },
+ [3]  = { instance = "Map103", rootPart = "4025" },
+ [4]  = { instance = "Map4",   rootPart = "4050" },
+ [5]  = { instance = "Map5",   rootPart = "4050" },
+ [6]  = { instance = "Map6",   rootPart = "4044" },
+ [7]  = { instance = "Map7",   rootPart = "4050" },
+ [8]  = { instance = "Map8",   rootPart = "4050" },
+ [9]  = { instance = "Map9",   rootPart = "4050" },
+ [10] = { instance = "Map10",  rootPart = "4050" },
+ [11] = { instance = "Map11",  rootPart = "4050" },
+ [12] = { instance = "Map12",  rootPart = "4050" },
+ [13] = { instance = "Map13",  rootPart = "4050" },
+ [14] = { instance = "Map14",  rootPart = "4050" },
+ [15] = { instance = "Map15",  rootPart = "4050" },
+ [16] = { instance = "Map16",  rootPart = "4050" },
+ [17] = { instance = "Map17",  rootPart = "4050" },
+ [18] = { instance = "Map18",  rootPart = "4050" },
+ [19] = { instance = "Map19",  rootPart = "4050" },
+ [20] = { instance = "Map20",  rootPart = "4050" },
 }
 
+-- [v56] GetBossRootPartCFrame: ambil CFrame realtime dari RootPart boss di RaidsEnemys.
+-- Path: workspace.Maps.[instanceName].Map.RaidsEnemys.[rootPartName]
+-- Return: CFrame jika ditemukan, nil jika tidak ada.
+function GetBossRootPartCFrame(mapNum)
+ local info = RAID_MAP_INFO[mapNum]
+ if not info then return nil end
+ local mf = workspace:FindFirstChild("Maps")
+ if not mf then return nil end
+ local mapFolder = mf:FindFirstChild(info.instance)
+ if not mapFolder then return nil end
+ local mapChild = mapFolder:FindFirstChild("Map")
+ if not mapChild then return nil end
+ local raidsEnemys = mapChild:FindFirstChild("RaidsEnemys")
+ if not raidsEnemys then return nil end
+ local rootPart = raidsEnemys:FindFirstChild(info.rootPart)
+ if not rootPart then return nil end
+ return rootPart.CFrame
+end
+
 -- Helper: ambil mapNum (1-20) dari mapId raid.
--- [v55] Primary: resolve via workspace.Maps instance name (Map101, Map2..Map20).
+-- [v56] Primary: resolve via workspace.Maps instance name (dari RAID_MAP_INFO).
 -- Fallback: konversi numerik mapId (lobby 50001-50020 atau in-map 50101-50120).
 function GetRaidMapNum(mapId)
  -- Primary: cek workspace.Maps untuk nama instance yang aktif saat ini
  local mf = workspace:FindFirstChild("Maps")
  if mf then
-  -- Map 1 instance-nya bernama "Map101" (beda sendiri)
-  if mf:FindFirstChild("Map101") then return 1 end
-  -- Map 2-20 instance-nya bernama "Map2", "Map3", ... "Map20"
-  for i = 2, 20 do
-   if mf:FindFirstChild("Map"..i) then return i end
+  for mapNum, info in pairs(RAID_MAP_INFO) do
+   if mf:FindFirstChild(info.instance) then return mapNum end
   end
  end
  -- Fallback: konversi dari mapId numerik
@@ -12522,19 +12537,23 @@ local function ResolveEntry()
  task.wait(2) -- ~2 detik delay render, sesuai keputusan
 
  if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
-  -- [CUSTOM v54] AUTO BOSS KILL - TP DIRECT MODE
-  -- Tidak lagi scan boss berdasarkan nama (BOSS_NAME_BY_MAP/BOSS_KEYS dihapus dari flow ini).
-  -- Player+hero langsung di-TP ke koordinat hardcode per map (RAID_TP_POS_BY_MAP),
-  -- lalu scan musuh dalam radius 10 studs dari titik tersebut. Hanya 1 musuh yang
-  -- diserang (yang pertama kena radius); kalau musuh itu mati, lanjut ke STEP5.
+  -- [v56] AUTO BOSS KILL - TP KE ROOTPART BOSS (REALTIME)
+  -- Teleport player+hero langsung ke CFrame RootPart boss di workspace.Maps.
+  -- Path: workspace.Maps.[instanceName].Map.RaidsEnemys.[rootPartName]
+  -- Mapping instance+rootPart per mapNum ada di RAID_MAP_INFO.
+  -- Setelah TP, scan musuh radius 10 studs dari posisi RootPart tersebut.
 
-  -- [v55] Resolve mapNum via workspace.Maps instance (primary) lalu fallback numerik.
-  -- Ini memastikan mapNum akurat meskipun serverMapId tidak tercapture dengan benar.
+  -- Resolve mapNum via workspace.Maps instance (primary) lalu fallback numerik.
   local _mapNumNow = GetRaidMapNum(raidEntry and raidEntry.mapId)
-  local _tpTargetPos = _mapNumNow and RAID_TP_POS_BY_MAP[_mapNumNow] or nil
+
+  -- Ambil CFrame realtime dari RootPart boss
+  local _tpTargetCF  = _mapNumNow and GetBossRootPartCFrame(_mapNumNow) or nil
+  local _tpTargetPos = _tpTargetCF and _tpTargetCF.Position or nil
 
   if not _tpTargetPos then
-   RaidStatusUpdate("[!] Koordinat TP Map " .. tostring(_mapNumNow) .. " belum diset - skip", Color3.fromRGB(255,80,80))
+   local _info = _mapNumNow and RAID_MAP_INFO[_mapNumNow]
+   local _detail = _info and ("Maps."..(_info.instance)..".Map.RaidsEnemys.".._info.rootPart) or ("mapNum="..tostring(_mapNumNow))
+   RaidStatusUpdate("[!] RootPart boss tidak ditemukan - " .. _detail .. " - skip", Color3.fromRGB(255,80,80))
    _step4Cleanup()
    task.wait(2)
   else
@@ -12542,25 +12561,29 @@ local function ResolveEntry()
    local _bd = math.max(1, math.min(10, RAID.bossDelay or 3))
    for _ci = _bd, 1, -1 do
     if not RAID.running or RAID._raidDone then break end
-    RaidStatusUpdate("[K] TP ke titik Map " .. tostring(_mapNumNow) .. " - " .. _ci .. "s...", Color3.fromRGB(255,160,60))
+    RaidStatusUpdate("[K] TP ke Boss Map " .. tostring(_mapNumNow) .. " - " .. _ci .. "s...", Color3.fromRGB(255,160,60))
     task.wait(1)
    end
 
    if RAID.running and not RAID._raidDone then
-    -- 1) TP Player ke koordinat target
+    -- Refresh CFrame boss tepat sebelum TP (posisi bisa saja bergerak)
+    _tpTargetCF  = GetBossRootPartCFrame(_mapNumNow) or _tpTargetCF
+    _tpTargetPos = _tpTargetCF.Position
+
+    -- 1) TP Player ke posisi RootPart boss
     pcall(function()
      local char = LP.Character
      local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-     if hrp then hrp.CFrame = CFrame.new(_tpTargetPos) end
+     if hrp then hrp.CFrame = _tpTargetCF end
     end)
 
-    -- 2) TP semua hero ke koordinat target
+    -- 2) TP semua hero ke posisi RootPart boss
     pcall(function()
      local heroFolder = workspace:FindFirstChild("Heros")
      if heroFolder then
       for _, hModel in ipairs(heroFolder:GetChildren()) do
        local hHrp = hModel:FindFirstChild("HumanoidRootPart")
-       if hHrp then hHrp.CFrame = CFrame.new(_tpTargetPos) end
+       if hHrp then hHrp.CFrame = _tpTargetCF end
       end
      end
     end)
@@ -12578,7 +12601,7 @@ local function ResolveEntry()
      if heroFolder then
       for _, hModel in ipairs(heroFolder:GetChildren()) do
        local hHrp = hModel:FindFirstChild("HumanoidRootPart")
-       if hHrp then hHrp.CFrame = CFrame.new(_tpTargetPos) end
+       if hHrp then hHrp.CFrame = _tpTargetCF end
       end
      end
     end)
@@ -12588,7 +12611,7 @@ local function ResolveEntry()
      local char = LP.Character
      local hrp  = char and char:FindFirstChild("HumanoidRootPart")
      if hrp then
-      _frozenCFrame = CFrame.new(_tpTargetPos)
+      _frozenCFrame = _tpTargetCF
       hrp.Anchored  = true
       hrp.CFrame    = _frozenCFrame
       _freezeConn = RunService.Heartbeat:Connect(function()
@@ -12605,7 +12628,7 @@ local function ResolveEntry()
      end
     end)
 
-    -- ── SCAN RADIUS 10 STUDS - cari 1 musuh terdekat dari titik TP ──────────
+    -- ── SCAN RADIUS 10 STUDS - cari 1 musuh terdekat dari posisi RootPart boss ──
     -- Timeout 3 detik (sesuai keputusan): scan tiap 0.5s, total 6x percobaan.
     local TP_SCAN_RADIUS = 10
     local function _scanNearbyEnemy()

@@ -12556,6 +12556,19 @@ local function ResolveEntry()
   local _tpTargetCF  = _mapNumNow and GetBossRootPartCFrame(_mapNumNow) or nil
   local _tpTargetPos = _tpTargetCF and _tpTargetCF.Position or nil
 
+  -- [v56] FALLBACK HARDCODE khusus Map 1 dan Map 3:
+  -- RootPart di kedua map ini tidak bisa dideteksi via workspace.Maps,
+  -- langsung pakai koordinat hardcode jika RootPart tidak ditemukan.
+  if not _tpTargetPos then
+   if _mapNumNow == 1 then
+    _tpTargetPos = Vector3.new(4424.86, 1.545, 482.94)
+    _tpTargetCF  = CFrame.new(_tpTargetPos)
+   elseif _mapNumNow == 3 then
+    _tpTargetPos = Vector3.new(3913.126, 3.26, -194.42)
+    _tpTargetCF  = CFrame.new(_tpTargetPos)
+   end
+  end
+
   if not _tpTargetPos then
    local _info = _mapNumNow and RAID_MAP_INFO[_mapNumNow]
    local _detail = _info and ("Maps."..(_info.instance)..".Map.RaidsEnemys.".._info.rootPart) or ("mapNum="..tostring(_mapNumNow))

@@ -12556,16 +12556,24 @@ local function ResolveEntry()
   local _tpTargetCF  = _mapNumNow and GetBossRootPartCFrame(_mapNumNow) or nil
   local _tpTargetPos = _tpTargetCF and _tpTargetCF.Position or nil
 
-  -- [v56] FALLBACK HARDCODE khusus Map 1 dan Map 3:
+  -- [v56] FALLBACK BOSS NAME khusus Map 1 dan Map 3:
   -- RootPart di kedua map ini tidak bisa dideteksi via workspace.Maps,
-  -- langsung pakai koordinat hardcode jika RootPart tidak ditemukan.
-  if not _tpTargetPos then
-   if _mapNumNow == 1 then
-    _tpTargetPos = Vector3.new(4424.86, 1.545, 482.94)
-    _tpTargetCF  = CFrame.new(_tpTargetPos)
-   elseif _mapNumNow == 3 then
-    _tpTargetPos = Vector3.new(3913.126, 3.26, -194.42)
-    _tpTargetCF  = CFrame.new(_tpTargetPos)
+  -- scan workspace.Enemys berdasarkan nama boss (Goblin King / Igris).
+  if not _tpTargetPos and (_mapNumNow == 1 or _mapNumNow == 3) then
+   local _bossName = BOSS_NAME_BY_MAP[_mapNumNow]
+   local _enemysFolder = workspace:FindFirstChild("Enemys")
+   if _enemysFolder and _bossName then
+    for _, e in ipairs(_enemysFolder:GetChildren()) do
+     if e:IsA("Model") and e.Name:find(_bossName, 1, true) then
+      local _bHrp = e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
+      local _bHum = e:FindFirstChildOfClass("Humanoid")
+      if _bHrp and _bHum and _bHum.Health > 0 then
+       _tpTargetPos = _bHrp.Position
+       _tpTargetCF  = _bHrp.CFrame
+       break
+      end
+     end
+    end
    end
   end
 

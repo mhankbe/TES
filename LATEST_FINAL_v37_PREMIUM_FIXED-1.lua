@@ -11939,11 +11939,26 @@ local function ResolveEntry()
                     return valid_raids[1]
                 end
 
+                -- [EXCLUDE MAP v1] Daftar map yang dikecualikan per pick mode (hardcode, Auto RAID Normal saja)
+                -- Easy   : kecualikan map 1 dan 3
+                -- Default: kecualikan map 1, 3, dan 8
+                local EASY_EXCLUDE_MAPS = {[1]=true, [3]=true}
+                local DEFAULT_EXCLUDE_MAPS = {[1]=true, [3]=true, [8]=true}
+
                 local function pickByDiff(list)
                     if #list == 0 then return nil end
                     if pm == "easy" then
-                        table.sort(list, function(a, b) return a.mapId < b.mapId end)
-                        return list[1]
+                        -- [EXCLUDE MAP] Buang dulu map yang dikecualikan, sort ascending, ambil terkecil
+                        local easyFiltered = {}
+                        for _, r in ipairs(list) do
+                            local mn = r.mapId - 50000
+                            if not EASY_EXCLUDE_MAPS[mn] then table.insert(easyFiltered, r) end
+                        end
+                        -- Fallback defensif: kalau ternyata SEMUA map yang live cuma map 1 & 3
+                        -- (kasus ekstrem yang seharusnya tidak terjadi), jangan diam -> pakai list asli
+                        local easySource = (#easyFiltered > 0) and easyFiltered or list
+                        table.sort(easySource, function(a, b) return a.mapId < b.mapId end)
+                        return easySource[1]
                     elseif pm == "hard" then
                         table.sort(list, function(a, b) return a.mapId > b.mapId end)
                         return list[1]
@@ -11951,7 +11966,10 @@ local function ResolveEntry()
                         local maps1to8 = {}
                         for _, r in ipairs(list) do
                             local mn = r.mapId - 50000
-                            if mn >= 1 and mn <= 8 then table.insert(maps1to8, r) end
+                            -- [EXCLUDE MAP] Pool asli 1-8, lalu buang map yang dikecualikan
+                            if mn >= 1 and mn <= 8 and not DEFAULT_EXCLUDE_MAPS[mn] then
+                                table.insert(maps1to8, r)
+                            end
                         end
                         if #maps1to8 == 0 then return nil end 
                         table.sort(maps1to8, function(a, b) return a.mapId < b.mapId end)
@@ -12554,117 +12572,29 @@ local function ResolveEntry()
   -- Resolve mapNum via workspace.Maps instance (primary) lalu fallback numerik.
   local _mapNumNow = GetRaidMapNum(raidEntry and raidEntry.mapId)
 
-  local _tpTargetCF  = nil
-  local _tpTargetPos = nil
+  -- Ambil CFrame realtime dari RootPart boss
+  local _tpTargetCF  = _mapNumNow and GetBossRootPartCFrame(_mapNumNow) or nil
+  local _tpTargetPos = _tpTargetCF and _tpTargetCF.Position or nil
 
-  -- [v56.1] Map 1 & Map 3: PATH-BASED tidak reliable (RootPart tidak terdeteksi
-  -- via workspace.Maps), jadi untuk kedua map ini pakai SCAN-BY-NAME (ala V52)
-  -- sebagai metode UTAMA. GetBossRootPartCFrame jadi fallback TERAKHIR saja.
-  if _mapNumNow == 1 or _mapNumNow == 3 then
+  -- [v56] FALLBACK BOSS NAME khusus Map 1 dan Map 3:
+  -- RootPart di kedua map ini tidak bisa dideteksi via workspace.Maps,
+  -- scan workspace.Enemys berdasarkan nama boss (Goblin King / Igris).
+  if not _tpTargetPos and (_mapNumNow == 1 or _mapNumNow == 3) then
    local _bossName = BOSS_NAME_BY_MAP[_mapNumNow]
-
-   if _bossName then
-    -- Anchor posisi player SAAT INI (sebelum TP) untuk filter jarak,
-    -- meniru _isEnemyInThisMap() V52.
-    local _anchorPos = nil
-    do
-     local _aChar = LP.Character
-     local _aHrp  = _aChar and _aChar:FindFirstChild("HumanoidRootPart")
-     if _aHrp then _anchorPos = _aHrp.Position end
-    end
-
-    local _scanFolderNames = {
-     "Bosses", "Boss", "RaidBoss", "Enemys", "Enemy",
-     "Enemies", "RaidEnemys", "Monsters", "Monster",
-    }
-    local MAX_DIST_BOSS_M13 = 5000
-
-    local function _tryValidateBossModel(e)
-     if not (e:IsA("Model") and e.Name:find(_bossName, 1, true)) then return nil end
-     if not e:IsDescendantOf(workspace) then return nil end
-     local _bHrp = e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
-     local _bHum = e:FindFirstChildOfClass("Humanoid")
-     if not (_bHrp and _bHum) then return nil end
-     if not (_bHum.Health > 0 and _bHum.MaxHealth > 0) then return nil end
-     local _by = _bHrp.Position.Y
-     if not (_by > -200 and _by < 1500) then return nil end
-     if _anchorPos and (_bHrp.Position - _anchorPos).Magnitude > MAX_DIST_BOSS_M13 then return nil end
-     return _bHrp
-    end
-
-    local _foundHrp = nil
-
-    -- Cek instan dulu (boss mungkin sudah ada sebelum kita mulai scan)
-    for _, _fname in ipairs(_scanFolderNames) do
-     local _folder = workspace:FindFirstChild(_fname)
-     if _folder then
-      for _, e in ipairs(_folder:GetChildren()) do
-       local _hrp = _tryValidateBossModel(e)
-       if _hrp then _foundHrp = _hrp; break end
+   local _enemysFolder = workspace:FindFirstChild("Enemys")
+   if _enemysFolder and _bossName then
+    for _, e in ipairs(_enemysFolder:GetChildren()) do
+     if e:IsA("Model") and e.Name:find(_bossName, 1, true) then
+      local _bHrp = e:FindFirstChild("HumanoidRootPart") or e.PrimaryPart
+      local _bHum = e:FindFirstChildOfClass("Humanoid")
+      if _bHrp and _bHum and _bHum.Health > 0 then
+       _tpTargetPos = _bHrp.Position
+       _tpTargetCF  = _bHrp.CFrame
+       break
       end
      end
-     if _foundHrp then break end
-    end
-
-    -- [event+polling] Kalau belum ketemu, dengar ChildAdded di tiap folder umum
-    -- selama max 3s, sambil polling ringan sebagai safety net.
-    if not _foundHrp then
-     local _scanConns = {}
-     local _scanStart = os.clock()
-     local _scanTimeout = 3
-
-     local function _onChildAdded(child)
-      if _foundHrp then return end
-      local _hrp = _tryValidateBossModel(child)
-      if _hrp then _foundHrp = _hrp end
-     end
-
-     for _, _fname in ipairs(_scanFolderNames) do
-      local _folder = workspace:FindFirstChild(_fname)
-      if _folder then
-       table.insert(_scanConns, _folder.ChildAdded:Connect(_onChildAdded))
-      end
-     end
-
-     while not _foundHrp and (os.clock() - _scanStart) < _scanTimeout and RAID.running and not RAID._raidDone do
-      task.wait(0.1)
-      -- polling safety net: ulang cek folder yang belum ada saat connect awal
-      -- (misal folder baru muncul setelah loop connect di atas)
-      for _, _fname in ipairs(_scanFolderNames) do
-       if not _foundHrp then
-        local _folder = workspace:FindFirstChild(_fname)
-        if _folder then
-         for _, e in ipairs(_folder:GetChildren()) do
-          local _hrp = _tryValidateBossModel(e)
-          if _hrp then _foundHrp = _hrp; break end
-         end
-        end
-       end
-      end
-      if _foundHrp then break end
-     end
-
-     for _, _c in ipairs(_scanConns) do
-      pcall(function() _c:Disconnect() end)
-     end
-    end
-
-    if _foundHrp then
-     _tpTargetPos = _foundHrp.Position
-     _tpTargetCF  = _foundHrp.CFrame
     end
    end
-
-   -- [FALLBACK TERAKHIR] Scan-by-name gagal total -> coba path RootPart juga,
-   -- urutan dibalik dari sebelumnya (sekarang ini jadi yang paling akhir).
-   if not _tpTargetPos then
-    _tpTargetCF  = GetBossRootPartCFrame(_mapNumNow)
-    _tpTargetPos = _tpTargetCF and _tpTargetCF.Position or nil
-   end
-  else
-   -- Map selain 1 & 3: TIDAK BERUBAH - tetap path RootPart (RAID_MAP_INFO) saja.
-   _tpTargetCF  = _mapNumNow and GetBossRootPartCFrame(_mapNumNow) or nil
-   _tpTargetPos = _tpTargetCF and _tpTargetCF.Position or nil
   end
 
   if not _tpTargetPos then

@@ -14946,25 +14946,26 @@ end -- end Auto Ascension do block
 
 -- ============================================================
 -- ============================================================
--- AUTO SIEGE - v98 [REWRITE: Anniversary Flow Ecosystem]
+-- AUTO SIEGE - v100 [REWRITE: Clean Flow]
 -- Flow:
---   1. Tunggu SIEGE.live ada entry (UpdateCityRaidInfo listener / polling)
---   2. Hukum kasta: tunggu Dungeon/Raid/ASC selesai dulu
---   3. Set _siegeInterrupt = true, klaim MODE "siege"
---   4. TP ke baseMap dulu (LocalTp) → konfirmasi
---   5. Entry sequence: EnterCityRaidMap → StartLocalPlayerTeleport
---      → EquipHeroWithData → LocalPlayerTeleportSuccess
---   6. Validasi masuk: workspace.Maps → Map201/202/203/204/205
---   7. Jeda 2 detik → SiegeMassAttack sampai 30 kill → SUKSES
---   8. Hapus SIEGE.live entry → tunggu notif OpenCityRaid lagi (NO LOOP cooldown)
+--   1. Toggle ON → tunggu UpdateCityRaidInfo dari server (SIEGE.live diisi scanner)
+--   2. Notif masuk → TP player ke baseMapId (LocalTp)
+--   3. Delay 1 detik
+--   4. Fire entry remotes: EnterCityRaidMap → StartLocalPlayerTeleport
+--      → LocalPlayerTeleportSuccess → EquipHeroWithData
+--   5. Delay 3 detik (render musuh)
+--   6. Validasi: scan seluruh workspace:GetChildren() cari Map201-Map205
+--   7. Serang semua musuh di workspace.Enemys, pantau terus apakah
+--      Map201-Map205 masih ada. Jika hilang → stop serang
+--   8. QuitCityRaidMap → cleanup → count → tunggu notif berikutnya
 -- ============================================================
 
 local SIEGE_DATA = {
-    [3]  = {name="Map 3  - Shadow Castle",      cityRaidId=1000001, tpMapId=50201, baseMapId=50003, mapFolder="Map201"},
-    [7]  = {name="Map 7  - Demon Castle Tier 2", cityRaidId=1000002, tpMapId=50202, baseMapId=50007, mapFolder="Map202"},
-    [10] = {name="Map 10 - Plagueheart",         cityRaidId=1000003, tpMapId=50203, baseMapId=50010, mapFolder="Map203"},
-    [13] = {name="Map 13 - Lava Hell",           cityRaidId=1000004, tpMapId=50204, baseMapId=50013, mapFolder="Map204"},
-    [18] = {name="Map 18 - Golden Throne",       cityRaidId=1000005, tpMapId=50205, baseMapId=50018, mapFolder="Map205"},
+    [3]  = {name="Map 3  - Shadow Castle",       cityRaidId=1000001, tpMapId=50201, baseMapId=50003, mapFolder="Map201"},
+    [7]  = {name="Map 7  - Demon Castle Tier 2",  cityRaidId=1000002, tpMapId=50202, baseMapId=50007, mapFolder="Map202"},
+    [10] = {name="Map 10 - Plagueheart",          cityRaidId=1000003, tpMapId=50203, baseMapId=50010, mapFolder="Map203"},
+    [13] = {name="Map 13 - Lava Hell",            cityRaidId=1000004, tpMapId=50204, baseMapId=50013, mapFolder="Map204"},
+    [18] = {name="Map 18 - Golden Throne",        cityRaidId=1000005, tpMapId=50205, baseMapId=50018, mapFolder="Map205"},
 }
 local SIEGE_MAP_NUMS = {3, 7, 10, 13, 18}
 
@@ -14979,7 +14980,7 @@ SIEGE = {
     countSummaryLbl = nil,
     count        = {[3]=0,[7]=0,[10]=0,[13]=0,[18]=0},
     killed       = 0,
-    live         = {},  -- {[cityRaidId] = mapNum}  diisi oleh listener
+    live         = {},  -- {[cityRaidId] = mapNum} diisi oleh scanner
 }
 
 _siegeSessionStart = nil
@@ -15015,7 +15016,7 @@ StopSiege = function()
     SIEGE.running     = false
     SIEGE.inMap       = false
     SIEGE.teleporting = false
-    SIEGE._lastExitTime = os.time() -- [BUG FIX] catat waktu keluar untuk guard RAID enemy scan
+    SIEGE._lastExitTime = os.time()
     _siegeInterrupt   = false
     MODE:Release("siege")
     if MODE.current == "siege" then MODE.current = "idle" end
@@ -15029,52 +15030,36 @@ end
 -- ── Wakeup event ───────────────────────────────────────────────
 local _siegeWakeup = nil
 
--- ── Helper: apakah player sudah di dalam Siege map ────────────
-local function IsInSiegeMap()
-    -- Primary: workspace.Maps → Map201/202/203/204/205
+-- ── Helper: cek apakah player masih di dalam Siege map ────────
+-- Scan seluruh workspace:GetChildren() cari Map201-Map205
+local function IsInSiegeMapNow()
+    for _, obj in ipairs(workspace:GetChildren()) do
+        local n = obj.Name
+        if n == "Map201" or n == "Map202" or n == "Map203"
+        or n == "Map204" or n == "Map205" then
+            return true
+        end
+    end
+    -- Fallback: cek workspace.Maps
     local mf = workspace:FindFirstChild("Maps")
     if mf then
         for i = 1, 5 do
-            if mf:FindFirstChild("Map20"..i) then return true, 50200 + i end
+            if mf:FindFirstChild("Map20"..i) then return true end
         end
     end
-    -- Fallback: workspace MapId attribute
+    -- Fallback: MapId attribute
     local ok, wm = pcall(function()
         return workspace:GetAttribute("MapId")
             or workspace:GetAttribute("mapId")
             or workspace:GetAttribute("CurrentMapId")
     end)
     if ok and type(wm) == "number" and wm >= 50201 and wm <= 50205 then
-        return true, wm
-    end
-    return false, nil
-end
-
--- ── Helper: apakah player sudah keluar dari Siege map ─────────
-local function IsInLobby_Siege(baseMapId)
-    local mf = workspace:FindFirstChild("Maps")
-    if mf then
-        -- Tidak ada satupun Map201-205 di Maps → sudah di lobby/basemap
-        local inSiege = false
-        for i = 1, 5 do
-            if mf:FindFirstChild("Map20"..i) then inSiege = true; break end
-        end
-        if not inSiege then return true end
-    end
-    -- Fallback: MapId kembali ke basemap
-    local ok, wm = pcall(function()
-        return workspace:GetAttribute("MapId")
-            or workspace:GetAttribute("mapId")
-            or workspace:GetAttribute("CurrentMapId")
-    end)
-    if ok and type(wm) == "number" then
-        if baseMapId and wm == baseMapId then return true end
-        if wm >= 50001 and wm <= 50020 then return true end
+        return true
     end
     return false
 end
 
--- ── Helper: ambil musuh Siege ─────────────────────────────────
+-- ── Helper: ambil musuh Siege dari workspace.Enemys ───────────
 local function GetSiegeEnemies()
     local list, seen = {}, {}
     local FOLDERS = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy"}
@@ -15087,12 +15072,11 @@ local function GetSiegeEnemies()
         local hum = e:FindFirstChildOfClass("Humanoid")
         if not (g and h and hum) then return end
         if seen[g] then return end
-        -- [FIX ZOMBIE] Tolak enemy zombie dari map/session sebelumnya
         if hum.Health <= 0 then return end
         if hum.MaxHealth <= 0 then return end
         local p = h.Position
-        if p.Magnitude <= 10 then return end   -- posisi default/zero = zombie
-        if p.Y < -200 or p.Y > 1500 then return end -- void atau langit = zombie
+        if p.Magnitude <= 10 then return end
+        if p.Y < -200 or p.Y > 1500 then return end
         if not h:IsDescendantOf(workspace) then return end
         seen[g] = true
         table.insert(list, {model=e, guid=g, hrp=h})
@@ -15101,35 +15085,27 @@ local function GetSiegeEnemies()
         local f = workspace:FindFirstChild(fname)
         if f then for _, e in ipairs(f:GetChildren()) do _add(e) end end
     end
-    -- Fallback scan workspace langsung kalau semua folder kosong
     if #list == 0 then
         for _, obj in ipairs(workspace:GetChildren()) do _add(obj) end
     end
     return list
 end
 
--- ── Core: SiegeMassAttack ─────────────────────────────────────
--- Identik dengan ekosistem Anniversary attack loop.
--- Serang semua musuh Siege sampai 30 kill → return "success"
--- Exit conditions: 30 kill | musuh habis | timeout | stuck | not running
-local function SiegeMassAttack(onStatus, baseMapId)
-    local KILL_TARGET  = 30
-    local MAX_TIME     = 300   -- 5 menit hard timeout
-    local STUCK_LIMIT  = 10.0  -- 10 detik tanpa kill progress → paksa keluar
-    local SPAWN_WAIT   = 10    -- tunggu musuh spawn maks 10 detik
+-- ── Core: SiegeAttackLoop ─────────────────────────────────────
+-- Serang semua musuh di workspace.Enemys sampai habis atau
+-- player keluar dari Map201-Map205. Return: "success"|"exited"|"timeout"
+local function SiegeAttackLoop(onStatus, d)
+    local MAX_TIME   = 300
+    local totalTime  = 0
+    local deadGuids  = {}
+    local killCount  = 0
 
-    local killCount    = 0
-    local deadGuids    = {}
-    local totalTime    = 0
-    local stuckTimer   = 0
-    local _confirmedIn = false
-
-    -- Listener EnemyDeath lokal (tidak ganggu _deadG global MA)
+    -- Death listener lokal
     local _deathConn = nil
     if RE.Death then
-        _deathConn = RE.Death.OnClientEvent:Connect(function(d)
-            if not d then return end
-            local g = d.enemyGuid or d.guid
+        _deathConn = RE.Death.OnClientEvent:Connect(function(dd)
+            if not dd then return end
+            local g = dd.enemyGuid or dd.guid
             if g and not deadGuids[g] then
                 deadGuids[g] = true
                 killCount = killCount + 1
@@ -15140,149 +15116,46 @@ local function SiegeMassAttack(onStatus, baseMapId)
 
     local function cleanup()
         if _deathConn then _deathConn:Disconnect(); _deathConn = nil end
-        SIEGE.inMap       = false
-        SIEGE.teleporting = false
-        _siegeInterrupt   = false
-        MODE:Release("siege")
     end
 
-    -- Konfirmasi MapId siege saat berada di sini
-    local function trackConfirm()
-        pcall(function()
-            local wm = workspace:GetAttribute("MapId")
-                    or workspace:GetAttribute("mapId")
-                    or workspace:GetAttribute("CurrentMapId")
-            if type(wm) == "number" and wm >= 50201 and wm <= 50205 then
-                _confirmedIn = true
-            end
-        end)
-    end
-
-    -- Cek apakah server sudah TP player keluar ke basemap
-    local function isBackAtBase()
-        local ok, wm = pcall(function()
-            return workspace:GetAttribute("MapId")
-                or workspace:GetAttribute("mapId")
-                or workspace:GetAttribute("CurrentMapId")
-        end)
-        if ok and type(wm) == "number" then
-            if wm >= 50201 and wm <= 50205 then _confirmedIn = true end
-            if _confirmedIn then
-                if baseMapId and wm == baseMapId then return true end
-                if wm >= 50001 and wm <= 50020 then return true end
-            end
-        end
-        return false
-    end
-
-    -- ── PHASE 1: Tunggu musuh spawn (maks SPAWN_WAIT detik) ───
-    local spawnWait = 0
-    while spawnWait < SPAWN_WAIT and SIEGE.running and SIEGE.inMap do
-        trackConfirm()
-        local enemies = GetSiegeEnemies()
-        local liveNow = 0
-        for _, e in ipairs(enemies) do
-            if not deadGuids[e.guid] then liveNow = liveNow + 1 end
-        end
-        if liveNow > 0 then break end
-        if onStatus then onStatus("[~] Nunggu musuh Siege... ("..math.floor(SPAWN_WAIT - spawnWait).."s)") end
-        PingWait(0.4); spawnWait = spawnWait + 0.4
-        totalTime = totalTime + 0.4
-    end
-
-    if not SIEGE.running or not SIEGE.inMap then cleanup(); return "loop_ended" end
-
-    -- Kalau tetap kosong setelah tunggu → anggap selesai langsung
-    do
-        local enemies = GetSiegeEnemies()
-        local liveNow = 0
-        for _, e in ipairs(enemies) do
-            if not deadGuids[e.guid] then liveNow = liveNow + 1 end
-        end
-        if liveNow == 0 then
-            if onStatus then onStatus("[OK] Tidak ada musuh, Siege DONE") end
-            cleanup(); return "success"
-        end
-    end
-
-    -- ── PHASE 2: Attack loop ───────────────────────────────────
-    local lastKillCount = killCount
-
+    -- Attack loop
     while SIEGE.running and SIEGE.inMap do
         totalTime = totalTime + 0.08
 
-        -- Hard timeout
         if totalTime >= MAX_TIME then
-            if onStatus then onStatus("[!] Timeout "..MAX_TIME.."s - Force keluar Siege") end
+            if onStatus then onStatus("[!] Timeout - paksa keluar") end
             cleanup(); return "timeout"
         end
 
-        -- Guard: server sudah TP player keluar
-        if isBackAtBase() then
-            if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
-            PingGuard()
-            pcall(function() if RE.GainRaidsRewards then RE.GainRaidsRewards:InvokeServer(1) end end)
-            cleanup(); return "success"
-        end
-
-        -- Kill target tercapai (30 kill)
-        if killCount >= KILL_TARGET then
-            if onStatus then onStatus("[OK] "..killCount.." kill - Jeda 2s lalu TP ke BaseMap...") end
-            PingWait(2)
-            -- TP ke BaseMap sesuai map siege masing-masing (3→baseMapId, 7→baseMapId, dst)
-            pcall(function() if RE.LocalTp then RE.LocalTp:FireServer({mapId = baseMapId}) end end)
-            if onStatus then onStatus("[OK] TP BaseMap "..tostring(baseMapId).." - SIEGE SUCCESS!") end
-            cleanup(); return "success"
+        -- Cek player masih di dalam Siege map
+        if not IsInSiegeMapNow() then
+            if onStatus then onStatus("[OK] Player keluar Siege map - stop serang") end
+            cleanup(); return "exited"
         end
 
         -- Ambil musuh hidup
-        local rawEnemies = GetSiegeEnemies()
-        local targets    = {}
-        local alive      = 0
-        for _, e in ipairs(rawEnemies) do
+        local enemies = GetSiegeEnemies()
+        local targets = {}
+        for _, e in ipairs(enemies) do
             if not deadGuids[e.guid] then
-                alive = alive + 1
                 table.insert(targets, e)
             end
         end
 
-        -- Musuh habis (fallback) → tunggu server TP maks 2 detik
-        if alive == 0 then
-            if onStatus then onStatus("[..] Musuh habis, tunggu server TP...") end
-            local waitOut = 0
-            while waitOut < 2 and SIEGE.running do
-                PingWait(0.3); waitOut = waitOut + 0.3
-                if isBackAtBase() then
-                    if onStatus then onStatus("[OK] Server TP keluar - Siege DONE!") end
-                    cleanup(); return "success"
-                end
-            end
-            if onStatus then onStatus("[OK] Siege DONE (timeout tunggu TP)") end
+        if #targets == 0 then
+            if onStatus then onStatus("[OK] Semua musuh habis") end
             cleanup(); return "success"
         end
 
-        -- Anti-stuck: progress diukur dari bertambahnya killCount
-        if killCount > lastKillCount then
-            lastKillCount = killCount
-            stuckTimer    = 0
-        else
-            stuckTimer = stuckTimer + 0.08
-            if stuckTimer >= STUCK_LIMIT then
-                if onStatus then onStatus("[!] Stuck "..STUCK_LIMIT.."s - Force keluar Siege") end
-                cleanup(); return "stuck"
-            end
-        end
-
         if onStatus then
-            onStatus(string.format("[ATK] %d musuh | kill:%d/30 | stuck:%.1fs",
-                alive, killCount, stuckTimer))
+            onStatus(string.format("[ATK] %d musuh | kill: %d", #targets, killCount))
         end
 
-        -- Serang semua target (identik Anniversary + MA)
+        -- Serang semua target
         for _, e in ipairs(targets) do
             if e.model and e.model.Parent then
-                local hrp = e.model:FindFirstChild("HumanoidRootPart")
-                if hrp then
+                local hrp = e.hrp
+                if hrp and hrp.Parent then
                     local g, pos = e.guid, hrp.Position
                     task.spawn(function()
                         pcall(function() FireAllDamage(g, pos) end)
@@ -15312,31 +15185,17 @@ StartSiegeLoop = function()
     _siegeSessionStart = os.time()
     for _, mn in ipairs(SIEGE_MAP_NUMS) do SIEGE.count[mn] = 0 end
     SiegeCounterUpdate()
+    SiegeStatus("[.] Waiting notif SIEGE...", Color3.fromRGB(255,200,60))
 
-    -- Gold Magnet + Instant Collector
-    StartDestroyWorker(function() return SIEGE.running end)
-    StopGoldMagnet()
-    StartInstantGoldCollector(true)
-    StartGoldMagnet(function() return SIEGE.running end)
-
-    -- Buat/reset wakeup event
+    -- Wakeup event untuk bangunkan loop saat SIEGE.live diisi scanner
     if _siegeWakeup then pcall(function() _siegeWakeup:Destroy() end) end
     _siegeWakeup = Instance.new("BindableEvent")
-    -- Fire segera agar loop tidak stuck di wait pertama
     pcall(function() _siegeWakeup:Fire() end)
 
     SIEGE.thread = task.spawn(function()
         while SIEGE.running do
-            repeat -- repeat/until true = 1 iterasi, pakai break untuk "continue"
 
-            -- ── Hukum kasta: Dungeon prioritas tertinggi ──────
-            if DUNGEON and DUNGEON.inMap then
-                SiegeStatus("[||] PAUSE: Menunggu Dungeon...", Color3.fromRGB(255,100,100))
-                PingWait(2)
-                break -- next iteration
-            end
-
-            -- ── Cari target map yg terbuka & tidak di-exclude ─
+            -- ── Cari map siege yang tersedia dan belum di-exclude ──
             local targetMap = nil
             for _, mn in ipairs(SIEGE_MAP_NUMS) do
                 if not (SIEGE.excludeMaps and SIEGE.excludeMaps[mn]) then
@@ -15345,104 +15204,86 @@ StartSiegeLoop = function()
                 end
             end
 
-            -- ── Tidak ada Siege terbuka → tunggu notif server ─
+            -- Kalau tidak ada → tunggu wakeup (max 90 detik)
             if not targetMap then
                 local exNames = {}
                 for _, mn in ipairs(SIEGE_MAP_NUMS) do
-                    if SIEGE.excludeMaps[mn] then table.insert(exNames, "M"..mn) end
+                    if SIEGE.excludeMaps and SIEGE.excludeMaps[mn] then
+                        table.insert(exNames, "M"..mn)
+                    end
                 end
-                local exStr = #exNames > 0 and (" skip:"..table.concat(exNames,",")) or ""
-                SiegeStatus("[..] Waiting Siege"..exStr.."...", Color3.fromRGB(255,200,60))
+                local exStr = #exNames > 0 and (" | Skip: "..table.concat(exNames,",")) or ""
+                SiegeStatus("[.] Waiting notif SIEGE..."..exStr, Color3.fromRGB(255,200,60))
                 if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
-                -- Tunggu wakeup (dipanggil oleh UpdateCityRaidInfo → OpenCityRaid)
-                -- Polling fallback tiap 2 detik agar tidak stuck selamanya
-                local _waitConn = _siegeWakeup.Event:Connect(function() end)
-                PingWait(2)
-                _waitConn:Disconnect()
-                break -- next iteration
-            end
 
-            -- ── Tunggu fitur lain selesai (90 detik max) ──────
-            do
+                local _waitConn = _siegeWakeup.Event:Connect(function() end)
                 local guard = 0
                 while SIEGE.running and guard < 90 do
-                    local busy, who = IsAnyMapActive()
-                    local selfBusy  = (who == "siege")
-                    if not busy or selfBusy then break end
-                    SiegeStatus("[||] Tunggu "..(who or "?").." selesai...", Color3.fromRGB(255,140,0))
+                    local who, _ = MODE.current, nil
+                    local selfBusy = (who == "siege")
+                    for _, mn in ipairs(SIEGE_MAP_NUMS) do
+                        if not (SIEGE.excludeMaps and SIEGE.excludeMaps[mn]) then
+                            if SIEGE.live[SIEGE_DATA[mn].cityRaidId] then
+                                targetMap = mn; break
+                            end
+                        end
+                    end
+                    if targetMap then break end
                     PingWait(0.5); guard = guard + 0.5
                 end
+                pcall(function() _waitConn:Disconnect() end)
                 if not SIEGE.running then break end
+                if not targetMap then continue end
             end
 
-            -- ── Klaim MODE siege ──────────────────────────────
+            -- Tunggu fitur lain selesai dulu (Raid/Dungeon/ASC prioritas lebih tinggi)
             _siegeInterrupt = true
             if not MODE:WaitAndRequest("siege", 15) then
                 _siegeInterrupt = false
-                PingWait(2)
-                break -- next iteration
+                PingWait(1)
+                continue
             end
 
             local d = SIEGE_DATA[targetMap]
             SIEGE.teleporting = true
-
-            -- [V59 FIX] Hapus live entry SEKARANG (sebelum entry sequence)
-            -- agar loop iterasi berikutnya tidak bisa pick map yang sama
-            -- saat kita masih di tengah teleport/session
+            -- Hapus dari live agar tidak diproses ulang
             SIEGE.live[d.cityRaidId] = nil
 
-            -- ════════════════════════════════════════════════
+            -- ════════════════════════════════════════
             -- PHASE 1: TP ke BaseMap dulu
-            -- ════════════════════════════════════════════════
-            SiegeStatus("[TP] Ke BaseMap "..d.baseMapId.." → "..d.name.."...", Color3.fromRGB(255,200,100))
-            pcall(function() RE.LocalTp:FireServer({mapId = d.baseMapId}) end)
+            -- ════════════════════════════════════════
+            SiegeStatus("[>>] TP ke BaseMap "..tostring(d.baseMapId).."...", Color3.fromRGB(180,120,255))
+            if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(180,120,255) end
+            pcall(function()
+                if RE.LocalTp then RE.LocalTp:FireServer({mapId = d.baseMapId}) end
+            end)
 
-            -- Tunggu konfirmasi di baseMap (maks 5 detik)
+            -- Tunggu TP selesai max 5 detik
             local tpWait = 0
             while tpWait < 5 and SIEGE.running do
                 PingWait(0.5); tpWait = tpWait + 0.5
-                local curMap = workspace:GetAttribute("MapId")
-                            or workspace:GetAttribute("mapId")
-                            or workspace:GetAttribute("CurrentMapId")
-                if curMap == d.baseMapId then break end
             end
-            do
-                local curNow = workspace:GetAttribute("MapId")
-                            or workspace:GetAttribute("mapId")
-                            or workspace:GetAttribute("CurrentMapId")
-                if curNow == d.baseMapId then
-                    SiegeStatus("[OK] BaseMap "..d.baseMapId.." OK, stabilize 0.5s...", Color3.fromRGB(80,220,80))
-                    PingWait(0.5)
-                else
-                    SiegeStatus("[~] BaseMap belum confirm ("..tostring(curNow).."), lanjut...", Color3.fromRGB(255,140,0))
-                end
-            end
-            PingWait(0.3)
-
             if not SIEGE.running then
                 SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
             end
 
-            -- ════════════════════════════════════════════════
-            -- PHASE 2: Entry Sequence Siege
-            -- (SimpleSpy confirmed: tanpa GetRaidTeamInfos)
-            -- ════════════════════════════════════════════════
-            SiegeStatus("[>>] Entry Sequence → "..d.name.."...", Color3.fromRGB(180,120,255))
-            if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(180,120,255) end
+            -- ════════════════════════════════════════
+            -- PHASE 2: Delay 1 detik lalu Entry Remotes
+            -- ════════════════════════════════════════
+            SiegeStatus("[1s] Delay sebelum entry...", Color3.fromRGB(180,120,255))
+            PingWait(1)
+            if not SIEGE.running then
+                SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
+            end
 
             local _RE = Remotes
-            local enterRe = _RE:FindFirstChild("EnterCityRaidMap")
-
-            if not enterRe then
-                SiegeStatus("[!] EnterCityRaidMap tidak ditemukan, retry 5s...", Color3.fromRGB(255,100,60))
-                SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege")
-                PingWait(5)
-                break -- next iteration
-            end
 
             -- Step 1: EnterCityRaidMap
             SiegeStatus("[1/4] EnterCityRaidMap("..d.cityRaidId..")...", Color3.fromRGB(180,120,255))
-            pcall(function() enterRe:FireServer(d.cityRaidId) end)
+            pcall(function()
+                local re = _RE:FindFirstChild("EnterCityRaidMap")
+                if re then re:FireServer(d.cityRaidId) end
+            end)
             PingWait(0.8)
             if not SIEGE.running then
                 SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
@@ -15450,80 +15291,56 @@ StartSiegeLoop = function()
 
             -- Step 2: StartLocalPlayerTeleport
             SiegeStatus("[2/4] StartLocalPlayerTeleport(mapId="..d.tpMapId..")...", Color3.fromRGB(180,120,255))
-            local stpRe = _RE:FindFirstChild("StartLocalPlayerTeleport")
-            if stpRe then
-                pcall(function() stpRe:FireServer({mapId = d.tpMapId}) end)
-            end
+            pcall(function()
+                local re = _RE:FindFirstChild("StartLocalPlayerTeleport")
+                if re then re:FireServer({mapId = d.tpMapId}) end
+            end)
             PingWait(0.8)
             if not SIEGE.running then
                 SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
             end
 
-            -- Step 3: EquipHeroWithData
-            SiegeStatus("[3/4] EquipHeroWithData...", Color3.fromRGB(180,120,255))
-            local eqRe = _RE:FindFirstChild("EquipHeroWithData")
-            if eqRe then pcall(function() eqRe:FireServer() end) end
+            -- Step 3: LocalPlayerTeleportSuccess
+            SiegeStatus("[3/4] LocalPlayerTeleportSuccess(mapId="..d.tpMapId..")...", Color3.fromRGB(180,120,255))
+            pcall(function()
+                local re = _RE:FindFirstChild("LocalPlayerTeleportSuccess")
+                if re then re:InvokeServer({slotIndex = d.tpMapId, mapId = d.tpMapId}) end
+            end)
+            PingWait(0.8)
+            if not SIEGE.running then
+                SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
+            end
+
+            -- Step 4: EquipHeroWithData
+            SiegeStatus("[4/4] EquipHeroWithData...", Color3.fromRGB(180,120,255))
+            pcall(function()
+                local re = _RE:FindFirstChild("EquipHeroWithData")
+                if re then re:FireServer() end
+            end)
             PingWait(0.5)
             if not SIEGE.running then
                 SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
             end
 
-            -- Step 4: LocalPlayerTeleportSuccess
-            SiegeStatus("[4/4] LocalPlayerTeleportSuccess(slotIndex="..d.tpMapId..")...", Color3.fromRGB(180,120,255))
-            local ltpRe = _RE:FindFirstChild("LocalPlayerTeleportSuccess")
-            if ltpRe then
-                task.spawn(function()
-                    pcall(function()
-                        PingGuard()
-                        pcall(function() ltpRe:InvokeServer() end)
-                    end)
-                end)
+            -- ════════════════════════════════════════
+            -- PHASE 3: Delay 3 detik render musuh
+            -- ════════════════════════════════════════
+            SiegeStatus("[3s] Delay render musuh...", Color3.fromRGB(255,200,60))
+            PingWait(3)
+            if not SIEGE.running then
+                SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
             end
-            PingWait(0.5)
 
-            -- ════════════════════════════════════════════════
-            -- PHASE 3: Validasi masuk map (workspace.Maps → Map201/202/dst)
-            -- Retry entry tiap 4 detik jika belum masuk (maks 16 detik total)
-            -- ════════════════════════════════════════════════
+            -- ════════════════════════════════════════
+            -- PHASE 4: Validasi player di dalam Siege map
+            -- Scan seluruh workspace:GetChildren() cari Map201-Map205
+            -- ════════════════════════════════════════
             SiegeStatus("[..] Validasi masuk "..d.name.."...", Color3.fromRGB(255,200,60))
-            local entered       = false
-            local entWait       = 0
-            local sinceLastFire = 4.0  -- mulai dari 4 → tidak retry langsung
-
-            while not entered and entWait < 16 and SIEGE.running do
-                PingWait(0.5); entWait = entWait + 0.5; sinceLastFire = sinceLastFire + 0.5
-
-                -- Cek via workspace.Maps
-                local mf = workspace:FindFirstChild("Maps")
-                if mf and mf:FindFirstChild(d.mapFolder) then
-                    entered = true; break
-                end
-                -- Fallback: MapId attribute
-                local inSiege, _ = IsInSiegeMap()
-                if inSiege then entered = true; break end
-                -- Fallback: musuh sudah spawn
-                if #GetSiegeEnemies() > 0 then entered = true; break end
-
-                -- Retry entry sequence tiap 4 detik
-                if sinceLastFire >= 4.0 then
-                    sinceLastFire = 0
-                    SiegeStatus("[~] Retry entry "..d.name.."...", Color3.fromRGB(255,200,60))
-                    pcall(function() if enterRe then enterRe:FireServer(d.cityRaidId) end end)
-                    PingWait(0.5)
-                    if stpRe then pcall(function() stpRe:FireServer({mapId = d.tpMapId}) end) end
-                    PingWait(0.5)
-                    if eqRe  then pcall(function() eqRe:FireServer() end) end
-                    PingWait(0.3)
-                    if ltpRe then
-                        task.spawn(function()
-                            pcall(function()
-                                PingGuard()
-                                ltpRe:InvokeServer()
-                            end)
-                        end)
-                    end
-                    PingWait(0.3)
-                end
+            local entered  = false
+            local entWait  = 0
+            while not entered and entWait < 10 and SIEGE.running do
+                if IsInSiegeMapNow() then entered = true; break end
+                PingWait(0.5); entWait = entWait + 0.5
             end
 
             SIEGE.teleporting = false
@@ -15533,68 +15350,56 @@ StartSiegeLoop = function()
             end
 
             if not entered then
-                -- Gagal masuk → bersihkan dan tunggu notif berikutnya
                 SiegeStatus("[!] Gagal masuk "..d.name.." - tunggu notif berikutnya...", Color3.fromRGB(255,100,60))
                 _siegeInterrupt = false; MODE:Release("siege")
-                -- Hapus dari live agar tidak retry terus sampai server kirim OpenCityRaid lagi
-                SIEGE.live[d.cityRaidId] = nil
                 PingWait(2)
-                break -- next iteration
+                continue
             end
 
-            -- ════════════════════════════════════════════════
-            -- PHASE 4: Sudah masuk → diam 2s lalu serang
-            -- ════════════════════════════════════════════════
+            -- ════════════════════════════════════════
+            -- PHASE 5: Attack loop
+            -- ════════════════════════════════════════
             SIEGE.inMap = true
-            SiegeStatus("[S] "..d.name.." - Masuk! Standby 2s...", Color3.fromRGB(255,200,60))
-            if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
-            PingWait(2)
-
-            if not SIEGE.running then SIEGE.inMap = false; _siegeInterrupt = false; MODE:Release("siege"); break end
-
             SiegeStatus("[S] "..d.name.." - ATTACK!", Color3.fromRGB(80,220,80))
             if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(80,220,80) end
 
-            -- ════════════════════════════════════════════════
-            -- PHASE 5: SiegeMassAttack
-            -- ════════════════════════════════════════════════
-            local result = SiegeMassAttack(function(msg)
+            local result = SiegeAttackLoop(function(msg)
                 SiegeStatus("[S] "..msg, Color3.fromRGB(80,220,80))
-            end, d.baseMapId)
+            end, d)
 
-            -- SiegeMassAttack sudah panggil cleanup() → SIEGE.inMap=false, MODE released
-            -- [V59 FIX] Gunakan atomic check sebelum set flag
-            -- Hindari overwrite state yang mungkin sudah di-set berbeda oleh thread lain
             SIEGE.inMap       = false
             SIEGE.teleporting = false
             SIEGE._lastExitTime = os.time()
             _siegeInterrupt   = false
-            -- MODE:Release hanya jika masih pegang "siege" (cleanup() mungkin sudah release)
             pcall(function() if MODE.current == "siege" then MODE:Release("siege") end end)
 
             if not SIEGE.running then break end
 
-            -- ════════════════════════════════════════════════
-            -- PHASE 6: Post-session
-            -- live entry sudah dihapus di awal PHASE 1
-            -- Di sini cukup reset flag chat dan update counter
-            -- ════════════════════════════════════════════════
-            -- [V59 FIX] Pastikan live bersih (defensive, untuk kasus timeout/stuck)
+            -- ════════════════════════════════════════
+            -- PHASE 6: QuitCityRaidMap → cleanup → count
+            -- ════════════════════════════════════════
+            SiegeStatus("[<<] QuitCityRaidMap("..d.cityRaidId..")...", Color3.fromRGB(100,200,255))
+            pcall(function()
+                local re = Remotes:FindFirstChild("QuitCityRaidMap")
+                if re then re:FireServer(d.cityRaidId) end
+            end)
+            PingWait(0.5)
+
             SIEGE.live[d.cityRaidId] = nil
             if _siegeChatOpen then _siegeChatOpen[targetMap] = false end
             SIEGE.count[targetMap] = (SIEGE.count[targetMap] or 0) + 1
             SiegeCounterUpdate()
 
-            if result == "success" then
+            if result == "success" or result == "exited" then
                 SiegeStatus("[OK] "..d.name.." SUCCESS! Waiting notif berikutnya...", Color3.fromRGB(100,255,150))
                 if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
             else
-                SiegeStatus("[~] "..d.name.." ("..result..") Waiting notif berikutnya...", Color3.fromRGB(255,200,60))
+                SiegeStatus("[~] "..d.name.." ("..result..") - Waiting notif berikutnya...", Color3.fromRGB(255,200,60))
+                if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
             end
-            -- Jeda singkat sebelum balik ke wait state
+
             PingWait(1)
 
-            until true -- end repeat (1 iterasi, break = skip ke while berikutnya)
         end -- while SIEGE.running
 
         -- Cleanup akhir saat toggle OFF

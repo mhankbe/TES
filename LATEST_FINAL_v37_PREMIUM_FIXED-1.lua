@@ -12519,8 +12519,10 @@ local function ResolveEntry()
  local function _isValidRaidMapByInstance()
   local mf = workspace:FindFirstChild("Maps")
   if not mf then return false end
-  for i = 1, 20 do
-   if mf:FindFirstChild("Map"..i) then return true end
+  -- Map1 dan Map3 instance-nya Map101/Map103 (beda sendiri)
+  if mf:FindFirstChild("Map101") or mf:FindFirstChild("Map103") then return true end
+  for i = 2, 20 do
+   if i ~= 3 and mf:FindFirstChild("Map"..i) then return true end
   end
   return false
  end

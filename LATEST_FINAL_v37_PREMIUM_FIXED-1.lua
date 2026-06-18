@@ -15464,7 +15464,7 @@ StartSiegeLoop = function()
                 task.spawn(function()
                     pcall(function()
                         PingGuard()
-                        pcall(function() ltpRe:InvokeServer({slotIndex = d.tpMapId, mapId = d.tpMapId}) end)
+                        pcall(function() ltpRe:InvokeServer() end)
                     end)
                 end)
             end
@@ -15507,7 +15507,7 @@ StartSiegeLoop = function()
                         task.spawn(function()
                             pcall(function()
                                 PingGuard()
-                                ltpRe:InvokeServer({slotIndex = d.tpMapId, mapId = d.tpMapId})
+                                ltpRe:InvokeServer()
                             end)
                         end)
                     end
@@ -18367,10 +18367,7 @@ do
                     AnnivStatus("[9/9] Confirming teleport success...", Color3.fromRGB(240,165,0))
                     local ok9, err9 = pcall(function()
                         PingGuard()
-                        Remotes.LocalPlayerTeleportSuccess:InvokeServer({
-                            slotIndex = 1,
-                            mapId     = MAP_ID,
-                        })
+                        Remotes.LocalPlayerTeleportSuccess:InvokeServer()
                     end)
                     if not ok9 or not ANNIV.running then
                         AnnivStatus("[X] Step 9 TeleportSuccess gagal: "..(err9 or "?"), Color3.fromRGB(200,50,50))

@@ -12540,7 +12540,9 @@ local function ResolveEntry()
  -- scan radius di titik TP (lihat blok AUTO BOSS KILL di bawah). Loading wait
  -- ini hanya untuk memberi waktu render server sebelum TP+scan dilakukan.
  RaidStatusUpdate("[..] Render delay...", Color3.fromRGB(160,148,135))
- task.wait(2) -- ~2 detik delay render, sesuai keputusan
+ local _preMapNum = GetRaidMapNum(raidEntry and raidEntry.mapId)
+ local _renderDelay = (_preMapNum == 1) and 4 or 2
+ task.wait(_renderDelay) -- Map1: 4s, lainnya: 2s
 
  if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
   -- [v56] AUTO BOSS KILL - TP KE ROOTPART BOSS (REALTIME)

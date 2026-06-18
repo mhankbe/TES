@@ -8347,9 +8347,9 @@ BOSS_NAME_BY_MAP = {
 -- bossRootPartName = nama RootPart boss di [instanceName].Map.RaidsEnemys
 -- AUTO BOSS KILL akan ambil CFrame langsung dari RootPart tersebut (realtime).
 RAID_MAP_INFO = {
- [1]  = { instance = "Map101", rootPart = "4025" },
- [2]  = { instance = "Map2",   rootPart = "4050" },
- [3]  = { instance = "Map103", rootPart = "4025" },
+ [1]  = { instance = "Map1",  rootPart = "4025" },
+ [2]  = { instance = "Map2",  rootPart = "4050" },
+ [3]  = { instance = "Map3",  rootPart = "4025" },
  [4]  = { instance = "Map4",   rootPart = "4050" },
  [5]  = { instance = "Map5",   rootPart = "4050" },
  [6]  = { instance = "Map6",   rootPart = "4044" },
@@ -8389,14 +8389,20 @@ function GetBossRootPartCFrame(mapNum)
 end
 
 -- Helper: ambil mapNum (1-20) dari mapId raid.
--- [v56] Primary: resolve via workspace.Maps instance name (dari RAID_MAP_INFO).
--- Fallback: konversi numerik mapId (lobby 50001-50020 atau in-map 50101-50120).
+-- Primary: scan workspace.Maps instance secara BERURUTAN (ipairs via list urut).
+-- Fallback: konversi numerik mapId (in-map 50101-50120, lobby 50001-50020).
 function GetRaidMapNum(mapId)
- -- Primary: cek workspace.Maps untuk nama instance yang aktif saat ini
+ -- Primary: cek workspace.Maps instance secara berurutan 1-20
  local mf = workspace:FindFirstChild("Maps")
  if mf then
-  for mapNum, info in pairs(RAID_MAP_INFO) do
-   if mf:FindFirstChild(info.instance) then return mapNum end
+  local _orderedCheck = {
+   {1,"Map1"},{2,"Map2"},{3,"Map3"},{4,"Map4"},{5,"Map5"},
+   {6,"Map6"},{7,"Map7"},{8,"Map8"},{9,"Map9"},{10,"Map10"},
+   {11,"Map11"},{12,"Map12"},{13,"Map13"},{14,"Map14"},{15,"Map15"},
+   {16,"Map16"},{17,"Map17"},{18,"Map18"},{19,"Map19"},{20,"Map20"},
+  }
+  for _, v in ipairs(_orderedCheck) do
+   if mf:FindFirstChild(v[2]) then return v[1] end
   end
  end
  -- Fallback: konversi dari mapId numerik
@@ -12510,12 +12516,10 @@ local function ResolveEntry()
   return (mId >= 50101 and mId <= 50120) or (mId >= 50301 and mId <= 50326)
  end
 
- -- [v55] Helper validasi via workspace.Maps instance (primary) sebelum fallback numerik
  local function _isValidRaidMapByInstance()
   local mf = workspace:FindFirstChild("Maps")
   if not mf then return false end
-  if mf:FindFirstChild("Map101") then return true end
-  for i = 2, 20 do
+  for i = 1, 20 do
    if mf:FindFirstChild("Map"..i) then return true end
   end
   return false
@@ -12541,7 +12545,7 @@ local function ResolveEntry()
   -- Teleport player+hero langsung ke CFrame RootPart boss di workspace.Maps.
   -- Path: workspace.Maps.[instanceName].Map.RaidsEnemys.[rootPartName]
   -- Mapping instance+rootPart per mapNum ada di RAID_MAP_INFO.
-  -- Setelah TP, scan musuh radius 10 studs dari posisi RootPart tersebut.
+  -- Setelah TP, scan musuh radius 50 studs dari posisi RootPart tersebut.
 
   -- Resolve mapNum via workspace.Maps instance (primary) lalu fallback numerik.
   local _mapNumNow = GetRaidMapNum(raidEntry and raidEntry.mapId)
@@ -12630,7 +12634,7 @@ local function ResolveEntry()
 
     -- ── SCAN RADIUS 10 STUDS - cari 1 musuh terdekat dari posisi RootPart boss ──
     -- Timeout 3 detik (sesuai keputusan): scan tiap 0.5s, total 6x percobaan.
-    local TP_SCAN_RADIUS = 10
+    local TP_SCAN_RADIUS = 50
     local function _scanNearbyEnemy()
      local best, bestDist = nil, nil
      for _, e in ipairs(GetRaidEnemies()) do
@@ -12658,18 +12662,31 @@ local function ResolveEntry()
      _step4Cleanup()
      task.wait(2)
     else
-     -- Musuh ketemu - attack loop sampai mati (1 target saja, sesuai keputusan)
+     -- Musuh ketemu - attack loop pakai cara RA+TA (FCharF style)
      local targetGuid = target.guid
      RaidStatusUpdate("[FLa] Attack: " .. target.model.Name, Color3.fromRGB(255,80,60))
 
-     pcall(function() FireHeroRemotes(targetGuid, _tpTargetPos) end)
-     if RE.HeroStand and #HERO_GUIDS > 0 then
-      for _, hGuid in ipairs(HERO_GUIDS) do
-       pcall(function()
-        RE.HeroStand:FireServer({heroGuid=hGuid, userId=MY_USER_ID,
-         standPos=_tpTargetPos + Vector3.new(1,0,1)})
-       end)
-      end
+     -- Helper: hitung posisi 5 stud dari musuh ke arah player (sama seperti GetAtkPosF di Farm)
+     local function _getBossAtkPos(enemyHRP)
+      local char = LP and LP.Character
+      local pHRP = char and char:FindFirstChild("HumanoidRootPart")
+      if not pHRP or not enemyHRP then return enemyHRP and enemyHRP.Position or _tpTargetPos end
+      local ePos = enemyHRP.Position
+      local dir = pHRP.Position - ePos
+      local dir2 = Vector3.new(dir.X, 0, dir.Z)
+      if dir2.Magnitude < 0.1 then return ePos + Vector3.new(5,0,0) end
+      return ePos + dir2.Unit * 5
+     end
+
+     -- Helper: attack 1 target (sama persis FCharF di Farm: FireAttack+FireAllDamage+FireHeroRemotes x2)
+     local function _attackBoss(guid, enemyHRP)
+      local atkPos = _getBossAtkPos(enemyHRP)
+      FireAttack(guid, atkPos)
+      FireAllDamage(guid, atkPos)
+      FireHeroRemotes(guid, atkPos)
+      FireAttack(guid, atkPos)
+      FireAllDamage(guid, atkPos)
+      FireHeroRemotes(guid, atkPos)
      end
 
      local _outOfMapCount = 0
@@ -12693,16 +12710,22 @@ local function ResolveEntry()
       if not target.model or not target.model.Parent then break end
       local hum = target.model:FindFirstChildOfClass("Humanoid")
       if not hum or hum.Health <= 0 then break end
-      local p = target.hrp and target.hrp.Parent and target.hrp.Position
-      if not p then
-       task.wait(0.08)
+      if not target.hrp or not target.hrp.Parent then
+       task.wait(0.1)
        if not target.model or not target.model.Parent then break end
        local hum2 = target.model:FindFirstChildOfClass("Humanoid")
        if not hum2 or hum2.Health <= 0 then break end
        continue
       end
-      task.spawn(function() pcall(function() RaidFireDamage(targetGuid, p) end) end)
-      task.wait(0.08)
+      -- Scan ulang musuh terdekat dalam radius (jaga-jaga boss ganti/spawn baru)
+      local _nearNow = _scanNearbyEnemy()
+      if _nearNow and _nearNow.guid ~= targetGuid then
+       target = _nearNow
+       targetGuid = target.guid
+       RaidStatusUpdate("[FLa] Target baru: " .. target.model.Name, Color3.fromRGB(255,80,60))
+      end
+      pcall(function() _attackBoss(targetGuid, target.hrp) end)
+      task.wait(0.1)
      end
 
      _step4Cleanup()

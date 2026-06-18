@@ -4,10 +4,10 @@ do
  local _LP2 = game:GetService("Players").LocalPlayer
  local _w = 0
  repeat
- PingWait(1); _w = _w + 1
+ task.wait(1); _w = _w + 1
  until (_RS2:FindFirstChild("Remotes") and _LP2.Character) or _w >= 15
  -- [v254] Kurangi fixed delay: 5s -> 2s (cukup untuk Delta Android)
- PingWait(2)
+ task.wait(2)
 end
 
 -- [V59] Fire EquipLoadoutSave saat script pertama kali di-execute

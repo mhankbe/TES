@@ -4,10 +4,10 @@ do
  local _LP2 = game:GetService("Players").LocalPlayer
  local _w = 0
  repeat
- task.wait(1); _w = _w + 1
+ PingWait(1); _w = _w + 1
  until (_RS2:FindFirstChild("Remotes") and _LP2.Character) or _w >= 15
  -- [v254] Kurangi fixed delay: 5s -> 2s (cukup untuk Delta Android)
- task.wait(2)
+ PingWait(2)
 end
 
 -- [V59] Fire EquipLoadoutSave saat script pertama kali di-execute
@@ -104,7 +104,7 @@ function PingGuard(threshold, timeout)
                 _pingStatusLbl.TextColor3 = Color3.fromRGB(255, 80, 80)
             end
         end)
-        task.wait(1)
+        PingWait(1)
         elapsed = elapsed + 1
         ping = GetPing()
     end
@@ -153,7 +153,7 @@ end
 -- ============================================================
 Remotes = RS:WaitForChild("Remotes", 10)
 if not Remotes then
- repeat task.wait(0.5) until RS:FindFirstChild("Remotes")
+ repeat PingWait(0.5) until RS:FindFirstChild("Remotes")
  Remotes = RS:FindFirstChild("Remotes")
 end
 RE = {
@@ -1128,7 +1128,7 @@ function ApplyTheme(name)
                 if not Window:FindFirstChildWhichIsA("UIGradient") then
                     local g = Instance.new("UIGradient", Window)
                     g.Color = ColorSequence.new(p.BG, p.Accent)
-                    task.spawn(function() while _G.CurrentTheme == myTheme and g.Parent do TweenService:Create(g, TweenInfo.new(5, Enum.EasingStyle.Sine), {Offset = Vector2.new(0.5, 0)}):Play(); task.wait(5); TweenService:Create(g, TweenInfo.new(5, Enum.EasingStyle.Sine), {Offset = Vector2.new(-0.5, 0)}):Play(); task.wait(5) end end)
+                    task.spawn(function() while _G.CurrentTheme == myTheme and g.Parent do TweenService:Create(g, TweenInfo.new(5, Enum.EasingStyle.Sine), {Offset = Vector2.new(0.5, 0)}):Play(); PingWait(5); TweenService:Create(g, TweenInfo.new(5, Enum.EasingStyle.Sine), {Offset = Vector2.new(-0.5, 0)}):Play(); PingWait(5) end end)
                 end
                 PingWait(2)
             else
@@ -1136,7 +1136,7 @@ function ApplyTheme(name)
                 if not Window:FindFirstChildWhichIsA("UIGradient") then
                     local g = Instance.new("UIGradient", Window)
                     g.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, p.BG), ColorSequenceKeypoint.new(0.5, p.Accent), ColorSequenceKeypoint.new(1, p.BG)})
-                    task.spawn(function() while _G.CurrentTheme == myTheme and g.Parent do TweenService:Create(g, TweenInfo.new(4, Enum.EasingStyle.Linear), {Rotation = 360}):Play(); task.wait(4); g.Rotation = 0 end end)
+                    task.spawn(function() while _G.CurrentTheme == myTheme and g.Parent do TweenService:Create(g, TweenInfo.new(4, Enum.EasingStyle.Linear), {Rotation = 360}):Play(); PingWait(4); g.Rotation = 0 end end)
                 end
                 PingWait(1)
             end
@@ -6472,7 +6472,7 @@ do
    local hrp=char:FindFirstChild("HumanoidRootPart"); local hum=char:FindFirstChildOfClass("Humanoid")
    if hrp and hum then
    local pos=hrp.CFrame; hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-   task.wait(0.1); hrp.CFrame=pos
+   PingWait(0.1); hrp.CFrame=pos
    end
    end
    end
@@ -8669,7 +8669,7 @@ task.spawn(function()
  channels.ChildAdded:Connect(function(ch) task.spawn(function() PingWait(0.1); watchChannel(ch) end) end)
 
  -- Scan history awal saat startup (silent, jangan trigger webhook)
- task.wait(5)
+ PingWait(5)
  _whSilent = true
  pcall(function()
  for _, ch in ipairs(channels:GetChildren()) do
@@ -11671,11 +11671,11 @@ function StartRaidLoop()
  RAID.inMap = false
  RaidStatusUpdate("[||] Dungeon aktif - menunggu...", Color3.fromRGB(255,140,0))
  while (MODE.current == "dungeon" or (DUNGEON and DUNGEON.interrupt)) and RAID.running do
- task.wait(0.5)
+ PingWait(0.5)
  end
  if not RAID.running then break end
  RaidStatusUpdate("> Dungeon selesai - lanjut raid...", C.ACC3)
- task.wait(0.1)
+ PingWait(0.1)
  end
 
  -- [FIX] Cek ST2 (Single/Ascension Tower) - pause Auto Raid selama Tower berjalan
@@ -11683,11 +11683,11 @@ function StartRaidLoop()
  RAID.inMap = false
  RaidStatusUpdate("[||] Tower aktif - Auto Raid pause...", Color3.fromRGB(255,140,0))
  while ST2 and (ST2.running or ST2.inMap) and RAID.running do
- task.wait(0.5)
+ PingWait(0.5)
  end
  if not RAID.running then break end
  RaidStatusUpdate("> Tower selesai - lanjut raid...", C.ACC3)
- task.wait(0.1)
+ PingWait(0.1)
  end
 
  -- [v56 FIX] Guard RAID: tunggu fitur lain selesai
@@ -11701,7 +11701,7 @@ function StartRaidLoop()
    -- Cek ASC busy dulu (prioritas)
    if ASC and ASC.running and _ascBusy then
     RaidStatusUpdate("[||] ASC aktif - RAID standby...", Color3.fromRGB(180,100,255))
-    task.wait(0.5); _rGuard = _rGuard + 0.5
+    PingWait(0.5); _rGuard = _rGuard + 0.5
     continue
    end
    -- Cek fitur lain (Siege, Dungeon)
@@ -11709,7 +11709,7 @@ function StartRaidLoop()
    local _selfBusy = (_who == "raid")
    if not _busy or _selfBusy then break end
    RaidStatusUpdate("[||] Tunggu "..(_who or "?").." selesai dulu...", Color3.fromRGB(255,140,0))
-   task.wait(0.5); _rGuard = _rGuard + 0.5
+   PingWait(0.5); _rGuard = _rGuard + 0.5
   end
   if not RAID.running then break end
  end
@@ -12117,7 +12117,7 @@ local function ResolveEntry()
  end
  local _we = 0
  while not _woken and _we < 1 and RAID.running do
- task.wait(0.1); _we = _we + 0.1
+ PingWait(0.1); _we = _we + 0.1
  end
  if _wConn then pcall(function() _wConn:Disconnect() end) end
  end
@@ -12147,7 +12147,7 @@ local function ResolveEntry()
  if not _preCheck_ok then
  _raidInterrupt = false; RAID.inMap = false; ReleaseMapLock("raid"); MODE:Release("raid")
  RaidStatusUpdate("Raid expired sebelum masuk - tunggu raid baru...", Color3.fromRGB(255,100,60))
- task.wait(2)
+ PingWait(2)
  break
  end
 
@@ -12157,7 +12157,7 @@ local function ResolveEntry()
  -- Jika Siege / Dungeon sedang jalan, RAID WAJIB PAUSE!
  if (SIEGE and (SIEGE.inMap or SIEGE.teleporting)) or (DUNGEON and DUNGEON.inMap) then
      RaidStatusUpdate("[!] PAUSE: Menunggu Siege/Dungeon Selesai...", Color3.fromRGB(255, 100, 100))
-     task.wait(2)
+     PingWait(2)
      break
  end
  
@@ -12174,7 +12174,7 @@ local function ResolveEntry()
      local _ascEntry = ResolveAscEntry and ResolveAscEntry()
      if _ascEntry then
          RaidStatusUpdate("[||] AUTO RAID ASCENSION aktif & ada Tower match - Normal Raid standby...", Color3.fromRGB(180,100,255))
-         task.wait(1)
+         PingWait(1)
          break
      end
      -- ResolveAscEntry() = nil -> tidak ada Tower match -> RAID boleh jalan sebagai fallback
@@ -12186,7 +12186,7 @@ local function ResolveEntry()
  local currentWm = workspace:GetAttribute("MapId") or 0
  -- [FIX] Blokir Auto Raid saat di dalam Map Siege atau Dungeon
  if (currentWm >= 50201 and currentWm <= 50204) or currentWm == 50303 then
-     task.wait(2)
+     PingWait(2)
      break
  end
  -- [v56 FIX] Jika player masih secara fisik di dalam Tower (seharusnya tidak terjadi karena ASC.inMap sudah cover)
@@ -12194,7 +12194,7 @@ local function ResolveEntry()
  if currentWm >= 50301 and currentWm <= 50326 then
      RaidStatusUpdate("[||] Masih di dalam Ascension Tower - tunggu keluar...", Color3.fromRGB(180,100,255))
      while (workspace:GetAttribute("MapId") or 0) >= 50301 and RAID.running do
-         task.wait(0.5)
+         PingWait(0.5)
      end
      if not RAID.running then break end
  end
@@ -12202,11 +12202,11 @@ local function ResolveEntry()
  if ST2 and ST2.inMap then
      RaidStatusUpdate("[||] Tower aktif - Auto Raid pause...", Color3.fromRGB(255,140,0))
      while ST2 and ST2.inMap and RAID.running do
-         task.wait(0.5)
+         PingWait(0.5)
      end
      if not RAID.running then break end
      RaidStatusUpdate("> Tower selesai - lanjut raid...", C.ACC3)
-     task.wait(0.1)
+     PingWait(0.1)
  end
 
  -- Siege cek tetap pakai flag lama (siege sudah pakai MODE juga via alias)
@@ -12220,7 +12220,7 @@ local function ResolveEntry()
   while RAID.running and _rLockWait < 15 do
    if TryClaimMapLock("raid") then break end
    RaidStatusUpdate("[||] Tunggu slot masuk map bebas...", Color3.fromRGB(200,200,100))
-   task.wait(0.2); _rLockWait = _rLockWait + 0.2
+   PingWait(0.2); _rLockWait = _rLockWait + 0.2
   end
   if not RAID.running then ReleaseMapLock("raid"); break end
  end
@@ -12247,7 +12247,7 @@ local function ResolveEntry()
 
                     if MA.running then
                         local _wma = 0
-                        while MA.running and _raidInterrupt and _wma < 1 do task.wait(0.05); _wma = _wma + 0.05 end
+                        while MA.running and _raidInterrupt and _wma < 1 do PingWait(0.05); _wma = _wma + 0.05 end
                     end
                     
                     RAID.slotIndex = 2
@@ -12260,7 +12260,7 @@ local function ResolveEntry()
                     local _liveEntry = RAID_LIVE[RAID.raidId]
                     if not _liveEntry then
                         _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid")
-                        task.wait(1); break
+                        PingWait(1); break
                     end
                     RAID.serverMapId = nil
                     if not RAID.running then break end
@@ -12274,7 +12274,7 @@ local function ResolveEntry()
                         -- Cuma pencet 1x, tidak perlu maksa spam!
                         RaidStatusUpdate("[~] Override: "..dir:upper(), Color3.fromRGB(200,140,255))
                         pcall(function() RE.UseRaidItem:FireServer(udId) end)
-                        task.wait(0.3)
+                        PingWait(0.3)
                     end
 
                     -- [LOGIKA KEPUTUSAN 4 HUKUM]
@@ -12327,7 +12327,7 @@ local function ResolveEntry()
                         if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
                         PingGuard()
                         if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
-                        task.wait(0.2)
+                        PingWait(0.2)
                         
                         -- Prioritas: Rune digunakan dulu, setelah itu langsung UpDown!
                         if useUpDown then DoUpDownOverride() end
@@ -12342,7 +12342,7 @@ local function ResolveEntry()
                         if itemId and RE.UseRaidItem then
                             pcall(function() RE.UseRaidItem:FireServer(itemId) end)
                         end
-                        task.wait(0.3)
+                        PingWait(0.3)
                         
                         if RE.StartChallengeRaidMap then
                             local _runeMapId = 50100 + targetMap
@@ -12351,7 +12351,7 @@ local function ResolveEntry()
                         
                         local _wR = 0
                         while RAID.serverMapId == nil and _wR < 10 and RAID.running do
-                            task.wait(0.1); _wR = _wR + 0.1
+                            PingWait(0.1); _wR = _wR + 0.1
                         end
                         
                         -- Fallback jika tiket Rune Map ternyata habis di inventory
@@ -12360,9 +12360,9 @@ local function ResolveEntry()
                             local _fbTargetMapId = raidEntry.mapId + 100
                             PingGuard()
                             if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
-                            task.wait(0.2)
+                            PingWait(0.2)
                             if RE.StartChallengeRaidMap then pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = _fbTargetMapId}) end) end
-                            local _wFb = 0; while RAID.serverMapId == nil and _wFb < 5 and RAID.running do task.wait(0.05); _wFb = _wFb + 0.05 end
+                            local _wFb = 0; while RAID.serverMapId == nil and _wFb < 5 and RAID.running do PingWait(0.05); _wFb = _wFb + 0.05 end
                         end
                         
                     else
@@ -12373,7 +12373,7 @@ local function ResolveEntry()
                         if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
                         PingGuard()
                         if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
-                        task.wait(0.2)
+                        PingWait(0.2)
                         if not RAID.running then break end
 
                         if useUpDown then DoUpDownOverride() end
@@ -12388,13 +12388,13 @@ local function ResolveEntry()
                         end
 
                         local _w2 = 0
-                        while RAID.serverMapId == nil and _w2 < 5 and RAID.running and not _cfail do task.wait(0.05); _w2 = _w2 + 0.05 end
+                        while RAID.serverMapId == nil and _w2 < 5 and RAID.running and not _cfail do PingWait(0.05); _w2 = _w2 + 0.05 end
 
                         if _cfConn then pcall(function() _cfConn:Disconnect() end) end
                         if _cfail then
                             RAID_LIVE[RAID.raidId] = nil; RebuildRaidList()
                             _raidInterrupt = false; RAID.inMap = false; MODE:Release("raid")
-                            task.wait(1); break
+                            PingWait(1); break
                         end
                     end
  -- STEP 3: Tunggu masuk map (max 10s) - flow sama persis v41
@@ -12402,7 +12402,7 @@ local function ResolveEntry()
  local _tpOk = false
  local _tpWait = 0
  while not _tpOk and _tpWait < 2 and RAID.running do
-  task.wait(0.3); _tpWait = _tpWait + 0.3
+  PingWait(0.3); _tpWait = _tpWait + 0.3
   pcall(function()
    local wMapId = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
    if wMapId then
@@ -12424,14 +12424,14 @@ local function ResolveEntry()
   -- Gagal masuk map: hapus entry dan retry
   RAID_LIVE[RAID.raidId] = nil; RebuildRaidList()
   _raidInterrupt = false; RAID.inMap = false; ReleaseMapLock("raid"); MODE:Release("raid"); RAID.fromMapId = nil
-  task.wait(1); break
+  PingWait(1); break
  end
 
  -- [FIX] Equip hero ke map ini agar hero spawn di sebelah player
  -- Tanpa ini hero tidak muncul di map raid meski GUID sudah ada
  if #HERO_GUIDS > 0 then
  task.spawn(function()
- task.wait(0.5)
+ PingWait(0.5)
  -- EquipHeroWithData: daftarkan hero ke map saat ini
  if RE.EquipHeroWithData then
  for _, hGuid in ipairs(HERO_GUIDS) do
@@ -12441,7 +12441,7 @@ local function ResolveEntry()
  userId = MY_USER_ID,
  })
  end)
- task.wait(0.1)
+ PingWait(0.1)
  end
  end
  -- HeroStandTo ke posisi player sekarang
@@ -12481,7 +12481,7 @@ local function ResolveEntry()
    local _curMId = GetCurrentMapId()
    -- Selama mapId masih di range Siege, tunggu
    if _curMId and (_curMId >= 50201 and _curMId <= 50204) then
-    task.wait(0.5); _siegeWait = _siegeWait + 0.5
+    PingWait(0.5); _siegeWait = _siegeWait + 0.5
    else
     break -- mapId sudah bersih, lanjut
    end
@@ -12533,7 +12533,7 @@ local function ResolveEntry()
 
  -- [FIX v261] Snapshot mapId diambil SETELAH jeda singkat agar workspace.MapId
  -- sempat update dari server sebelum dipakai untuk validasi.
- task.wait(0.3) -- beri server 1 tick untuk update workspace.MapId
+ PingWait(0.3) -- beri server 1 tick untuk update workspace.MapId
 
  local function _isValidRaidMap(mId)
   if not mId then return false end
@@ -12555,7 +12555,7 @@ local function ResolveEntry()
  local _raidMapIdSnapshot = GetCurrentMapId()
  local _snapWait = 0
  while not (_isValidRaidMapByInstance() or _isValidRaidMap(_raidMapIdSnapshot)) and _snapWait < 3 and RAID.running do
-  task.wait(0.3); _snapWait = _snapWait + 0.3
+  PingWait(0.3); _snapWait = _snapWait + 0.3
   _raidMapIdSnapshot = GetCurrentMapId()
  end
 
@@ -12566,7 +12566,7 @@ local function ResolveEntry()
  RaidStatusUpdate("[..] Render delay...", Color3.fromRGB(160,148,135))
  local _preMapNum = GetRaidMapNum(raidEntry and raidEntry.mapId)
  local _renderDelay = (_preMapNum == 1) and 4 or 2
- task.wait(_renderDelay) -- Map1: 4s, lainnya: 2s
+ PingWait(_renderDelay) -- Map1: 4s, lainnya: 2s
 
  if RAID.running and not RAID._raidDone and RAID.autoKillBoss then
   -- [v56] AUTO BOSS KILL - TP KE ROOTPART BOSS (REALTIME)
@@ -12608,14 +12608,14 @@ local function ResolveEntry()
    local _detail = _info and ("Maps."..(_info.instance)..".Map.RaidsEnemys.".._info.rootPart) or ("mapNum="..tostring(_mapNumNow))
    RaidStatusUpdate("[!] RootPart boss tidak ditemukan - " .. _detail .. " - skip", Color3.fromRGB(255,80,80))
    _step4Cleanup()
-   task.wait(2)
+   PingWait(2)
   else
    -- Countdown delay sebelum TP (1-10s, user-controlled, sama seperti sebelumnya)
    local _bd = math.max(1, math.min(10, RAID.bossDelay or 3))
    for _ci = _bd, 1, -1 do
     if not RAID.running or RAID._raidDone then break end
     RaidStatusUpdate("[K] TP ke Boss Map " .. tostring(_mapNumNow) .. " - " .. _ci .. "s...", Color3.fromRGB(255,160,60))
-    task.wait(1)
+    PingWait(1)
    end
 
    if RAID.running and not RAID._raidDone then
@@ -12642,11 +12642,11 @@ local function ResolveEntry()
     end)
 
     -- 3) UnEquip -> EquipBest (sama seperti flow lama)
-    task.wait(0.3)
+    PingWait(0.3)
     if RE.UnEquipHero  then pcall(function() RE.UnEquipHero:FireServer()  end) end
-    task.wait(0.3)
+    PingWait(0.3)
     if RE.EquipBestHero then pcall(function() RE.EquipBestHero:FireServer() end) end
-    task.wait(0.3)
+    PingWait(0.3)
 
     -- 4) TP ulang semua hero setelah re-equip
     pcall(function()
@@ -12701,7 +12701,7 @@ local function ResolveEntry()
     local target = _scanNearbyEnemy()
     local _scanWait = 0
     while not target and _scanWait < 3 and RAID.running and not RAID._raidDone do
-     task.wait(0.5); _scanWait = _scanWait + 0.5
+     PingWait(0.5); _scanWait = _scanWait + 0.5
      target = _scanNearbyEnemy()
     end
 
@@ -12709,7 +12709,7 @@ local function ResolveEntry()
      -- Tidak ada musuh dalam radius setelah timeout - anggap gagal, skip map ini
      RaidStatusUpdate("[!] Tidak ada musuh dalam radius " .. TP_SCAN_RADIUS .. " studs - Go Out...", Color3.fromRGB(255,150,50))
      _step4Cleanup()
-     task.wait(2)
+     PingWait(2)
     else
      -- Musuh ketemu - attack loop pakai cara RA+TA (FCharF style)
      local targetGuid = target.guid
@@ -12760,7 +12760,7 @@ local function ResolveEntry()
       local hum = target.model:FindFirstChildOfClass("Humanoid")
       if not hum or hum.Health <= 0 then break end
       if not target.hrp or not target.hrp.Parent then
-       task.wait(0.1)
+       PingWait(0.1)
        if not target.model or not target.model.Parent then break end
        local hum2 = target.model:FindFirstChildOfClass("Humanoid")
        if not hum2 or hum2.Health <= 0 then break end
@@ -12774,7 +12774,7 @@ local function ResolveEntry()
        RaidStatusUpdate("[FLa] Target baru: " .. target.model.Name, Color3.fromRGB(255,80,60))
       end
       pcall(function() _attackBoss(targetGuid, target.hrp) end)
-      task.wait(0.1)
+      PingWait(0.1)
      end
 
      _step4Cleanup()
@@ -12794,7 +12794,7 @@ local function ResolveEntry()
    RAID._raidDone = true
    break
   end
-  task.wait(1); _wt = _wt + 1
+  PingWait(1); _wt = _wt + 1
  end
  end
 
@@ -12815,7 +12815,7 @@ local function ResolveEntry()
  -- 
  if _raidSuccess then
   RaidStatusUpdate("[..] Wait 1s (Get reward)...", Color3.fromRGB(100,255,150))
-  task.wait(1)
+  PingWait(1)
  end
  if not RAID.running then break end
 
@@ -12860,18 +12860,18 @@ local function ResolveEntry()
  if _quitRe then
  pcall(function() _quitRe:FireServer({ currentSlotIndex = RAID.slotIndex or 2, toMapId = _toMapId }) end)
  end
- task.wait(0.3)
+ PingWait(0.3)
  _fireTpRaid(_toMapId)
 
  -- Retry max 5x kalau masih di raid area
  local _exitTry = 0
  while _inRaidArea() and _exitTry < 5 and RAID.running do
  _exitTry = _exitTry + 1
- task.wait(1)
+ PingWait(1)
  if _quitRe then
  pcall(function() _quitRe:FireServer({ currentSlotIndex = RAID.slotIndex or 2, toMapId = _toMapId }) end)
  end
- task.wait(0.2)
+ PingWait(0.2)
  _fireTpRaid(_toMapId)
  end
  end
@@ -12896,7 +12896,7 @@ local function ResolveEntry()
  if cd % 3 == 0 then ForceRescanRaidEnter() end
  RaidStatusUpdate("[..] Cooldown " .. cd .. "s...", Color3.fromRGB(160,148,135))
  if RAID.dot then RAID.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
- task.wait(1)
+ PingWait(1)
  end
  RAID._cooldownActive = false -- [BUG FIX 3] Cooldown selesai, standby loop boleh masuk
 
@@ -12906,7 +12906,7 @@ local function ResolveEntry()
   RaidStatusUpdate("[..] List Entry buffer 2s...", Color3.fromRGB(160,148,135))
   for _bf = 2, 1, -1 do
    if not RAID.running then break end
-   task.wait(1)
+   PingWait(1)
   end
  end
 
@@ -12960,7 +12960,7 @@ local function ResolveEntry()
  end
  local _we2 = 0
  while not _woken2 and _we2 < 1 and RAID.running do
- task.wait(0.1); _we2 = _we2 + 0.1
+ PingWait(0.1); _we2 = _we2 + 0.1
  end
  if _wConn2 then pcall(function() _wConn2:Disconnect() end) end
  _fw = _fw + 1
@@ -13019,7 +13019,7 @@ do
 
  function ResizeRaidBody()
  task.spawn(function()
- task.wait(0)
+ PingWait(0)
  raidLayout:ApplyLayout()
  local h = raidLayout.AbsoluteContentSize.Y + 16
  raidInner.Size = UDim2.new(1,0,0,h)
@@ -13089,7 +13089,7 @@ do
  -- Polling ringan 0.3s sebagai safety net (update utama via RAID.updateActiveLabel)
  task.spawn(function()
  while true do
- task.wait(0.3)
+ PingWait(0.3)
  UpdateActiveRaidLabel()
  end
  end)
@@ -13995,7 +13995,7 @@ do
   -- Helper: hitung & set tinggi listContainer (max 200px)
   local function ResizeListContainer()
    task.defer(function()
-    task.wait(0)
+    PingWait(0)
     local h = math.min(listLayout2.AbsoluteContentSize.Y, 200)
     listContainer.Size = UDim2.new(1,0,0,h)
     task.defer(ResizeRaidBody)

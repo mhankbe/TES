@@ -10,6 +10,12 @@ do
  task.wait(2)
 end
 
+-- [V59] Fire EquipLoadoutSave saat script pertama kali di-execute
+-- dipanggil setelah Remotes siap (sudah di-wait oleh block di atas)
+pcall(function()
+    game:GetService("ReplicatedStorage").Remotes.EquipLoadoutSave:InvokeServer(1)
+end)
+
 do
 Players = game:GetService("Players")
 TweenService = game:GetService("TweenService")

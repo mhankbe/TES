@@ -5342,7 +5342,7 @@ do
   _frozenWS = nil
  end
 
- -- [EDIT] TpToF — teleport ke Torso musuh (fallback HumanoidRootPart), jarak 5 stud dari musuh
+ -- [EDIT] TpToF — teleport tepat ke Torso musuh (fallback HumanoidRootPart), tanpa jarak offset
  local function TpToF(tgt)
   if not tgt or not tgt.hrp then return end
   local char = LP.Character; if not char then return end
@@ -5350,14 +5350,7 @@ do
   local tgtTorso = tgt.model and (tgt.model:FindFirstChild("Torso") or tgt.model:FindFirstChild("UpperTorso"))
   local tgtPos = (tgtTorso and tgtTorso.Position) or tgt.hrp.Position
   if tgtPos.Y < -10 then return end
-  -- Arah dari musuh ke player (di-flatten sumbu Y)
-  local dir = (hrp.Position - tgtPos)
-  local dir2 = Vector3.new(dir.X, 0, dir.Z)
-  if dir2.Magnitude < 0.5 then dir2 = Vector3.new(1,0,0) end
-  dir2 = dir2.Unit
-  -- Posisi target = HRP musuh + 5 stud ke arah player
-  local nearPos = tgtPos + dir2 * 5
-  -- Raycast untuk cari lantai aman
+  -- Raycast untuk cari lantai aman tepat di posisi Torso musuh
   local params = RaycastParams.new()
   params.FilterType = Enum.RaycastFilterType.Exclude
   local ex = {}
@@ -5365,11 +5358,11 @@ do
   local ef = workspace:FindFirstChild("Enemys"); if ef then table.insert(ex, ef) end
   params.FilterDescendantsInstances = ex
   local safePos
-  for _,orig in ipairs({nearPos+Vector3.new(0,20,0), nearPos+Vector3.new(0,10,0), tgtPos+Vector3.new(5,20,0)}) do
+  for _,orig in ipairs({tgtPos+Vector3.new(0,20,0), tgtPos+Vector3.new(0,10,0), tgtPos+Vector3.new(0,5,0)}) do
    local r = workspace:Raycast(orig, Vector3.new(0,-80,0), params)
    if r and r.Position.Y >= (tgtPos.Y-30) then safePos = r.Position+Vector3.new(0,3,0); break end
   end
-  hrp.CFrame = CFrame.new(safePos or nearPos+Vector3.new(0,3,0))
+  hrp.CFrame = CFrame.new(safePos or tgtPos+Vector3.new(0,3,0))
   -- [FIX] Langsung freeze setelah teleport (pastikan WalkSpeed tetap 0)
   local hum = char:FindFirstChildOfClass("Humanoid")
   if hum then hum.WalkSpeed = 0 end

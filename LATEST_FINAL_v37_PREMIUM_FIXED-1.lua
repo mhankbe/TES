@@ -15323,6 +15323,17 @@ StartSiegeLoop = function()
                 SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
             end
 
+            -- EquipHeroWithData (persis urutan SimpleSpy manual: langsung setelah LocalPlayerTeleportSuccess)
+            SiegeStatus("[>>] Fire EquipHeroWithData...", Color3.fromRGB(180,120,255))
+            pcall(function()
+                local re = _RE:FindFirstChild("EquipHeroWithData")
+                if re then re:FireServer() end
+            end)
+            task.wait(1)
+            if not SIEGE.running then
+                SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
+            end
+
             -- Poll workspace.Maps.[mapFolder] (max 5 detik)
             SiegeStatus("[..] Poll "..d.mapFolder.." (max 5s)...", Color3.fromRGB(255,200,60))
             local mapAppeared = false
@@ -15350,17 +15361,6 @@ StartSiegeLoop = function()
             end
 
             SiegeStatus("[OK] "..d.mapFolder.." muncul! (+"..string.format("%.1f", mapWait).."s)", Color3.fromRGB(80,220,80))
-
-            -- EquipHeroWithData (kirim SETELAH map muncul, sesuai urutan debug)
-            SiegeStatus("[>>] Fire EquipHeroWithData...", Color3.fromRGB(180,120,255))
-            pcall(function()
-                local re = _RE:FindFirstChild("EquipHeroWithData")
-                if re then re:FireServer() end
-            end)
-            task.wait(1)
-            if not SIEGE.running then
-                SIEGE.teleporting = false; _siegeInterrupt = false; MODE:Release("siege"); break
-            end
 
             -- Delay render musuh - antisipasi device lelet, musuh butuh waktu spawn
             -- setelah map folder muncul (folder bisa duluan, isi musuh menyusul)

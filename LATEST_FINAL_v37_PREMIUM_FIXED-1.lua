@@ -1881,10 +1881,7 @@ local function IsEnemyGuidValid(g)
   local f = workspace:FindFirstChild(folderName)
   if f then
    for _, e in ipairs(f:GetChildren()) do
-    -- [FIX v101] Siege enemy tidak punya EnemyGuid attribute sama sekali (terbukti
-    -- via sniffing) -- GetSiegeEnemies() fallback ke GetDebugId() buat kasus ini,
-    -- jadi di sini juga harus diterima sebagai match yang valid.
-    if e:IsA("Model") and (e:GetAttribute("EnemyGuid") == g or e:GetDebugId() == g) then
+    if e:IsA("Model") and e:GetAttribute("EnemyGuid") == g then
      local hrp = e:FindFirstChild("HumanoidRootPart")
      local hum = e:FindFirstChildOfClass("Humanoid")
      if hrp and hum and hum.Health > 0 then
@@ -5345,12 +5342,13 @@ do
   _frozenWS = nil
  end
 
- -- [EDIT] TpToF — teleport ke HumanoidRootPart musuh, jarak 5 stud dari musuh
+ -- [EDIT] TpToF — teleport ke Torso musuh (fallback HumanoidRootPart), jarak 5 stud dari musuh
  local function TpToF(tgt)
   if not tgt or not tgt.hrp then return end
   local char = LP.Character; if not char then return end
   local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-  local tgtPos = tgt.hrp.Position
+  local tgtTorso = tgt.model and (tgt.model:FindFirstChild("Torso") or tgt.model:FindFirstChild("UpperTorso"))
+  local tgtPos = (tgtTorso and tgtTorso.Position) or tgt.hrp.Position
   if tgtPos.Y < -10 then return end
   -- Arah dari musuh ke player (di-flatten sumbu Y)
   local dir = (hrp.Position - tgtPos)
@@ -15057,24 +15055,16 @@ local function IsInSiegeMapNow()
 end
 
 -- ── Helper: ambil musuh Siege dari workspace.Enemys ───────────
--- [FIX v101] guid (EnemyGuid/BossGuid/Guid/GUID) TERBUKTI selalu nil di SEMUA
--- musuh Siege -- sudah dicek lewat sniffing nyata di Map 3 (26 musuh) dan
--- Map 7 (15 musuh), 0 dari 41 yang punya salah satu dari 4 attribute itu.
--- Makanya guid TIDAK lagi jadi syarat wajib -- cukup HumanoidRootPart +
--- Humanoid valid (sesuai instruksi). Kalau real guid ternyata ADA, tetap
--- dipakai duluan; kalau nggak ada, fallback ke GetDebugId() (unik per-model,
--- cukup buat dedup & tracking lokal).
 local function GetSiegeEnemies()
     local list, seen = {}, {}
     local function _add(e)
         if not e:IsA("Model") then return end
         if not e:IsDescendantOf(workspace) then return end
+        local g   = e:GetAttribute("EnemyGuid") or e:GetAttribute("BossGuid")
+                 or e:GetAttribute("Guid")       or e:GetAttribute("GUID")
         local h   = e:FindFirstChild("HumanoidRootPart")
         local hum = e:FindFirstChildOfClass("Humanoid")
-        if not (h and hum) then return end
-        local g = e:GetAttribute("EnemyGuid") or e:GetAttribute("BossGuid")
-               or e:GetAttribute("Guid")       or e:GetAttribute("GUID")
-               or e:GetDebugId()
+        if not (g and h and hum) then return end
         if seen[g] then return end
         if hum.Health <= 0 then return end
         if hum.MaxHealth <= 0 then return end

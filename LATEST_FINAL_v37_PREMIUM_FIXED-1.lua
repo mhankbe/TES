@@ -1881,7 +1881,10 @@ local function IsEnemyGuidValid(g)
   local f = workspace:FindFirstChild(folderName)
   if f then
    for _, e in ipairs(f:GetChildren()) do
-    if e:IsA("Model") and e:GetAttribute("EnemyGuid") == g then
+    -- [FIX v101] Siege enemy tidak punya EnemyGuid attribute sama sekali (terbukti
+    -- via sniffing) -- GetSiegeEnemies() fallback ke GetDebugId() buat kasus ini,
+    -- jadi di sini juga harus diterima sebagai match yang valid.
+    if e:IsA("Model") and (e:GetAttribute("EnemyGuid") == g or e:GetDebugId() == g) then
      local hrp = e:FindFirstChild("HumanoidRootPart")
      local hum = e:FindFirstChildOfClass("Humanoid")
      if hrp and hum and hum.Health > 0 then
@@ -15054,16 +15057,24 @@ local function IsInSiegeMapNow()
 end
 
 -- ── Helper: ambil musuh Siege dari workspace.Enemys ───────────
+-- [FIX v101] guid (EnemyGuid/BossGuid/Guid/GUID) TERBUKTI selalu nil di SEMUA
+-- musuh Siege -- sudah dicek lewat sniffing nyata di Map 3 (26 musuh) dan
+-- Map 7 (15 musuh), 0 dari 41 yang punya salah satu dari 4 attribute itu.
+-- Makanya guid TIDAK lagi jadi syarat wajib -- cukup HumanoidRootPart +
+-- Humanoid valid (sesuai instruksi). Kalau real guid ternyata ADA, tetap
+-- dipakai duluan; kalau nggak ada, fallback ke GetDebugId() (unik per-model,
+-- cukup buat dedup & tracking lokal).
 local function GetSiegeEnemies()
     local list, seen = {}, {}
     local function _add(e)
         if not e:IsA("Model") then return end
         if not e:IsDescendantOf(workspace) then return end
-        local g   = e:GetAttribute("EnemyGuid") or e:GetAttribute("BossGuid")
-                 or e:GetAttribute("Guid")       or e:GetAttribute("GUID")
         local h   = e:FindFirstChild("HumanoidRootPart")
         local hum = e:FindFirstChildOfClass("Humanoid")
-        if not (g and h and hum) then return end
+        if not (h and hum) then return end
+        local g = e:GetAttribute("EnemyGuid") or e:GetAttribute("BossGuid")
+               or e:GetAttribute("Guid")       or e:GetAttribute("GUID")
+               or e:GetDebugId()
         if seen[g] then return end
         if hum.Health <= 0 then return end
         if hum.MaxHealth <= 0 then return end

@@ -5445,10 +5445,11 @@ do
   return tgt.hrp and tgt.hrp.CFrame or nil
  end
 
- -- [V81] TpInstantRA: teleport "lari kilat" — set CFrame player ke posisi AMAN musuh
+ -- [FIX] TpInstantRA: teleport "lari kilat" — set CFrame player ke posisi AMAN musuh
  -- (BodyFrontAttachment kalau ada, fallback HumanoidRootPart kalau tidak), tanpa offset,
- -- supaya tidak nyemplung jurang/objek anomali. Dipanggil ulang tiap tick selama RA
- -- punya target, supaya posisi terus nempel mengikuti gerak musuh secara real-time.
+ -- supaya tidak nyemplung jurang/objek anomali. HANYA dipanggil SEKALI saat target baru
+ -- dipilih (di AcquireNewTargetRA) — tidak diulang tiap tick lagi, supaya player diam
+ -- stabil di tempat dan tidak ikut "gempa" mengikuti goyangan animasi idle musuh.
  local function TpInstantRA(tgt)
   if not tgt or not tgt.hrp or not tgt.hrp.Parent then return nil end
   local char = LP and LP.Character; if not char then return nil end
@@ -5677,12 +5678,12 @@ do
     if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
      AcquireNewTargetRA()
     end
-    -- Jaga WalkSpeed tetap 0 & posisi terus nempel ke musuh (ikuti gerak musuh)
+    -- [FIX] Jaga WalkSpeed tetap 0 saja. TIDAK re-teleport tiap tick lagi —
+    -- itu yang bikin "gempa" (CFrame attachment ikut goyang animasi idle musuh).
+    -- Teleport HANYA terjadi 1x saat target baru dipilih (lihat AcquireNewTargetRA),
+    -- lalu player diam di situ sampai musuh itu mati/ganti target.
     ReassertFreeze()
-    if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
-     TpInstantRA(RA.cur)
-    end
-    task.wait(0.05) -- tick re-lock posisi, cepat tapi ringan (spam serang sudah independen di thread sendiri)
+    task.wait(0.1)
    end
    StopRaAtkThread()
   end)

@@ -5448,18 +5448,29 @@ do
  -- [FIX] TpInstantRA: teleport "lari kilat" — set CFrame player ke posisi AMAN musuh
  -- (BodyFrontAttachment kalau ada, fallback HumanoidRootPart kalau tidak), tanpa offset,
  -- supaya tidak nyemplung jurang/objek anomali. HANYA dipanggil SEKALI saat target baru
- -- dipilih (di AcquireNewTargetRA) — tidak diulang tiap tick lagi, supaya player diam
- -- stabil di tempat dan tidak ikut "gempa" mengikuti goyangan animasi idle musuh.
+ -- dipilih (di AcquireNewTargetRA) — tidak diulang tiap tick lagi.
+ -- [FIX] Setelah teleport, HRP di-Anchored = true → posisi terkunci TOTAL, tidak bisa
+ -- digeser apapun (knockback, dorongan musuh, physics force lain) sampai musuh ini mati
+ -- dan UnanchorRA() dipanggil sebelum ganti target berikutnya.
  local function TpInstantRA(tgt)
   if not tgt or not tgt.hrp or not tgt.hrp.Parent then return nil end
   local char = LP and LP.Character; if not char then return nil end
   local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil end
   local tgtCFrame = GetSafeTargetCFrameRA(tgt)
   if not tgtCFrame then return nil end
+  hrp.Anchored = false -- lepas dulu supaya CFrame assignment di bawah pasti berhasil
   hrp.CFrame = tgtCFrame
+  hrp.Anchored = true  -- kunci TOTAL di posisi ini, anti knockback/dorongan
   local hum = char:FindFirstChildOfClass("Humanoid")
   if hum then hum.WalkSpeed = 0 end
   return tgtCFrame
+ end
+
+ -- [FIX] UnanchorRA: lepas kunci Anchored sebelum pindah ke target berikutnya / saat RA stop.
+ local function UnanchorRA()
+  local char = LP and LP.Character; if not char then return end
+  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+  hrp.Anchored = false
  end
 
  -- [V80] TpToF_RA/TpToF_TA: langsung teleport saja, tanpa simpan CFrame/Heartbeat.
@@ -5648,13 +5659,14 @@ do
    if _acquiring then return end -- sudah ada proses ganti target jalan, jangan dobel
    if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then return end -- target masih hidup, tidak perlu ganti
    _acquiring = true
+   UnanchorRA() -- [FIX] lepas kunci posisi musuh lama dulu sebelum cari/teleport ke target baru
    StopRaAtkThread()
    local _oldRAGuidForHero = RA.cur and RA.cur.guid
    if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
    RA.cur = PickRandomEnemyRA()
    if RA.cur then
-    TpInstantRA(RA.cur)              -- lari kilat, posisi aman (BodyFrontAttachment/fallback HRP) — INSTAN
-    FreezePlayer()                   -- kunci di situ
+    TpInstantRA(RA.cur)              -- lari kilat, posisi aman (BodyFrontAttachment/fallback HRP) — INSTAN, lalu Anchored=true
+    FreezePlayer()                   -- kunci WalkSpeed juga
     WatchEnemyRA(RA.cur)
     local atkPos = RA.cur.hrp.Position
     local targetGuid = RA.cur.guid
@@ -5693,6 +5705,7 @@ do
 
  local function StopRA()
   RA.running = false
+  UnanchorRA() -- [FIX] WAJIB lepas Anchored saat RA stop, supaya player tidak nyangkut terkunci
   for _,t in ipairs(RA.threads) do pcall(function() task.cancel(t) end) end
   -- [FIX] Stop thread spam PlayerClickAttackSkill secara langsung — tidak bergantung
   -- pada task.cancel di atas yang bisa membunuh tChar sebelum sempat cleanup natural

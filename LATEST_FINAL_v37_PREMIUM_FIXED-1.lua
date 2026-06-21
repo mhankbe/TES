@@ -5441,12 +5441,13 @@ do
  -- Polanya: teleport sekali ke anchor (titik statis), lalu tiap frame scan semua musuh
  -- dalam radius AOE_RADIUS stud dari titik anchor itu (BUKAN posisi player real-time),
  -- dan ke SETIAP musuh yang ketemu: burst AOE_BURST_COUNT panggilan FireAttack
- -- (PlayerClickAttackSkill+HeroUseSkill) + 1x FireAllDamage (ClickEnemy) per siklus,
- -- diulang tiap AOE_BURST_INTERVAL detik (10x per 0.5 detik per kesepakatan, atau 100x
- -- per 0.5 detik khusus FireAttack sesuai instruksi "100x dalam 0.5 detik").
- local AOE_RADIUS = 30          -- stud, pusat = titik teleport (anchor), statis
- local AOE_BURST_COUNT = 100    -- panggilan FireAttack per musuh, per siklus burst
- local AOE_BURST_INTERVAL = 0.5 -- detik antar siklus burst
+ -- (PlayerClickAttackSkill+HeroUseSkill) + 1x FireAllDamage (ClickEnemy) per siklus.
+ -- Interval burst sekarang per-thread (RA = AOE_BURST_INTERVAL_RA, TA = AOE_BURST_INTERVAL_TA,
+ -- TA 10x lebih cepat dari RA sesuai permintaan).
+ local AOE_RADIUS = 10             -- stud, pusat = titik teleport (anchor), statis
+ local AOE_BURST_COUNT = 100       -- panggilan FireAttack per musuh, per siklus burst
+ local AOE_BURST_INTERVAL_RA = 0.5  -- detik antar siklus burst untuk RA
+ local AOE_BURST_INTERVAL_TA = 0.05 -- detik antar siklus burst untuk TA (10x lebih cepat dari RA)
 
  -- Lakukan 1 siklus burst AOE: scan radius dari anchorPos (Vector3), serang semua musuh ketemu
  local function AoeBurstOnce(anchorPos)
@@ -5462,10 +5463,11 @@ do
   return targets
  end
 
- -- Thread AOE mandiri: jalan terus selama handle.running, burst tiap AOE_BURST_INTERVAL detik,
+ -- Thread AOE mandiri: jalan terus selama handle.running, burst tiap `interval` detik,
  -- pakai anchorPosFn() supaya posisi anchor bisa "dibaca ulang" tiap siklus (anchor sendiri statis,
  -- tapi disimpan sebagai closure agar mudah di-update kalau anchor pindah saat reset).
- local function StartAoeThread(anchorPosFn, onEmptyRadius)
+ local function StartAoeThread(anchorPosFn, onEmptyRadius, interval)
+  interval = interval or AOE_BURST_INTERVAL_RA
   local handle = {running = true}
   task.spawn(function()
    while handle.running do
@@ -5475,7 +5477,7 @@ do
      -- Tidak ada lagi musuh di radius -> beri sinyal supaya caller bisa reset/pindah
      onEmptyRadius()
     end
-    task.wait(AOE_BURST_INTERVAL)
+    task.wait(interval)
    end
   end)
   return handle
@@ -5514,6 +5516,7 @@ do
  -- lalu AOE attack semua musuh dalam radius AOE_RADIUS dari titik teleport (statis).
  -- Reset/pindah lokasi baru begitu GUID anchor itu sendiri hilang/mati (bukan saat radius kosong).
  local _raAoeHandle = nil   -- handle thread AOE RA aktif (scope luar agar StopRA bisa akses langsung)
+ local _raBonusForTaHandle = nil -- handle thread bonus AOE dari RA yang dialihkan ke anchor TA (saat RA+TA aktif bersamaan)
  local function StartRA()
   if #HERO_GUIDS == 0 then
    pcall(function()
@@ -5530,8 +5533,10 @@ do
   RA.running=true; RA.killed=0; RA.cur=nil; RA.threads={}
   -- [FIX] FreezePlayer dipasang setelah teleport ke anchor baru, bukan di sini.
   local _raDiedConns = {}
-  local _raAnchorPos = nil   -- titik teleport statis (pusat radius AOE)
+  local _raAnchorPos = nil   -- titik teleport statis RA (pusat radius AOE RA sendiri)
   if _raAoeHandle then StopAoeThread(_raAoeHandle); _raAoeHandle = nil end
+  if _raBonusForTaHandle then StopAoeThread(_raBonusForTaHandle); _raBonusForTaHandle = nil end
+  local _raBonusForTaGuid = nil -- guid anchor TA yang sedang "dititipi" bonus AOE dari RA
 
   local function WatchEnemyRA(e)
    if not e or not e.model then return end
@@ -5559,18 +5564,39 @@ do
       _raAnchorPos = RA.cur.hrp and RA.cur.hrp.Position
       WatchEnemyRA(RA.cur)
       FreezePlayer()
-      -- Mulai thread AOE baru berpusat di titik teleport (statis)
-      local anchorPosSnapshot = _raAnchorPos
-      _raAoeHandle = StartAoeThread(function() return anchorPosSnapshot end, nil)
      end
     end
     -- [FIX] Jaga posisi tetap terkunci tiap tick (anti reset Anchored oleh server/respawn)
     ReassertFreeze()
-    -- [FIX] task.wait di sini HANYA untuk ritme cek anchor mati/scan target baru
-    -- (serangan AOE sendiri berjalan independen di thread StartAoeThread, interval AOE_BURST_INTERVAL)
+
+    -- [RA+TA] Kalau TA aktif: RA berhenti total menyerang sendiri (cuma teleport/posisi),
+    -- semua kapasitas serang RA dialihkan jadi bonus AOE ke radius/anchor TA (TA dapat 2x rate).
+    -- Kalau TA tidak aktif: RA menyerang radius sendiri seperti biasa.
+    if TA.running and TA.cur then
+     -- Pastikan AOE radius RA sendiri OFF selama TA aktif
+     if _raAoeHandle then StopAoeThread(_raAoeHandle); _raAoeHandle = nil end
+     -- Anchor TA berganti / belum ada bonus thread -> (re)start bonus thread mengincar anchor TA
+     if _raBonusForTaGuid ~= TA.cur.guid or not (_raBonusForTaHandle and _raBonusForTaHandle.running) then
+      if _raBonusForTaHandle then StopAoeThread(_raBonusForTaHandle); _raBonusForTaHandle = nil end
+      local taAnchorPosSnapshot = TA.cur.hrp and TA.cur.hrp.Position
+      _raBonusForTaGuid = TA.cur.guid
+      _raBonusForTaHandle = StartAoeThread(function() return taAnchorPosSnapshot end, nil, AOE_BURST_INTERVAL_TA)
+     end
+    else
+     -- TA tidak aktif (lagi) -> matikan bonus thread TA, nyalakan kembali AOE radius RA sendiri
+     if _raBonusForTaHandle then StopAoeThread(_raBonusForTaHandle); _raBonusForTaHandle = nil; _raBonusForTaGuid = nil end
+     if RA.cur and not _raAoeHandle and _raAnchorPos then
+      local anchorPosSnapshot = _raAnchorPos
+      _raAoeHandle = StartAoeThread(function() return anchorPosSnapshot end, nil)
+     end
+    end
+
+    -- [FIX] task.wait di sini HANYA untuk ritme cek anchor mati/scan target baru/cek state TA
+    -- (serangan AOE sendiri berjalan independen di thread StartAoeThread terpisah)
     task.wait(0.1)
    end
    if _raAoeHandle then StopAoeThread(_raAoeHandle); _raAoeHandle = nil end
+   if _raBonusForTaHandle then StopAoeThread(_raBonusForTaHandle); _raBonusForTaHandle = nil end
   end)
   RA.threads = {tChar}
   StartCollectF(function() return RA.running end)
@@ -5580,9 +5606,10 @@ do
   RA.running = false
   for _,t in ipairs(RA.threads) do pcall(function() task.cancel(t) end) end
   RA.threads={}; RA.cur=nil
-  -- [FIX] Stop thread AOE RA langsung (jangan andalkan cleanup natural di akhir loop,
-  -- karena task.cancel membunuh thread paksa sebelum sempat sampai baris cleanup)
+  -- [FIX] Stop thread AOE RA + bonus AOE TA langsung (jangan andalkan cleanup natural di
+  -- akhir loop, karena task.cancel membunuh thread paksa sebelum sempat sampai baris cleanup)
   if _raAoeHandle then StopAoeThread(_raAoeHandle); _raAoeHandle = nil end
+  if _raBonusForTaHandle then StopAoeThread(_raBonusForTaHandle); _raBonusForTaHandle = nil end
   -- [FIX] Disconnect semua HumanoidDied listener RA
   for _,c in ipairs(_raDiedConns or {}) do pcall(function() c:Disconnect() end) end
   _raDiedConns = {}
@@ -5606,7 +5633,7 @@ do
     TpToF(tgt); TA.cur = tgt
     FreezePlayer()
     local anchorPos = tgt.hrp and tgt.hrp.Position
-    _taAoeHandle = StartAoeThread(function() return anchorPos end, nil)
+    _taAoeHandle = StartAoeThread(function() return anchorPos end, nil, AOE_BURST_INTERVAL_TA)
     -- [FIX] HumanoidDied listener: instan deteksi mati pada anchor GUID
     local hum = tgt.model and tgt.model:FindFirstChildOfClass("Humanoid")
     if hum then
@@ -5691,7 +5718,7 @@ do
      FreezePlayer()
      local anchorPos = tgt.hrp and tgt.hrp.Position
      if _taAoeHandle then StopAoeThread(_taAoeHandle) end
-     _taAoeHandle = StartAoeThread(function() return anchorPos end, nil)
+     _taAoeHandle = StartAoeThread(function() return anchorPos end, nil, AOE_BURST_INTERVAL_TA)
      -- [FIX] Pasang HumanoidDied listener pada target saat ini
      WatchTarget(tgt)
      -- Tunggu sampai anchor ini mati (deteksi via _curDied = instan)

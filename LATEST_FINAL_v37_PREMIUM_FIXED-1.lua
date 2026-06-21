@@ -1866,11 +1866,13 @@ function ReturnHRPToOrigin()
  if hrp then hrp.CFrame = CFrame.new(ORIGIN_POS) end
 end
 
--- [FIX v2 - PER TARGET] Hero attack thread sekarang per-GUID target, bukan 1 global.
--- Sebelumnya RA dan TA berbagi satu _heroAtkTarget -> rebutan, hero bisa lompat-lompat
--- antara target RA dan TA tergantung siapa terakhir update. Sekarang tiap GUID target
--- punya thread sendiri yang independen, jadi RA dan TA tidak saling pengaruh.
-local _heroAtkThreads = {} -- [guid] = {running=true, tick=0}
+-- [FIX v242] Satu dedicated hero attack thread mengurus type 1+2+3
+-- Interval tetap 0.5s antar siklus penuh - tidak overflow AnimationTrack limit 64
+-- FireAllDamage hanya update target, tidak fire hero langsung
+-- RE.Atk & RE.Click tetap sync karena itu attack player bukan hero
+local _heroAtkTarget = nil -- guid target hero saat ini
+local _heroAtkThread = nil -- thread hero attack
+local _heroAtkTick = 0 -- [PERBAIKAN 1] Mencegah nil error pada siklus attack
 
 -- [v256-FIX] Helper: validasi enemy guid masih punya HumanoidRootPart yang valid
 local function IsEnemyGuidValid(g)
@@ -1910,20 +1912,16 @@ local function IsEnemyGuidValid(g)
  return false
 end
 
--- [PER TARGET] Mulai thread hero-attack khusus untuk satu GUID target.
--- Kalau GUID ini sudah punya thread aktif, tidak bikin baru (no-op).
-local function EnsureHeroAtkThreadFor(g)
- if not g then return end
- if _heroAtkThreads[g] and _heroAtkThreads[g].running then return end
- local handle = {running = true, tick = 0}
- _heroAtkThreads[g] = handle
- task.spawn(function()
+local function EnsureHeroAtkThread()
+ if _heroAtkThread then return end
+ _heroAtkThread = task.spawn(function()
   local _lastFire = {}
-  while handle.running and ScreenGui and ScreenGui.Parent do
-   if #HERO_GUIDS > 0 and (tick() - handle.tick) >= 0.5 and IsEnemyGuidValid(g) then
-    handle.tick = tick()
+  while ScreenGui and ScreenGui.Parent do
+   local g = _heroAtkTarget
+   if g and #HERO_GUIDS > 0 and (tick() - _heroAtkTick) >= 0.5 and IsEnemyGuidValid(g) then
+    _heroAtkTick = tick()
     for _, hGuid in ipairs(HERO_GUIDS) do
-     local last = _lastFire[hGuid] or 0
+     local last = _lastFire[hGuid] or 0 -- [PERBAIKAN 2] Tambahkan 'or 0'
      if (tick() - last) >= 0.05 then
       _lastFire[hGuid] = tick()
       if RE.HeroUseSkill then
@@ -1938,25 +1936,13 @@ local function EnsureHeroAtkThreadFor(g)
     end
    end
    PingWait(0.05)
-   if not IsEnemyGuidValid(g) then
-    -- Target sudah mati/hilang -> hentikan thread ini, bersihkan slot
-    handle.running = false
-   end
   end
-  _heroAtkThreads[g] = nil
+  _heroAtkThread = nil -- [PERBAIKAN 3] Memperbaiki memori bocor (sebelumnya terisi angka 5)
  end)
 end
 
--- [STOP] Hentikan thread hero-attack untuk GUID tertentu (dipanggil saat target ganti/mati)
-local function StopHeroAtkThreadFor(g)
- if g and _heroAtkThreads[g] then
-  _heroAtkThreads[g].running = false
-  _heroAtkThreads[g] = nil
- end
-end
-
 local _skillTarget = nil
-local function EnsureSkillThread(g) EnsureHeroAtkThreadFor(g) end
+local function EnsureSkillThread() EnsureHeroAtkThread() end
 
 local _heroFireTick = {}
 function FireAttack(g, pos)
@@ -1999,8 +1985,9 @@ function FireAllDamage(g, ep)
  if RE.Atk then
   pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
  end
- -- [PER TARGET] Thread hero-attack khusus untuk GUID ini, tidak berbagi target global lagi
- EnsureHeroAtkThreadFor(g)
+ _heroAtkTarget = g
+ _skillTarget = g
+ EnsureHeroAtkThread()
  if not RE.HeroUseSkill and RE.HeroSkill then
   for _, hGuid in ipairs(HERO_GUIDS) do
    pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=1,masterId=MY_USER_ID}) end)
@@ -5298,28 +5285,20 @@ do
  return true
  end
 
- -- [DIPERLUAS] Scan semua folder enemy standar (sama seperti GetRaidEnemies),
- -- bukan cuma "Enemys" — supaya RA/TA bisa kenali musuh di folder lain juga.
- -- Fallback GUID attribute + fallback HRP untuk musuh yang strukturnya beda.
+ -- [EDIT] Hanya scan Workspace.Enemys
  local function GetEnemiesF()
   local list = {}
   local seen = {}
-  for _, fname in ipairs({"Bosses","Boss","RaidBoss","Enemys","Enemy","Enemies","RaidEnemys","Monsters","Monster"}) do
-   local f = workspace:FindFirstChild(fname)
-   if f then
-    for _,e in ipairs(f:GetChildren()) do
-     if e:IsA("Model") then
-      local g = e:GetAttribute("EnemyGuid") or e:GetAttribute("BossGuid") or e:GetAttribute("Guid") or e:GetAttribute("GUID")
-      local h = e:FindFirstChild("HumanoidRootPart")
-            or e.PrimaryPart
-            or e:FindFirstChild("Torso")
-            or e:FindFirstChild("UpperTorso")
-            or e:FindFirstChildWhichIsA("BasePart")
-      local hum = e:FindFirstChildOfClass("Humanoid")
-      if g and h and hum and hum.Health>0 and not seen[g] and IsPosValidF(h) then
-       seen[g] = true
-       table.insert(list, {model=e, guid=g, hrp=h, name=e.Name})
-      end
+  local f = workspace:FindFirstChild("Enemys")
+  if f then
+   for _,e in ipairs(f:GetChildren()) do
+    if e:IsA("Model") then
+     local g = e:GetAttribute("EnemyGuid")
+     local h = e:FindFirstChild("HumanoidRootPart")
+     local hum = e:FindFirstChildOfClass("Humanoid")
+     if g and h and hum and hum.Health>0 and not seen[g] and IsPosValidF(h) then
+      seen[g] = true
+      table.insert(list, {model=e, guid=g, hrp=h, name=e.Name})
      end
     end
    end
@@ -5355,63 +5334,37 @@ do
   return result
  end
 
- -- [V81] ROOT CAUSE SEBENARNYA: bukan Heartbeat-nya yang salah, tapi
- -- _lockedCFrame yang di-CACHE sekali lalu dipakai berulang (jadi basi/rebutan
- -- antara RA & TA). Script teman kamu men-teleport TIAP FRAME (~60x/detik)
- -- langsung ke posisi musuh TERKINI — makanya kelihatan "bergetar" (efek visual
- -- normal dari re-teleport secepat itu) tapi terkunci pas di target.
- -- V80 (0.1s/10x per detik) terlalu lambat → Roblox correction menarik balik
- -- posisi di sela-sela teleport → kelihatan diam, baru pindah pas di-OFF.
- -- FIX V81: Heartbeat lagi, TAPI baca RA.cur/TA.cur LANGSUNG tiap frame
- -- (live reference, bukan snapshot CFrame yang di-cache) → tidak ada basi.
- local _frozenWS      = nil
- local _heartbeatConn = nil
- local _stopHeartbeat -- forward declare (dipakai di UnfreezePlayer sebelum definisi penuh)
-
+ -- [FIX] Freeze/Unfreeze player movement (WalkSpeed=0 selama RA/TA ON)
+ local _frozenWS = nil  -- nil = tidak di-freeze
  local function FreezePlayer()
   local char = LP and LP.Character; if not char then return end
   local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
   if _frozenWS == nil then _frozenWS = hum.WalkSpeed end
   hum.WalkSpeed = 0
-  hum.PlatformStand = false
  end
-
  local function UnfreezePlayer()
-  if _frozenWS == nil then return end
-  if not RA.running and not TA.running then
-   _stopHeartbeat()
-   local char = LP and LP.Character; if not char then return end
-   local hum = char:FindFirstChildOfClass("Humanoid")
-   if hum then
-    hum.WalkSpeed = _walkSpeedState or _frozenWS
-    hum.PlatformStand = false
-   end
-   _frozenWS = nil
-  end
- end
-
- local function ReassertFreeze()
   if _frozenWS == nil then return end
   local char = LP and LP.Character; if not char then return end
   local hum = char:FindFirstChildOfClass("Humanoid")
-  if hum and hum.WalkSpeed ~= 0 then hum.WalkSpeed = 0 end
+  if hum then hum.WalkSpeed = _walkSpeedState or _frozenWS end
+  _frozenWS = nil
  end
 
- -- [V81] _doTeleport: core teleport, return CFrame hasil atau nil
- -- [EDIT] Referensi posisi musuh sekarang pakai HEAD (bukan HumanoidRootPart),
- -- jarak horizontal tetap sama (5 stud), tinggi akhir ditambah +2 stud.
- local function _doTeleport(tgt)
-  if not tgt or not tgt.hrp then return nil end
-  local char = LP.Character; if not char then return nil end
-  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil end
-  local headPart = tgt.model and tgt.model:FindFirstChild("Head")
-  local tgtPos = (headPart and headPart.Position) or tgt.hrp.Position
-  if tgtPos.Y < -10 then return nil end
+ -- [EDIT] TpToF — teleport ke HumanoidRootPart musuh, jarak 5 stud dari musuh
+ local function TpToF(tgt)
+  if not tgt or not tgt.hrp then return end
+  local char = LP.Character; if not char then return end
+  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+  local tgtPos = tgt.hrp.Position
+  if tgtPos.Y < -10 then return end
+  -- Arah dari musuh ke player (di-flatten sumbu Y)
   local dir = (hrp.Position - tgtPos)
   local dir2 = Vector3.new(dir.X, 0, dir.Z)
   if dir2.Magnitude < 0.5 then dir2 = Vector3.new(1,0,0) end
   dir2 = dir2.Unit
+  -- Posisi target = HRP musuh + 5 stud ke arah player
   local nearPos = tgtPos + dir2 * 5
+  -- Raycast untuk cari lantai aman
   local params = RaycastParams.new()
   params.FilterType = Enum.RaycastFilterType.Exclude
   local ex = {}
@@ -5421,55 +5374,13 @@ do
   local safePos
   for _,orig in ipairs({nearPos+Vector3.new(0,20,0), nearPos+Vector3.new(0,10,0), tgtPos+Vector3.new(5,20,0)}) do
    local r = workspace:Raycast(orig, Vector3.new(0,-80,0), params)
-   if r and r.Position.Y >= (tgtPos.Y-30) then safePos = r.Position+Vector3.new(0,5,0); break end
+   if r and r.Position.Y >= (tgtPos.Y-30) then safePos = r.Position+Vector3.new(0,3,0); break end
   end
-  local finalCFrame = CFrame.new(safePos or nearPos+Vector3.new(0,5,0))
-  hrp.CFrame = finalCFrame
+  hrp.CFrame = CFrame.new(safePos or nearPos+Vector3.new(0,3,0))
+  -- [FIX] Langsung freeze setelah teleport (pastikan WalkSpeed tetap 0)
   local hum = char:FindFirstChildOfClass("Humanoid")
   if hum then hum.WalkSpeed = 0 end
-  return finalCFrame
  end
-
- -- [V81] Heartbeat follower: TIDAK pakai cache CFrame sama sekali.
- -- Tiap frame baca ulang TA.cur/RA.cur (live) → prioritas TA jika aktif,
- -- fallback RA. Karena dibaca live, tidak akan pernah basi/rebutan seperti
- -- _lockedCFrame dulu — selalu mengikuti target yang BENAR-BENAR aktif saat itu.
- local function _startHeartbeat()
-  if _heartbeatConn then return end -- idempoten
-  _heartbeatConn = RunService.Heartbeat:Connect(function()
-   local tgt
-   if TA.running and TA.cur and not IsDeadF(TA.cur) and TA.cur.model and TA.cur.model.Parent then
-    tgt = TA.cur
-   elseif RA.running and RA.cur and not IsDeadF(RA.cur) and RA.cur.model and RA.cur.model.Parent then
-    tgt = RA.cur
-   end
-   if not tgt then return end
-   _doTeleport(tgt)
-  end)
- end
-
- _stopHeartbeat = function()
-  if _heartbeatConn then
-   pcall(function() _heartbeatConn:Disconnect() end)
-   _heartbeatConn = nil
-  end
- end
-
- -- TpToF_RA/TpToF_TA: teleport sekali (instant snap saat target baru dipilih),
- -- lalu pastikan Heartbeat follower aktif untuk continuous-follow tiap frame.
- local function TpToF_RA(tgt)
-  _doTeleport(tgt)
-  _startHeartbeat()
- end
-
- local function TpToF_TA(tgt)
-  _doTeleport(tgt)
-  _startHeartbeat()
- end
-
- -- Legacy alias (konteks RA)
- local function TpToF(tgt) TpToF_RA(tgt) end
-
 
  -- [EDIT] Hitung posisi 5 stud dari musuh ke arah player (untuk serangan)
  local function GetAtkPosF(enemyHRP)
@@ -5483,47 +5394,16 @@ do
   return ePos + dir2.Unit * 5
  end
 
- -- [TA UNLIMITED] TA sekarang spam FireAttack+FireAllDamage tak terbatas via thread mandiri per-frame
- -- (pola sama seperti ClickSpamF sebelumnya: 1 thread independen per target, jalan terus
- -- selama target masih sama, stop otomatis saat target ganti/mati).
- local _taSpamThreads = {}
- local function TaSpamF(g, enemyHRP)
-  if not g then return end
-  if _taSpamThreads[g] and _taSpamThreads[g].running then return end
-  local handle = {running = true}
-  _taSpamThreads[g] = handle
-  task.spawn(function()
-   while handle.running do
-    local atkPos = GetAtkPosF(enemyHRP)
-    FireAttack(g, atkPos)
-    FireAllDamage(g, atkPos)
-    task.wait() -- 1 frame, tak terbatas selama target sama
-   end
-  end)
- end
- local function StopClickSpamF(g)
-  if g and _taSpamThreads[g] then
-   _taSpamThreads[g].running = false
-   _taSpamThreads[g] = nil
-  end
- end
- local function StopAllClickSpamF()
-  for g, handle in pairs(_taSpamThreads) do
-   handle.running = false
-  end
-  _taSpamThreads = {}
- end
+ -- [EDIT] FCharF pakai GetAtkPosF, bukan raw pos musuh
  local function FCharF(g, enemyHRP)
-  if not g then return end
-  TaSpamF(g, enemyHRP)
- end
-
- -- [RA] FireAttack + FireAllDamage
- local function FCharF_RA(g, enemyHRP)
   if not g then return end
   local atkPos = GetAtkPosF(enemyHRP)
   FireAttack(g, atkPos)
   FireAllDamage(g, atkPos)
+  FireHeroRemotes(g, atkPos)
+  FireAttack(g, atkPos)
+  FireAllDamage(g, atkPos)
+  FireHeroRemotes(g, atkPos)
  end
 
  local function FHeroF(g)
@@ -5567,9 +5447,8 @@ do
    end)
   end
   RA.running=true; RA.killed=0; RA.cur=nil; RA.threads={}
-  -- [FIX] Note: FreezePlayer (anchor) dipasang setelah target & posisi ditentukan
-  -- di dalam loop (lihat WatchEnemyRA / pemilihan RA.cur di bawah), bukan di sini,
-  -- supaya tidak meng-anchor player di posisi lama sebelum sempat teleport.
+  -- [FIX] Freeze player saat RA dimulai
+  FreezePlayer()
   -- [FIX] HumanoidDied listener untuk deteksi mati instan pada musuh RA
   local _raDiedConns = {}
   local function WatchEnemyRA(e)
@@ -5587,9 +5466,7 @@ do
    while RA.running do
     -- Ganti musuh RA jika kosong/mati (instan via _deadG_F)
     if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
-     local _oldRAGuidForHero = RA.cur and RA.cur.guid
      _deadG_F={}; RA.cur=nil
-     if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
      for _,e in ipairs(GetEnemiesF()) do
       -- [GETER] Pilih musuh RA yang BERBEDA dari target TA
       local isTATarget = TA.running and TA.cur and (e.guid == TA.cur.guid)
@@ -5602,30 +5479,20 @@ do
       end
      end
      if RA.cur then
-      if not TA.running then TpToF_RA(RA.cur) end
+      if not TA.running then TpToF(RA.cur) end
       -- [FIX] Pasang HumanoidDied listener untuk target RA baru
       WatchEnemyRA(RA.cur)
       -- [FIX] Re-freeze setelah teleport (pastikan tidak slip)
       FreezePlayer()
      end
     end
-    -- [FIX] Jaga WalkSpeed tetap 0 tiap tick
-    ReassertFreeze()
-    -- [V80] Re-teleport TIAP TICK (persis script teman) — prioritas ke target TA
-    -- jika TA aktif, supaya posisi visual selalu sinkron tanpa Heartbeat/Anchored.
-    if TA.running and TA.cur and not IsDeadF(TA.cur) and TA.cur.model.Parent then
-     TpToF_TA(TA.cur)
-    elseif RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
-     TpToF_RA(RA.cur)
-    end
-    -- [GETER] Serang musuh RA sendiri (remote lama)
+    -- [GETER] Serang musuh RA sendiri
     if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
-     FCharF_RA(RA.cur.guid, RA.cur.hrp)
+     FCharF(RA.cur.guid, RA.cur.hrp)
     end
-    -- [GETER] Sekaligus serang target TA jika aktif (tanpa rebut teleport) — RA bawa remote sendiri, 2x lipat
+    -- [GETER] Sekaligus serang target TA jika aktif (tanpa rebut teleport)
     if TA.running and TA.cur and not IsDeadF(TA.cur) and TA.cur.model.Parent then
-     FCharF_RA(TA.cur.guid, TA.cur.hrp)
-     FCharF_RA(TA.cur.guid, TA.cur.hrp)
+     FCharF(TA.cur.guid, TA.cur.hrp)
     end
     if RA.cur or (TA.running and TA.cur) then
      task.wait(0.1)  -- 10x/detik
@@ -5641,8 +5508,6 @@ do
  local function StopRA()
   RA.running = false
   for _,t in ipairs(RA.threads) do pcall(function() task.cancel(t) end) end
-  -- [FIX] Stop hero-attack thread untuk target RA (dipicu via FireAllDamage di FCharF_RA)
-  if RA.cur and RA.cur.guid then StopHeroAtkThreadFor(RA.cur.guid) end
   RA.threads={}; RA.cur=nil
   -- [FIX] Disconnect semua HumanoidDied listener RA
   for _,c in ipairs(_raDiedConns or {}) do pcall(function() c:Disconnect() end) end
@@ -5654,22 +5519,19 @@ do
  -- StartTA By ID — target spesifik GUID, stop jika mati
  local function StartTA_ByID(targetGuid, targetName, onStatus, onStop)
   TA.running=true; TA.killed=0; TA.targetName=targetName; TA.cur=nil; TA.threads={}
-  -- [FIX] Note: FreezePlayer (anchor) dipasang setelah teleport ke target di bawah,
-  -- bukan di sini, supaya tidak meng-anchor player di posisi lama dulu.
+  -- [FIX] Freeze player saat TA dimulai
+  FreezePlayer()
   local tChar = task.spawn(function()
    -- 1x teleport nempel saat mulai
    local tgt = FindByGuidF(targetGuid)
    if tgt then
-    TpToF_TA(tgt); TA.cur = tgt
-    FreezePlayer()
+    TpToF(tgt); TA.cur = tgt
     -- [FIX] HumanoidDied listener: instan deteksi mati
     local hum = tgt.model and tgt.model:FindFirstChildOfClass("Humanoid")
     if hum then
      hum.Died:Connect(function()
       _deadG_F[targetGuid] = true
       if TA.running then TA.killed = TA.killed + 1 end
-      StopClickSpamF(targetGuid)
-      StopHeroAtkThreadFor(targetGuid)
       TA.cur = nil; TA.running = false
       if onStatus then onStatus("✕ ["..targetName.."] mati") end
       if onStop then task.defer(onStop) end
@@ -5680,8 +5542,6 @@ do
     tgt = FindByGuidF(targetGuid)
     if not tgt then
      -- Mati / hilang → stop langsung
-     StopClickSpamF(targetGuid)
-     StopHeroAtkThreadFor(targetGuid)
      TA.cur = nil
      if onStatus then onStatus("✕ ["..targetName.."] mati") end
      TA.running = false
@@ -5690,11 +5550,8 @@ do
     end
     if not IsDeadF(tgt) and tgt.model.Parent then
      TA.cur = tgt
-     ReassertFreeze()
-     -- [V80] Re-teleport tiap tick (persis script teman)
-     TpToF_TA(tgt)
      FCharF(tgt.guid, tgt.hrp)
-     if onStatus then onStatus(">> ["..targetName.."] •"..(tgt.guid:sub(1,5)).." Kill: "..TA.killed) end
+     if onStatus then onStatus(">> ["..targetName.."] •"..(tgt.guid:sub(-5)).." Kill: "..TA.killed) end
      task.wait(0.1)
     else
      task.wait(0.1)  -- [FIX] percepat polling mati
@@ -5708,8 +5565,8 @@ do
  -- StartTA By Name — round-robin semua musuh senama, pindah saat kill
  local function StartTA_ByName(targetName, onStatus, onStop)
   TA.running=true; TA.killed=0; TA.targetName=targetName; TA.cur=nil; TA.threads={}
-  -- [FIX] Note: FreezePlayer (anchor) dipasang setelah teleport ke target pertama
-  -- di dalam loop di bawah, bukan di sini.
+  -- [FIX] Freeze player saat TA ByName dimulai
+  FreezePlayer()
   local tChar = task.spawn(function()
    local rrIdx = 1
    -- [FIX] Flag instan: set true oleh HumanoidDied, direset setelah pindah target
@@ -5750,23 +5607,18 @@ do
      TA.cur = tgt
      _curDied = false
      -- 1x teleport nempel saat ganti target
-     TpToF_TA(tgt)
+     TpToF(tgt)
      -- [FIX] Re-freeze setelah teleport
      FreezePlayer()
      -- [FIX] Pasang HumanoidDied listener pada target saat ini
      WatchTarget(tgt)
      -- Serang musuh ini sampai mati (deteksi via _curDied = instan)
      while TA.running and not _curDied and not IsDeadF(tgt) and tgt.model.Parent do
-      ReassertFreeze()
-      -- [V80] Re-teleport tiap tick (persis script teman)
-      TpToF_TA(tgt)
       FCharF(tgt.guid, tgt.hrp)
       if onStatus then onStatus(">> ["..targetName.."] ["..rrIdx.."/"..#pool.."] Kill: "..TA.killed) end
       task.wait(0.1)
      end
      -- Mati → pindah ke berikutnya
-     StopClickSpamF(tgt.guid)
-     StopHeroAtkThreadFor(tgt.guid)
      if TA.running then
       rrIdx = rrIdx + 1
       _curDied = false
@@ -5783,13 +5635,7 @@ do
  local function StopTA()
   TA.running = false
   for _,t in ipairs(TA.threads) do pcall(function() task.cancel(t) end) end
-  TA.threads={}
-  -- [GANTI TOTAL] Stop spam ClickEnemy + hero-attack thread untuk target TA yang sedang berjalan
-  if TA.cur and TA.cur.guid then
-   StopClickSpamF(TA.cur.guid)
-   StopHeroAtkThreadFor(TA.cur.guid)
-  end
-  TA.cur=nil; TA.targetName=nil
+  TA.threads={}; TA.cur=nil; TA.targetName=nil
   -- [FIX] Unfreeze player hanya jika RA juga tidak running
   if not RA.running then UnfreezePlayer() end
  end
@@ -6136,7 +5982,7 @@ do
    -- ── BY ID: 1 row per individu musuh, tampilkan nama + 5 huruf GUID ──
    table.sort(enemies, function(a,b) return a.name < b.name end)
    for idx, e in ipairs(enemies) do
-    local shortGuid = e.guid:sub(1,5)
+    local shortGuid = e.guid:sub(-5)
     local row = Frame(eScroll, C.BG2, UDim2.new(1,0,0,36))
     row.LayoutOrder = idx; Corner(row, 7)
     local rs = Instance.new("UIStroke", row); rs.Color = C.BORD; rs.Thickness = 1.5; rs.Transparency = 0.3
@@ -11966,30 +11812,20 @@ end
 local function ResolveEntry()
                 if #RAID_ID_LIST == 0 then return nil end
 
-                -- [EXCLUDE MAP v1] Daftar map yang dikecualikan (dipakai semua pick mode/fallback)
-                -- Easy   : kecualikan map 1 dan 3
-                -- Default: kecualikan map 1, 3, dan 8
-                local EASY_EXCLUDE_MAPS = {[1]=true, [3]=true}
-                local DEFAULT_EXCLUDE_MAPS = {[1]=true, [3]=true, [8]=true}
-
                 -- [RAID LIST ENTRY] Cek List Entry dulu sebelum logika normal
                 if RAID.listEnabled and #RAID.listEntries > 0 then
                     local listResult = ResolveEntryFromList()
                     if listResult then
                         return listResult
                     end
-                    -- [v64 FIX] Tidak ada match -> fallback Easy (map terkecil, exclude map 1 & 3)
-                    -- Sebelumnya fallback ini TIDAK filter exclude sama sekali -> bisa kepilih Map 1.
+                    -- Tidak ada match -> fallback Easy (map terkecil dari normal list)
                     local easyList = {}
                     for _, r in ipairs(RAID_ID_LIST) do
                         local isAsc = r.isAscension == true or (r.id and r.id >= 935001)
                         if not isAsc then
                             local live = r.id and RAID_LIVE[r.id]
                             if not (live and live.isAscension == true) then
-                                local mn = r.mapId - 50000
-                                if not EASY_EXCLUDE_MAPS[mn] then
-                                    table.insert(easyList, r)
-                                end
+                                table.insert(easyList, r)
                             end
                         end
                     end
@@ -13251,10 +13087,8 @@ do
  if not _activeRaidLbl or not _activeRaidLbl.Parent then return end
  if RAID.inMap and RAID.raidMapId then
  local rawMn = RAID.raidMapId - 50000
- -- [v62 FIX] Ground-truth: pakai RAID.serverMapId (confirmed server, range 50101-50120)
- -- kalau sudah ada. Selama belum confirmed (msh proses rune match / StartChallengeRaidMap),
- -- tampilkan map AKTUAL saat ini (rawMn), bukan nebak target rune duluan.
- local mn = RAID.serverMapId and (RAID.serverMapId - 50100) or rawMn
+ -- Kalau Rune Map aktif, tampilkan map tujuan (bukan kendaraan)
+ local mn = (RAID.runeEnabled and RAID.runeMapTarget >= 1 and RAID.runeMapTarget <= 20) and RAID.runeMapTarget or rawMn
  local nm = MAP_NAMES and MAP_NAMES[mn] or ("Map "..tostring(mn))
  local grade = (_runeGradeCache and _runeGradeCache[mn]) or ""
  local gs = grade ~= "" and grade ~= "?" and (" ["..grade.."]") or ""
@@ -15243,10 +15077,7 @@ local function IsInSiegeMapNow()
 end
 
 -- ── Helper: ambil musuh Siege dari workspace.Enemys ───────────
--- [v63 FIX] Prioritas scan nested di dalam map folder aktif (mis. workspace.Map201.Enemys)
--- supaya musuh fitur lain (RAID/ASC/dll) yang nyasar di folder Enemys top-level GLOBAL
--- tidak ikut diserang SIEGE. Fallback ke scan top-level lama kalau nested tidak ditemukan.
-local function GetSiegeEnemies(mapFolder)
+local function GetSiegeEnemies()
     local list, seen = {}, {}
     local FOLDERS = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy"}
     local function _add(e)
@@ -15267,22 +15098,9 @@ local function GetSiegeEnemies(mapFolder)
         seen[g] = true
         table.insert(list, {model=e, guid=g, hrp=h})
     end
-    -- Prioritas 1: folder Enemys nested di dalam map siege aktif (scoped, anti-nyasar)
-    if mapFolder then
-        local mf = workspace:FindFirstChild(mapFolder)
-        if mf then
-            for _, fname in ipairs(FOLDERS) do
-                local f = mf:FindFirstChild(fname)
-                if f then for _, e in ipairs(f:GetChildren()) do _add(e) end end
-            end
-        end
-    end
-    -- Prioritas 2: fallback top-level workspace (struktur lama, kalau nested tidak ada)
-    if #list == 0 then
-        for _, fname in ipairs(FOLDERS) do
-            local f = workspace:FindFirstChild(fname)
-            if f then for _, e in ipairs(f:GetChildren()) do _add(e) end end
-        end
+    for _, fname in ipairs(FOLDERS) do
+        local f = workspace:FindFirstChild(fname)
+        if f then for _, e in ipairs(f:GetChildren()) do _add(e) end end
     end
     if #list == 0 then
         for _, obj in ipairs(workspace:GetChildren()) do _add(obj) end
@@ -15294,7 +15112,7 @@ end
 -- Serang semua musuh di workspace.Enemys sampai habis atau
 -- player keluar dari Map201-Map205. Return: "success"|"exited"|"timeout"
 local function SiegeAttackLoop(onStatus, d)
-    local MAX_TIME   = 120 -- [v63] 2 menit, jaga2 server down/stuck
+    local MAX_TIME   = 300
     local totalTime  = 0
     local deadGuids  = {}
     local killCount  = 0
@@ -15332,8 +15150,8 @@ local function SiegeAttackLoop(onStatus, d)
             cleanup(); return "exited"
         end
 
-        -- Ambil musuh hidup (scoped ke map folder aktif)
-        local enemies = GetSiegeEnemies(d and d.mapFolder)
+        -- Ambil musuh hidup
+        local enemies = GetSiegeEnemies()
         local targets = {}
         for _, e in ipairs(enemies) do
             if not deadGuids[e.guid] then
@@ -15495,7 +15313,7 @@ StartSiegeLoop = function()
             SiegeStatus("[>>] InvokeServer LocalPlayerTeleportSuccess...", Color3.fromRGB(180,120,255))
             pcall(function()
                 local re = _RE:FindFirstChild("LocalPlayerTeleportSuccess")
-                if re then re:InvokeServer() end
+                if re then re:InvokeServer({slotIndex = d.tpMapId, mapId = d.tpMapId}) end
             end)
             task.wait(0.5)
             if not SIEGE.running then
@@ -15562,40 +15380,6 @@ StartSiegeLoop = function()
                 SiegeStatus("[S] "..msg, Color3.fromRGB(80,220,80))
             end, d)
 
-            -- ════════════════════════════════════════
-            -- PHASE 6: Exit map (CONFIRMED) → cleanup → count
-            -- [v63 FIX] Race condition fix: dulu MODE:Release("siege") dipanggil
-            -- SEBELUM QuitCityRaidMap di-fire, jadi fitur lain (RAID/ASC/MA) bisa
-            -- mulai entry sequence-nya sendiri saat player masih FISIK di dalam
-            -- Siege map -> tabrakan remote -> UI Siege (timer/quit/map name/count)
-            -- jadi cacat. Sekarang: konfirmasi keluar dulu, baru lepas slot.
-            -- ════════════════════════════════════════
-            if result == "timeout" then
-                -- Server kemungkinan down/stuck - JANGAN tunggu konfirmasi balik.
-                -- Paksa keluar via LocalTp ke baseMapId, kasih jeda, lalu LANJUT
-                -- ke fitur lain tanpa peduli lagi status fisik Siege.
-                SiegeStatus("[!] Timeout 2m - Force TP basemap...", Color3.fromRGB(255,100,60))
-                pcall(function()
-                    local reQuit = Remotes:FindFirstChild("QuitCityRaidMap")
-                    if reQuit then reQuit:FireServer(d.cityRaidId) end
-                end)
-                pcall(function()
-                    if RE.LocalTp then RE.LocalTp:FireServer({ mapId = d.baseMapId }) end
-                end)
-                task.wait(3)
-            else
-                SiegeStatus("[<<] QuitCityRaidMap("..d.cityRaidId..")...", Color3.fromRGB(100,200,255))
-                pcall(function()
-                    local re = Remotes:FindFirstChild("QuitCityRaidMap")
-                    if re then re:FireServer(d.cityRaidId) end
-                end)
-                -- Konfirmasi benar2 sudah keluar map (max 8s) sebelum lepas slot MODE
-                local _exitWait = 0
-                while IsInSiegeMapNow() and _exitWait < 8 and SIEGE.running do
-                    task.wait(0.3); _exitWait = _exitWait + 0.3
-                end
-            end
-
             SIEGE.inMap       = false
             SIEGE.teleporting = false
             SIEGE._lastExitTime = os.time()
@@ -15603,6 +15387,16 @@ StartSiegeLoop = function()
             pcall(function() if MODE.current == "siege" then MODE:Release("siege") end end)
 
             if not SIEGE.running then break end
+
+            -- ════════════════════════════════════════
+            -- PHASE 6: QuitCityRaidMap → cleanup → count
+            -- ════════════════════════════════════════
+            SiegeStatus("[<<] QuitCityRaidMap("..d.cityRaidId..")...", Color3.fromRGB(100,200,255))
+            pcall(function()
+                local re = Remotes:FindFirstChild("QuitCityRaidMap")
+                if re then re:FireServer(d.cityRaidId) end
+            end)
+            PingWait(0.5)
 
             SIEGE.live[d.cityRaidId] = nil
             if _siegeChatOpen then _siegeChatOpen[targetMap] = false end

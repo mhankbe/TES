@@ -235,6 +235,7 @@ local function _collectObj(obj)
         end
     end)
     -- Fire collect remote
+    PingGuard()
     pcall(function() RE.CollectItem:InvokeServer(guid) end)
     if RE.ExtraReward then
         pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
@@ -1911,26 +1912,36 @@ end
 
 -- [PER TARGET] Mulai thread hero-attack khusus untuk satu GUID target.
 -- Kalau GUID ini sudah punya thread aktif, tidak bikin baru (no-op).
--- [UNLIMITED] Hanya attackType=1, tanpa throttle/PingWait sama sekali — loop per-frame murni.
 local function EnsureHeroAtkThreadFor(g)
  if not g then return end
  if _heroAtkThreads[g] and _heroAtkThreads[g].running then return end
- local handle = {running = true}
+ local handle = {running = true, tick = 0}
  _heroAtkThreads[g] = handle
  task.spawn(function()
+  local _lastFire = {}
   while handle.running and ScreenGui and ScreenGui.Parent do
-   if #HERO_GUIDS > 0 and IsEnemyGuidValid(g) then
+   if #HERO_GUIDS > 0 and (tick() - handle.tick) >= 0.5 and IsEnemyGuidValid(g) then
+    handle.tick = tick()
     for _, hGuid in ipairs(HERO_GUIDS) do
-     if RE.HeroUseSkill then
-      pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
+     local last = _lastFire[hGuid] or 0
+     if (tick() - last) >= 0.05 then
+      _lastFire[hGuid] = tick()
+      if RE.HeroUseSkill then
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
+       PingWait(0.1)
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
+       PingWait(0.1)
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
+      end
      end
+     PingWait(0.05)
     end
    end
+   PingWait(0.05)
    if not IsEnemyGuidValid(g) then
     -- Target sudah mati/hilang -> hentikan thread ini, bersihkan slot
     handle.running = false
    end
-   task.wait() -- 1 frame, tak terbatas
   end
   _heroAtkThreads[g] = nil
  end)
@@ -1965,9 +1976,14 @@ function FireAttack(g, pos)
  end
  if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end) end
  if RE.HeroUseSkill and #HERO_GUIDS > 0 then
-  for _, hGuid in ipairs(HERO_GUIDS) do
-   -- [UNLIMITED] Tanpa throttle — tembak tiap kali FireAttack dipanggil
-   pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g,targetPos=_atkPos}) end)
+  local now = tick()
+  local last = _heroFireTick[g] or 0
+  if now - last >= 0.04 then
+   _heroFireTick[g] = now
+   for _, hGuid in ipairs(HERO_GUIDS) do
+    -- [EDIT] Hanya attackType=1, posisi 5stud dari musuh ke arah player
+    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g,targetPos=_atkPos}) end)
+   end
   end
  end
 end
@@ -1976,6 +1992,7 @@ function FireAllDamage(g, ep)
  if not IsEnemyGuidValid(g) then return end
  if RE.Click then
   task.spawn(function()
+   PingGuard()
    pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=ep}) end)
   end)
  end
@@ -2049,6 +2066,7 @@ function StartDestroyWorker(checkFn)
                 end
             end
         end)
+        PingGuard()
         pcall(function() RE.CollectItem:InvokeServer(guid) end)
         if RE.ExtraReward then
             pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
@@ -2135,6 +2153,7 @@ function StartGoldMagnet(checkFn)
                                 -- Fire collect
                                 local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
                                 if guid then
+                                    PingGuard()
                                     pcall(function() RE.CollectItem:InvokeServer(guid) end)
                                     if RE.ExtraReward then
                                         pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
@@ -2425,6 +2444,7 @@ function DoAutoCollect(on)
  local guid = obj:GetAttribute("GUID")
  if guid and not COLLECTED[guid] then
  COLLECTED[guid] = true
+ PingGuard()
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
  -- [v112-FIX] Nil guard ExtraReward
  if RE.ExtraReward then
@@ -2937,6 +2957,7 @@ DoAutoRollHalo = function(hi, on)
  setStatus("[R] Rolling #"..attempt.."...", Color3.fromRGB(255,200,60))
 
  local ok, res = pcall(function()
+ PingGuard()
  return RE.RerollHalo:InvokeServer(drawId)
  end)
 
@@ -3084,6 +3105,7 @@ PGR100.Loop = function(msi)
         end
         _ourCall = true
         local ok, res = pcall(function()
+          PingGuard()
           return autoRemote:InvokeServer({
             drawId = PG_DRAW_IDS[msi],
             stopGradeIds = stopIds,
@@ -3225,6 +3247,7 @@ function _ASH_ORN.DoRoll(mi, on)
  end
 
  local ok, res = pcall(function()
+ PingGuard()
  return RE.RerollOrnament:InvokeServer({machineId=mInfo.machineId, isAuto=false})
  end)
  if not ok then
@@ -5242,8 +5265,11 @@ do
  local p = NewPanel("farm")
 
  -- State
- local RA = { running=false, threads={}, killed=0, cur=nil }
- local TA = { running=false, threads={}, killed=0, cur=nil, targetName=nil }
+ local RA = { running=false, threads={}, killed=0, cur=nil, anchorGuid=nil, anchorPos=nil }
+ local TA = { running=false, threads={}, killed=0, cur=nil, targetName=nil, anchorGuid=nil, anchorPos=nil }
+ local AOE_RADIUS = 30
+ local AOE_BURST_COUNT = 100
+ local AOE_BURST_INTERVAL = 0.5
  local _byNameLiveToken = nil  -- [FIX] token stop loop live update By Name lama
  local _raDiedConns = {}       -- [FIX] HumanoidDied connections untuk RA
  local _deadG_F = {}
@@ -5332,68 +5358,110 @@ do
   return result
  end
 
- -- [FIX] Freeze/Unfreeze player TOTAL (Anchored + WalkSpeed=0 selama RA/TA ON)
- -- Anchored mengunci posisi & rotasi terhadap physics engine sepenuhnya —
- -- tidak bisa didorong/knockback/jungkir oleh musuh, hero, atau gaya luar lain.
- local _frozenWS = nil  -- nil = tidak di-freeze
- local _frozenAnchor = false
+ local function SetAnchorFromEnemy(store, e)
+  if not store or not e or not e.hrp then return end
+  store.anchorGuid = e.guid
+  store.anchorPos = e.hrp.Position
+  store.cur = e
+ end
+
+ local function GetEnemiesInRadiusF(anchorPos, radius)
+  if not anchorPos then return {} end
+  local list = {}
+  for _, e in ipairs(GetEnemiesF()) do
+   if e.hrp and not IsDeadF(e) then
+    if (e.hrp.Position - anchorPos).Magnitude <= (radius or AOE_RADIUS) then
+     table.insert(list, e)
+    end
+   end
+  end
+  return list
+ end
+
+ -- [V78] Freeze/Unfreeze via Heartbeat snap-back — TANPA Anchored
+ -- FIX BUG: _lockedCFrame_RA dan _lockedCFrame_TA DIPISAH supaya saat keduanya
+ -- aktif bersamaan, Heartbeat tahu mana posisi yang harus di-snap:
+ --   TA aktif  => snap ke posisi musuh TA
+ --   TA tidak  => snap ke posisi musuh RA
+ -- Root cause bug lama: 1 variabel _lockedCFrame di-overwrite saling rebut antara
+ -- TpToF(RA.cur) dan TpToF(TA.cur), sehingga player visual stuck di posisi RA.
+ local _frozenWS        = nil   -- nil = tidak sedang freeze
+ local _lockedCFrame_RA = nil   -- posisi terkunci musuh RA
+ local _lockedCFrame_TA = nil   -- posisi terkunci musuh TA
+ local _heartbeatConn   = nil   -- RunService.Heartbeat connection snap-back
+
+ local function SetLockedCFrameRA(cf) _lockedCFrame_RA = cf end
+ local function SetLockedCFrameTA(cf) _lockedCFrame_TA = cf end
+
+ local function _startHeartbeat()
+  if _heartbeatConn then return end
+  _heartbeatConn = RunService.Heartbeat:Connect(function()
+   local cf = (TA.running and _lockedCFrame_TA) or _lockedCFrame_RA
+   if not cf then return end
+   local c = LP and LP.Character; if not c then return end
+   local h = c:FindFirstChild("HumanoidRootPart"); if not h then return end
+   pcall(function() h.CFrame = cf end)
+   pcall(function() h.AssemblyLinearVelocity  = Vector3.new(0,0,0) end)
+   pcall(function() h.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
+  end)
+ end
+
  local function FreezePlayer()
   local char = LP and LP.Character; if not char then return end
   local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
-  local hrp = char:FindFirstChild("HumanoidRootPart")
+  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
   if _frozenWS == nil then _frozenWS = hum.WalkSpeed end
   hum.WalkSpeed = 0
-  if hrp then
-   -- Nolkan momentum residual dulu sebelum anchor, biar tidak ada "lompatan" terakhir
-   pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
-   pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
-   hum.PlatformStand = false
-   hrp.Anchored = true
-   _frozenAnchor = true
-  end
+  hum.PlatformStand = false
+  pcall(function() if hrp.Anchored then hrp.Anchored = false end end)
+  pcall(function() hrp.AssemblyLinearVelocity  = Vector3.new(0,0,0) end)
+  pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
+  _startHeartbeat()
  end
+
  local function UnfreezePlayer()
   if _frozenWS == nil then return end
-  local char = LP and LP.Character; if not char then return end
-  local hum = char:FindFirstChildOfClass("Humanoid")
-  local hrp = char:FindFirstChild("HumanoidRootPart")
-  if hrp and _frozenAnchor then
-   hrp.Anchored = false
-   _frozenAnchor = false
-  end
-  if hum then hum.WalkSpeed = _walkSpeedState or _frozenWS end
-  _frozenWS = nil
- end
- -- [FIX] Re-assert freeze tiap tick (jaga-jaga kalau Anchored sempat ke-reset oleh
- -- respawn/replikasi server) — dipanggil dari loop RA/TA yang sudah jalan terus-menerus
- local function ReassertFreeze()
-  if _frozenWS == nil then return end -- tidak sedang freeze, skip
-  local char = LP and LP.Character; if not char then return end
-  local hum = char:FindFirstChildOfClass("Humanoid")
-  local hrp = char:FindFirstChild("HumanoidRootPart")
-  if hum and hum.WalkSpeed ~= 0 then hum.WalkSpeed = 0 end
-  if hrp and not hrp.Anchored then
-   pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
-   pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
-   hrp.Anchored = true
+  if not RA.running and not TA.running then
+   if _heartbeatConn then
+    pcall(function() _heartbeatConn:Disconnect() end)
+    _heartbeatConn = nil
+   end
+   _lockedCFrame_RA = nil
+   _lockedCFrame_TA = nil
+   local char = LP and LP.Character; if not char then return end
+   local hum = char:FindFirstChildOfClass("Humanoid")
+   if hum then
+    hum.WalkSpeed = _walkSpeedState or _frozenWS
+    hum.PlatformStand = false
+   end
+   _frozenWS = nil
   end
  end
 
- -- [EDIT] TpToF — teleport ke HumanoidRootPart musuh, jarak 5 stud dari musuh
- local function TpToF(tgt)
-  if not tgt or not tgt.hrp then return end
-  local char = LP.Character; if not char then return end
-  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+ local function ReassertFreeze()
+  if _frozenWS == nil then return end
+  local char = LP and LP.Character; if not char then return end
+  local hum = char:FindFirstChildOfClass("Humanoid")
+  if hum and hum.WalkSpeed ~= 0 then hum.WalkSpeed = 0 end
+ end
+
+
+ -- [V78] TpToF dibagi 2: TpToF_RA (set _lockedCFrame_RA) dan TpToF_TA (set _lockedCFrame_TA)
+ -- Ini fix root cause: sebelumnya TpToF tunggal overwrite _lockedCFrame satu variabel,
+ -- jadi Heartbeat selalu snap ke posisi siapapun yang terakhir TpToF — hasilnya
+ -- saat RA+TA aktif bersamaan, player visual selalu di RA (karena RA TpToF terakhir jalan).
+ local function _doTeleport(tgt)
+  -- Core teleport logic — return CFrame hasil, atau nil jika gagal
+  if not tgt or not tgt.hrp then return nil end
+  local char = LP.Character; if not char then return nil end
+  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil end
   local tgtPos = tgt.hrp.Position
-  if tgtPos.Y < -10 then return end
-  -- Arah dari musuh ke player (di-flatten sumbu Y)
+  if tgtPos.Y < -10 then return nil end
   local dir = (hrp.Position - tgtPos)
   local dir2 = Vector3.new(dir.X, 0, dir.Z)
   if dir2.Magnitude < 0.5 then dir2 = Vector3.new(1,0,0) end
   dir2 = dir2.Unit
-  -- Posisi target = HRP musuh + 5 stud ke arah player
   local nearPos = tgtPos + dir2 * 5
-  -- Raycast untuk cari lantai aman
   local params = RaycastParams.new()
   params.FilterType = Enum.RaycastFilterType.Exclude
   local ex = {}
@@ -5405,11 +5473,30 @@ do
    local r = workspace:Raycast(orig, Vector3.new(0,-80,0), params)
    if r and r.Position.Y >= (tgtPos.Y-30) then safePos = r.Position+Vector3.new(0,3,0); break end
   end
-  hrp.CFrame = CFrame.new(safePos or nearPos+Vector3.new(0,3,0))
-  -- [FIX] Langsung freeze setelah teleport (pastikan WalkSpeed tetap 0)
+  local finalCFrame = CFrame.new(safePos or nearPos+Vector3.new(0,3,0))
+  hrp.CFrame = finalCFrame
   local hum = char:FindFirstChildOfClass("Humanoid")
   if hum then hum.WalkSpeed = 0 end
+  return finalCFrame
  end
+
+ local function TpToF(tgt)
+  -- Legacy alias — dipakai titik-titik lama yg belum diganti (misal RA pilih target baru)
+  -- Set RA karena konteks pemanggil RA loop
+  local cf = _doTeleport(tgt)
+  if cf then _lockedCFrame_RA = cf end
+ end
+
+ local function TpToF_RA(tgt)
+  local cf = _doTeleport(tgt)
+  if cf then _lockedCFrame_RA = cf end
+ end
+
+ local function TpToF_TA(tgt)
+  local cf = _doTeleport(tgt)
+  if cf then _lockedCFrame_TA = cf end
+ end
+
 
  -- [EDIT] Hitung posisi 5 stud dari musuh ke arah player (untuk serangan)
  local function GetAtkPosF(enemyHRP)
@@ -5423,88 +5510,53 @@ do
   return ePos + dir2.Unit * 5
  end
 
- -- [TA UNLIMITED] TA sekarang spam FireAttack+FireAllDamage tak terbatas via thread mandiri per-frame
- -- (pola sama seperti ClickSpamF sebelumnya: 1 thread independen per target, jalan terus
- -- selama target masih sama, stop otomatis saat target ganti/mati).
- -- [RA UNLIMITED] RA sekarang juga spam FireAttack+FireAllDamage tak terbatas via
- -- thread mandiri per-frame (mirror TaSpamF) — bukan lagi dipanggil sekali per tick
- -- loop 0.1 detik. RA bisa serang 2 target sekaligus (musuh sendiri 1x rate, musuh TA 2x rate)
- -- jadi tiap target dapat handle/thread terpisah dengan multiplier sendiri.
- local _raSpamThreads = {}
- local function RaSpamF(g, enemyHRP, multiplier)
-  if not g then return end
-  multiplier = multiplier or 1
-  -- Kalau sudah ada thread untuk GUID ini dengan multiplier sama, jangan bikin baru
-  if _raSpamThreads[g] and _raSpamThreads[g].running and _raSpamThreads[g].mult == multiplier then return end
-  -- Kalau ada thread lama dengan multiplier beda (misal RA->TA berubah 1x jadi 2x), stop dulu
-  if _raSpamThreads[g] then _raSpamThreads[g].running = false end
-  local handle = {running = true, mult = multiplier}
-  _raSpamThreads[g] = handle
+ -- [V78 AOE] Kill Aura: FireAttack + ClickEnemy ke semua musuh dalam radius 30 stud
+ -- dari posisi anchor (musuh awal saat teleport). Burst 100x per musuh tiap 0.5 detik.
+ local function FireClickEnemy(g, ep)
+  if not g or not RE.Click then return end
   task.spawn(function()
-   while handle.running do
-    local atkPos = GetAtkPosF(enemyHRP)
-    for i=1, multiplier do
-     FireAttack(g, atkPos)
-     FireAllDamage(g, atkPos)
-    end
-    task.wait() -- 1 frame, tak terbatas selama target sama
-   end
+   pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=ep or Vector3.new(0,0,0)}) end)
   end)
  end
- local function StopRaSpamF(g)
-  if g and _raSpamThreads[g] then
-   _raSpamThreads[g].running = false
-   _raSpamThreads[g] = nil
+
+ local function DoAoeBurst(anchorPos)
+  if not anchorPos then return end
+  for _, e in ipairs(GetEnemiesInRadiusF(anchorPos, AOE_RADIUS)) do
+   local atkPos = GetAtkPosF(e.hrp)
+   for _ = 1, AOE_BURST_COUNT do
+    FireAttack(e.guid, atkPos)
+    FireClickEnemy(e.guid, atkPos)
+   end
   end
- end
- local function StopAllRaSpamF()
-  for g, handle in pairs(_raSpamThreads) do
-   handle.running = false
-  end
-  _raSpamThreads = {}
  end
 
- local _taSpamThreads = {}
- local function TaSpamF(g, enemyHRP)
-  if not g then return end
-  if _taSpamThreads[g] and _taSpamThreads[g].running then return end
+ local _aoeThreads = {}
+ local function StartAoeLoop(key, shouldRunFn, getAnchorPosFn)
+  if _aoeThreads[key] and _aoeThreads[key].running then return end
   local handle = {running = true}
-  _taSpamThreads[g] = handle
+  _aoeThreads[key] = handle
   task.spawn(function()
-   while handle.running do
-    local atkPos = GetAtkPosF(enemyHRP)
-    FireAttack(g, atkPos)
-    FireAllDamage(g, atkPos)
-    task.wait() -- 1 frame, tak terbatas selama target sama
+   while handle.running and shouldRunFn() do
+    local pos = getAnchorPosFn()
+    if pos then DoAoeBurst(pos) end
+    task.wait(AOE_BURST_INTERVAL)
    end
+   _aoeThreads[key] = nil
   end)
  end
- local function StopClickSpamF(g)
-  if g and _taSpamThreads[g] then
-   _taSpamThreads[g].running = false
-   _taSpamThreads[g] = nil
+ local function StopAoeLoop(key)
+  if key and _aoeThreads[key] then
+   _aoeThreads[key].running = false
+   _aoeThreads[key] = nil
   end
  end
- local function StopAllClickSpamF()
-  for g, handle in pairs(_taSpamThreads) do
-   handle.running = false
-  end
-  _taSpamThreads = {}
- end
- local function FCharF(g, enemyHRP)
-  if not g then return end
-  TaSpamF(g, enemyHRP)
- end
-
- -- [RA] Sekarang trigger thread spam per-frame (RaSpamF), bukan serang sekali panggil.
- -- multiplier: 1 untuk musuh RA sendiri, 2 untuk musuh TA (bonus 2x lipat dari RA)
- local function FCharF_RA(g, enemyHRP, multiplier)
-  if not g then return end
-  RaSpamF(g, enemyHRP, multiplier or 1)
+ local function StopAllAoeLoops()
+  for _, h in pairs(_aoeThreads) do h.running = false end
+  _aoeThreads = {}
  end
 
  local function FHeroF(g)
-  -- kosong, logic ada di FCharF
+  -- kosong, logic ada di AOE loop
  end
 
  local function StartCollectF(checkFn)
@@ -5518,6 +5570,7 @@ do
       local g = o:GetAttribute("GUID") or o:GetAttribute("Guid")
       if g and not col[g] then
        col[g] = true
+       PingGuard()
        pcall(function() RE.CollectItem:InvokeServer(g) end)
        task.wait(0.1)
       end
@@ -5542,7 +5595,7 @@ do
     end
    end)
   end
-  RA.running=true; RA.killed=0; RA.cur=nil; RA.threads={}
+  RA.running=true; RA.killed=0; RA.cur=nil; RA.anchorGuid=nil; RA.anchorPos=nil; RA.threads={}
   -- [FIX] Note: FreezePlayer (anchor) dipasang setelah target & posisi ditentukan
   -- di dalam loop (lihat WatchEnemyRA / pemilihan RA.cur di bawah), bukan di sini,
   -- supaya tidak meng-anchor player di posisi lama sebelum sempat teleport.
@@ -5554,56 +5607,47 @@ do
    local conn; conn = hum.Died:Connect(function()
     _deadG_F[e.guid] = true
     if RA.running then RA.killed = RA.killed + 1 end
-    if RA.cur and RA.cur.guid == e.guid then RA.cur = nil end
+    if RA.cur and RA.cur.guid == e.guid then
+     RA.cur = nil
+     if RA.anchorGuid == e.guid then RA.anchorGuid=nil; RA.anchorPos=nil end
+    end
     pcall(function() conn:Disconnect() end)
    end)
    table.insert(_raDiedConns, conn)
   end
   local tChar = task.spawn(function()
    while RA.running do
-    -- Ganti musuh RA jika kosong/mati (instan via _deadG_F)
-    if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
-     local _oldRAGuidForHero = RA.cur and RA.cur.guid
-     _deadG_F={}; RA.cur=nil
-     if _oldRAGuidForHero then
-      StopHeroAtkThreadFor(_oldRAGuidForHero)
-      StopRaSpamF(_oldRAGuidForHero) -- [FIX] Stop thread spam RA untuk target lama
-     end
+    -- Anchor mati/hilang → pilih musuh acak baru & teleport ulang
+    if RA.anchorGuid and not FindByGuidF(RA.anchorGuid) then
+     StopAoeLoop("RA")
+     if RA.anchorGuid then StopHeroAtkThreadFor(RA.anchorGuid) end
+     RA.anchorGuid=nil; RA.anchorPos=nil; RA.cur=nil
+    end
+
+    if not RA.anchorGuid or not RA.cur then
+     local _oldRAGuidForHero = RA.anchorGuid
+     _deadG_F={}
+     if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
      for _,e in ipairs(GetEnemiesF()) do
-      -- [GETER] Pilih musuh RA yang BERBEDA dari target TA
-      local isTATarget = TA.running and TA.cur and (e.guid == TA.cur.guid)
+      local isTATarget = TA.running and TA.anchorGuid and (e.guid == TA.anchorGuid)
       if not IsDeadF(e) and not isTATarget then RA.cur=e; break end
      end
-     -- Fallback: kalau semua musuh adalah target TA, ambil musuh manapun
      if not RA.cur then
       for _,e in ipairs(GetEnemiesF()) do
        if not IsDeadF(e) then RA.cur=e; break end
       end
      end
      if RA.cur then
-      if not TA.running then TpToF(RA.cur) end
-      -- [FIX] Pasang HumanoidDied listener untuk target RA baru
+      SetAnchorFromEnemy(RA, RA.cur)
+      if not TA.running then TpToF_RA(RA.cur) end
       WatchEnemyRA(RA.cur)
-      -- [FIX] Re-freeze setelah teleport (pastikan tidak slip)
       FreezePlayer()
+      StartAoeLoop("RA",
+       function() return RA.running and RA.anchorGuid ~= nil end,
+       function() return RA.anchorPos end)
      end
     end
-    -- [FIX] Jaga posisi tetap terkunci tiap tick (anti reset Anchored oleh server/respawn)
     ReassertFreeze()
-    -- [GETER][UNLIMITED] Serang musuh RA sendiri — trigger thread spam per-frame (1x rate)
-    if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
-     FCharF_RA(RA.cur.guid, RA.cur.hrp, 1)
-    end
-    -- [GETER][UNLIMITED] Sekaligus serang target TA jika aktif — thread spam per-frame, rate 2x lipat
-    if TA.running and TA.cur and not IsDeadF(TA.cur) and TA.cur.model.Parent then
-     FCharF_RA(TA.cur.guid, TA.cur.hrp, 2)
-    else
-     -- TA tidak aktif/tidak ada target -> pastikan tidak ada sisa thread RA->TA menggantung
-     -- (kalau sebelumnya TA aktif lalu mati, thread lama akan di-stop di titik lain juga,
-     -- ini cuma jaring pengaman tambahan)
-    end
-    -- [FIX] task.wait di sini HANYA untuk ritme scan/pilih target baru (bukan ritme serang
-    -- lagi — serangan sekarang berjalan unlimited di thread RaSpamF terpisah per-frame)
     task.wait(0.1)
    end
   end)
@@ -5613,65 +5657,56 @@ do
 
  local function StopRA()
   RA.running = false
+  StopAoeLoop("RA")
   for _,t in ipairs(RA.threads) do pcall(function() task.cancel(t) end) end
-  -- [FIX] Stop hero-attack thread untuk target RA (dipicu via FireAllDamage di FCharF_RA)
-  if RA.cur and RA.cur.guid then StopHeroAtkThreadFor(RA.cur.guid) end
-  RA.threads={}; RA.cur=nil
-  -- [FIX] Disconnect semua HumanoidDied listener RA
+  if RA.anchorGuid then StopHeroAtkThreadFor(RA.anchorGuid) end
+  RA.threads={}; RA.cur=nil; RA.anchorGuid=nil; RA.anchorPos=nil
   for _,c in ipairs(_raDiedConns or {}) do pcall(function() c:Disconnect() end) end
   _raDiedConns = {}
-  -- [FIX] Unfreeze player hanya jika TA juga tidak running
+  _lockedCFrame_RA = nil
   if not TA.running then UnfreezePlayer() end
  end
 
  -- StartTA By ID — target spesifik GUID, stop jika mati
  local function StartTA_ByID(targetGuid, targetName, onStatus, onStop)
-  TA.running=true; TA.killed=0; TA.targetName=targetName; TA.cur=nil; TA.threads={}
-  -- [FIX] Note: FreezePlayer (anchor) dipasang setelah teleport ke target di bawah,
-  -- bukan di sini, supaya tidak meng-anchor player di posisi lama dulu.
+  TA.running=true; TA.killed=0; TA.targetName=targetName; TA.cur=nil; TA.anchorGuid=nil; TA.anchorPos=nil; TA.threads={}
   local tChar = task.spawn(function()
-   -- 1x teleport nempel saat mulai
    local tgt = FindByGuidF(targetGuid)
    if tgt then
-    TpToF(tgt); TA.cur = tgt
+    SetAnchorFromEnemy(TA, tgt)
+    TpToF_TA(tgt)
     FreezePlayer()
-    -- [FIX] HumanoidDied listener: instan deteksi mati
+    StartAoeLoop("TA",
+     function() return TA.running and TA.anchorGuid ~= nil end,
+     function() return TA.anchorPos end)
     local hum = tgt.model and tgt.model:FindFirstChildOfClass("Humanoid")
     if hum then
      hum.Died:Connect(function()
       _deadG_F[targetGuid] = true
       if TA.running then TA.killed = TA.killed + 1 end
-      StopClickSpamF(targetGuid)
+      StopAoeLoop("TA")
       StopHeroAtkThreadFor(targetGuid)
-      StopRaSpamF(targetGuid) -- [FIX] Stop juga thread RA->TA (bonus 2x) untuk target ini
-      TA.cur = nil; TA.running = false
+      TA.cur=nil; TA.anchorGuid=nil; TA.anchorPos=nil; TA.running=false
       if onStatus then onStatus("✕ ["..targetName.."] mati") end
       if onStop then task.defer(onStop) end
      end)
     end
    end
    while TA.running do
-    tgt = FindByGuidF(targetGuid)
-    if not tgt then
-     -- Mati / hilang → stop langsung
-     StopClickSpamF(targetGuid)
+    if not FindByGuidF(targetGuid) then
+     StopAoeLoop("TA")
      StopHeroAtkThreadFor(targetGuid)
-     StopRaSpamF(targetGuid) -- [FIX] Stop juga thread RA->TA (bonus 2x) untuk target ini
-     TA.cur = nil
+     TA.cur=nil; TA.anchorGuid=nil; TA.anchorPos=nil
      if onStatus then onStatus("✕ ["..targetName.."] mati") end
      TA.running = false
      if onStop then onStop() end
      break
     end
-    if not IsDeadF(tgt) and tgt.model.Parent then
-     TA.cur = tgt
-     ReassertFreeze()
-     FCharF(tgt.guid, tgt.hrp)
-     if onStatus then onStatus(">> ["..targetName.."] •"..(tgt.guid:sub(1,5)).." Kill: "..TA.killed) end
-     task.wait(0.1)
-    else
-     task.wait(0.1)  -- [FIX] percepat polling mati
+    ReassertFreeze()
+    if onStatus and TA.anchorGuid then
+     onStatus(">> ["..targetName.."] •"..(targetGuid:sub(1,5)).." Kill: "..TA.killed)
     end
+    task.wait(0.1)
    end
   end)
   TA.threads = {tChar}
@@ -5680,12 +5715,9 @@ do
 
  -- StartTA By Name — round-robin semua musuh senama, pindah saat kill
  local function StartTA_ByName(targetName, onStatus, onStop)
-  TA.running=true; TA.killed=0; TA.targetName=targetName; TA.cur=nil; TA.threads={}
-  -- [FIX] Note: FreezePlayer (anchor) dipasang setelah teleport ke target pertama
-  -- di dalam loop di bawah, bukan di sini.
+  TA.running=true; TA.killed=0; TA.targetName=targetName; TA.cur=nil; TA.anchorGuid=nil; TA.anchorPos=nil; TA.threads={}
   local tChar = task.spawn(function()
    local rrIdx = 1
-   -- [FIX] Flag instan: set true oleh HumanoidDied, direset setelah pindah target
    local _curDied = false
    local _diedConn = nil
    local function WatchTarget(tgt)
@@ -5695,57 +5727,52 @@ do
     _diedConn = hum.Died:Connect(function()
      _deadG_F[tgt.guid] = true
      if TA.running then TA.killed = TA.killed + 1 end
-     _curDied = true  -- sinyal instan ke loop utama
+     _curDied = true
      if TA.cur and TA.cur.guid == tgt.guid then TA.cur = nil end
+     if TA.anchorGuid == tgt.guid then TA.anchorGuid=nil; TA.anchorPos=nil end
     end)
    end
    while TA.running do
     local pool = FindAllByNameF(targetName)
     if #pool == 0 then
-     -- Semua mati → tunggu respawn
      if onStatus then onStatus("WAITING ["..targetName.."] respawn...") end
+     StopAoeLoop("TA")
      while TA.running do
-      task.wait(0.1)  -- [FIX] lebih cepat scan respawn
+      task.wait(0.1)
       pool = FindAllByNameF(targetName)
       if #pool > 0 then break end
      end
      if not TA.running then break end
      _deadG_F={}; rrIdx=1; _curDied=false
     end
-    -- Clamp index
     if rrIdx > #pool then rrIdx = 1 end
     local tgt = pool[rrIdx]
     if not tgt or IsDeadF(tgt) then
-     -- Musuh di index ini sudah mati, skip ke berikutnya
      rrIdx = rrIdx + 1
-     task.wait(0.1)  -- [FIX] percepat skip mati
+     task.wait(0.1)
     else
-     TA.cur = tgt
+     SetAnchorFromEnemy(TA, tgt)
      _curDied = false
-     -- 1x teleport nempel saat ganti target
-     TpToF(tgt)
-     -- [FIX] Re-freeze setelah teleport
+     TpToF_TA(tgt)
      FreezePlayer()
-     -- [FIX] Pasang HumanoidDied listener pada target saat ini
      WatchTarget(tgt)
-     -- Serang musuh ini sampai mati (deteksi via _curDied = instan)
-     while TA.running and not _curDied and not IsDeadF(tgt) and tgt.model.Parent do
+     StartAoeLoop("TA",
+      function() return TA.running and TA.anchorGuid ~= nil end,
+      function() return TA.anchorPos end)
+     while TA.running and not _curDied and FindByGuidF(TA.anchorGuid) do
       ReassertFreeze()
-      FCharF(tgt.guid, tgt.hrp)
       if onStatus then onStatus(">> ["..targetName.."] ["..rrIdx.."/"..#pool.."] Kill: "..TA.killed) end
       task.wait(0.1)
      end
-     -- Mati → pindah ke berikutnya
-     StopClickSpamF(tgt.guid)
-     StopHeroAtkThreadFor(tgt.guid)
-     StopRaSpamF(tgt.guid) -- [FIX] Stop juga thread RA->TA (bonus 2x) untuk target ini
+     StopAoeLoop("TA")
+     if TA.anchorGuid then StopHeroAtkThreadFor(TA.anchorGuid) end
+     TA.anchorGuid=nil; TA.anchorPos=nil; TA.cur=nil
      if TA.running then
       rrIdx = rrIdx + 1
       _curDied = false
      end
     end
    end
-   -- Cleanup listener saat loop selesai
    if _diedConn then pcall(function() _diedConn:Disconnect() end) end
   end)
   TA.threads = {tChar}
@@ -5754,16 +5781,12 @@ do
 
  local function StopTA()
   TA.running = false
+  StopAoeLoop("TA")
   for _,t in ipairs(TA.threads) do pcall(function() task.cancel(t) end) end
   TA.threads={}
-  -- [GANTI TOTAL] Stop spam ClickEnemy + hero-attack thread untuk target TA yang sedang berjalan
-  if TA.cur and TA.cur.guid then
-   StopClickSpamF(TA.cur.guid)
-   StopHeroAtkThreadFor(TA.cur.guid)
-   StopRaSpamF(TA.cur.guid) -- [FIX] Stop juga thread RA->TA (bonus 2x) untuk target TA ini
-  end
-  TA.cur=nil; TA.targetName=nil
-  -- [FIX] Unfreeze player hanya jika RA juga tidak running
+  if TA.anchorGuid then StopHeroAtkThreadFor(TA.anchorGuid) end
+  TA.cur=nil; TA.targetName=nil; TA.anchorGuid=nil; TA.anchorPos=nil
+  _lockedCFrame_TA = nil
   if not RA.running then UnfreezePlayer() end
  end
 
@@ -6678,6 +6701,7 @@ do
   if (now - _lastRemoteUse) >= 60 then
   _lastRemoteUse = now
   local safe = Remotes:FindFirstChild("GetRaidTeamInfos") or Remotes:FindFirstChild("GetCityRaidInfos")
+  PingGuard()
   if safe then pcall(function() safe:InvokeServer() end) end
   end
   end)
@@ -7047,6 +7071,7 @@ do
        _HR_RPT.SetSlot(si,"[x100] Slot"..si.." #"..attempt.."..",Color3.fromRGB(100,200,255))
        _ourCall = true
        local ok, res = pcall(function()
+        PingGuard()
         return RE.AutoHeroQuirk:InvokeServer({
          heroGuid = _HR_RPT.guid,
          drawId = drawId,
@@ -7418,6 +7443,7 @@ do
        _WR_RPT.SetSlot(si, "[x100] Slot"..si.." #"..attempt.."..", Color3.fromRGB(100,200,255))
        _ourCall = true
        local ok, res = pcall(function()
+        PingGuard()
         return RE.AutoWeaponQuirk:InvokeServer({
          guid = _WR_RPT.guid,
          drawId = drawId,
@@ -8222,6 +8248,7 @@ do
  if _mergeStatusLbl then _mergeStatusLbl.Text = "[M] Merging id=" .. id .. " x" .. cnt end
  pcall(function()
  local re = Remotes:FindFirstChild("PotionMerge")
+ PingGuard()
  if re then re:InvokeServer({id=id, count=cnt}) end
  end)
  if _mergeStatusLbl then _mergeStatusLbl.Text = "[OK] Merge DONE x" .. cnt end
@@ -8346,6 +8373,7 @@ do
  if _useStatusLbl then _useStatusLbl.Text = "[U] Using id=" .. id .. " x" .. cnt end
  pcall(function()
  local re = Remotes:FindFirstChild("UseItem")
+ PingGuard()
  if re then re:InvokeServer({useCount=cnt, itemId=id}) end
  end)
  if _useStatusLbl then _useStatusLbl.Text = "[OK] Use DONE x" .. cnt end
@@ -10668,6 +10696,7 @@ function StartAscensionLoop()
      -- >>> MODE RUNE TOWER OVERRIDE <<<
      local targetTower = ASC.runeMapTarget
      AscStatusUpdate("Create Team...", C.ACC2)
+     PingGuard()
      if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(raidEntry.id) end) end
      PingWait(0.2)
 
@@ -10715,6 +10744,7 @@ function StartAscensionLoop()
       else
        -- Mode lain: fallback masuk tower original
        AscStatusUpdate("[!] Item Kosong - Fallback ke Tower "..mn.."...", Color3.fromRGB(255,140,0))
+       PingGuard()
        if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(raidEntry.id) end) end
        PingWait(0.2)
        if RE.StartChallengeRaidMap then pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = targetMapId}) end) end
@@ -10730,6 +10760,7 @@ function StartAscensionLoop()
      AscStatusUpdate("[~] Enter Tower "..mn_label.."...", Color3.fromRGB(100,200,255))
      -- Sama persis RAID: CreateRaidTeam(raidId)
      if RE.CreateRaidTeam then
+      PingGuard()
       pcall(function() RE.CreateRaidTeam:InvokeServer(raidEntry.id) end)
      end
      PingWait(0.2)
@@ -11478,6 +11509,7 @@ function RaidCollectAll()
  if guid and not collected_guids[guid] then
  collected_guids[guid] = true
  RAID.collected = RAID.collected + 1
+ PingGuard()
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
  -- [v112-FIX] Nil guard ExtraReward
  if RE.ExtraReward then
@@ -11501,6 +11533,7 @@ function RaidCollectAll()
  if guid and not collected_guids[guid] then
  collected_guids[guid] = true
  RAID.collected = RAID.collected + 1
+ PingGuard()
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
  -- [v112-FIX] Nil guard ExtraReward
  if RE.ExtraReward then
@@ -11602,6 +11635,7 @@ end
 RaidFireDamage = function(g, p)
  if RE.Click then
  task.spawn(function()
+ PingGuard()
  pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=p}) end)
  end)
  end
@@ -12468,6 +12502,7 @@ local function ResolveEntry()
                         local targetMap = RAID.runeMapTarget
                         RaidStatusUpdate("Create Team...", C.ACC2)
                         if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
+                        PingGuard()
                         if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
                         task.wait(0.2)
                         
@@ -12500,6 +12535,7 @@ local function ResolveEntry()
                         if RAID.serverMapId == nil and RAID.running then
                             RaidStatusUpdate("[!] Material Kosong - Fallback...", Color3.fromRGB(255,140,0))
                             local _fbTargetMapId = raidEntry.mapId + 100
+                            PingGuard()
                             if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
                             task.wait(0.2)
                             if RE.StartChallengeRaidMap then pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = _fbTargetMapId}) end) end
@@ -12512,6 +12548,7 @@ local function ResolveEntry()
                         RaidStatusUpdate("Enter Map " .. (targetMapId-50100) .. "...", C.ACC3)
 
                         if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
+                        PingGuard()
                         if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
                         task.wait(0.2)
                         if not RAID.running then break end
@@ -16078,6 +16115,7 @@ local function DungeonTpOut()
  local ltpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
  if ltpSucc then
  task.spawn(function()
+ PingGuard()
  pcall(function() ltpSucc:InvokeServer() end)
  end)
  end
@@ -16138,6 +16176,7 @@ local function DungeonTpIn()
  local ltpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
  if ltpSucc then
  task.spawn(function()
+ PingGuard()
  pcall(function() ltpSucc:InvokeServer() end)
  end)
  end
@@ -16546,6 +16585,7 @@ local function ST2TpIn()
         PingWait(0.5)
 
         -- Step 2: GetNewSingleTowerData (invoke) - ambil data tower baru
+        PingGuard()
         if reGet then pcall(function() reGet:InvokeServer() end) end
         PingWait(0.4)
 
@@ -16554,6 +16594,7 @@ local function ST2TpIn()
         PingWait(0.4)
 
         -- Step 4: LocalPlayerTeleportSuccess (konfirmasi di lobby)
+        PingGuard()
         if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
         PingWait(0.5)
 
@@ -16570,6 +16611,7 @@ local function ST2TpIn()
         PingWait(0.4)
 
         -- Step 8: LocalPlayerTeleportSuccess (konfirmasi masuk 50301)
+        PingGuard()
         if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
         PingWait(0.3)
 
@@ -16579,6 +16621,7 @@ local function ST2TpIn()
             PingWait(0.5)
             if reStart then reStart:FireServer({mapId = 50301, hostId = LP.UserId}) end
             PingWait(0.4)
+            PingGuard()
             if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
         end
     end)
@@ -16594,6 +16637,7 @@ local function ST2TpOut()
     pcall(function()
         local re2 = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
         if re2 then
+            PingGuard()
             task.spawn(function() pcall(function() re2:InvokeServer() end) end)
         end
     end)
@@ -16691,6 +16735,7 @@ function StartST2Loop()
                 -- -- STEP 1b: Konfirmasi masuk map --
                 pcall(function()
                     local reTpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
+                    PingGuard()
                     if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
                 end)
 
@@ -17369,6 +17414,7 @@ do
 
                 -- == Step 4: LocalPlayerTeleportSuccess ==
                 if reTpSucc then
+                    PingGuard()
                     pcall(function() reTpSucc:InvokeServer() end)
                 end
             end)
@@ -17721,6 +17767,7 @@ do
 
                 -- Step 1: StartLocalPlayerTeleport (hostId + mapId only)
                 JTRStat("[1/3] Teleport ke raid "..entry.name.."...", C.YEL)
+                PingGuard()
                 reStartTp:FireServer({hostId = entry.userId, mapId = mapId})
                 PingWait(0.5)
 
@@ -17730,6 +17777,7 @@ do
 
                 -- Step 3: LocalPlayerTeleportSuccess
                 if reTpSucc then
+                    PingGuard()
                     pcall(function() reTpSucc:InvokeServer() end)
                 end
             end)
@@ -17867,6 +17915,7 @@ do
 
  for id = 1, 200 do
  local ok, res = pcall(function()
+ PingGuard()
  return RE:InvokeServer({id = tostring(id)})
  end)
  tried = tried + 1
@@ -17996,6 +18045,7 @@ do
  SetStatus("[G] Online Reward SCAN...", C.YEL)
  local fail, ever = 0, false
  for id = 1, 200 do
+ PingGuard()
  local ok, res = pcall(function() return RE1:InvokeServer({id = tostring(id)}) end)
  if ok and res == true then
  fail = 0; ever = true
@@ -18256,6 +18306,7 @@ do
                     -- Step 1: GetActivityRaidRewardCount (pre-check)
                     AnnivStatus("[1/9] Checking reward count...", Color3.fromRGB(240,165,0))
                     local ok1, err1 = pcall(function()
+                        PingGuard()
                         Remotes.GetActivityRaidRewardCount:InvokeServer(RAID_ID)
                     end)
                     if not ok1 or not ANNIV.running then
@@ -18269,6 +18320,7 @@ do
                     -- Step 2: CreateRaidTeam
                     AnnivStatus("[2/9] Creating raid team...", Color3.fromRGB(240,165,0))
                     local ok2, err2 = pcall(function()
+                        PingGuard()
                         Remotes.CreateRaidTeam:InvokeServer(RAID_ID)
                     end)
                     if not ok2 or not ANNIV.running then
@@ -18282,6 +18334,7 @@ do
                     -- Step 3: GetActivityRaidRewardCount (post-create)
                     AnnivStatus("[3/9] Re-checking reward count...", Color3.fromRGB(240,165,0))
                     pcall(function()
+                        PingGuard()
                         Remotes.GetActivityRaidRewardCount:InvokeServer(RAID_ID)
                     end)
                     PingWait(0.5)
@@ -18289,6 +18342,7 @@ do
                     -- Step 4: UseItem - pakai tiket masuk
                     AnnivStatus("[4/9] Using entry ticket (itemId "..ITEM_ID..")...", Color3.fromRGB(240,165,0))
                     local ok4, err4 = pcall(function()
+                        PingGuard()
                         Remotes.UseItem:InvokeServer({ useCount = 1, itemId = ITEM_ID })
                     end)
                     if not ok4 or not ANNIV.running then
@@ -18302,6 +18356,7 @@ do
                     -- Step 5: GetActivityRaidRewardCount (post-use)
                     AnnivStatus("[5/9] Re-checking after ticket use...", Color3.fromRGB(240,165,0))
                     pcall(function()
+                        PingGuard()
                         Remotes.GetActivityRaidRewardCount:InvokeServer(RAID_ID)
                     end)
                     PingWait(0.5)
@@ -18345,6 +18400,7 @@ do
                     -- Step 9: LocalPlayerTeleportSuccess
                     AnnivStatus("[9/9] Confirming teleport success...", Color3.fromRGB(240,165,0))
                     local ok9, err9 = pcall(function()
+                        PingGuard()
                         Remotes.LocalPlayerTeleportSuccess:InvokeServer()
                     end)
                     if not ok9 or not ANNIV.running then
@@ -18545,6 +18601,7 @@ do
                 end
                 while ANNIV.spinEnabled do
                     pcall(function()
+                        PingGuard()
                         spinRE:InvokeServer(1)
                     end)
                     AnnivStatus("[>>] Spinning Gems...", Color3.fromRGB(240,165,0))
@@ -18589,6 +18646,7 @@ do
             for i, arg in ipairs(CLAIM_ARGS) do
                 AnnivStatus("[..] Claiming Gem ("..i.."/"..#CLAIM_ARGS..") arg="..arg.."...", Color3.fromRGB(240,165,0))
                 pcall(function()
+                    PingGuard()
                     spinTicket:InvokeServer(arg)
                 end)
                 PingWait(0.5)
@@ -18662,6 +18720,7 @@ do
    for i = 1, 150 do
     if not _gcRunning then break end
     local ok, _ = pcall(function()
+     PingGuard()
      gcRemote:InvokeServer(i)
     end)
     if ok then
@@ -19295,6 +19354,7 @@ do
   setSlot("[x100] Rolling #"..attempt.."..", Color3.fromRGB(100,200,255))
   _ourCall = true
   local ok100, res100 = pcall(function()
+   PingGuard()
    return RE.AutoHeroQuirk:InvokeServer({
     heroGuid = _HR_RPT.guid,
     drawId = drawId[si],
@@ -19358,6 +19418,7 @@ do
  -- Normal 1x path
  _ourCall = true
  local ok, res = pcall(function()
+  PingGuard()
   return RE.RandomHeroQuirk:InvokeServer({
    heroGuid = _HR_RPT.guid,
    drawId = drawId[si],
@@ -19539,6 +19600,7 @@ do
 
  _ourCall = true
  local ok, res = pcall(function()
+ PingGuard()
  return RE.RandomWeaponQuirk:InvokeServer({
  guid = _WR_RPT.guid,
  drawId = drawId[si],
@@ -19712,6 +19774,7 @@ do
 
                         _ourCall = true
                         local ok, res = pcall(function()
+                            PingGuard()
                             return RE.RandomHeroEquipGrade:InvokeServer({
                                 guid   = PGR.guids[si],
                                 drawId = PG_DRAW_IDS[si],

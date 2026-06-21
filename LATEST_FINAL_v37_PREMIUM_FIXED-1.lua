@@ -5654,32 +5654,55 @@ do
   -- [FIX] AcquireNewTargetRA: logika ambil target baru, diekstrak supaya bisa dipanggil
   -- baik dari loop tChar normal MAUPUN langsung dari event Died (instan, tanpa delay).
   -- Guard _acquiring mencegah dua pemanggilan bertabrakan (loop + event bersamaan).
+  -- [FIX] Sekarang RETRY otomatis kalau TpInstantRA gagal (musuh baru ternyata sudah
+  -- despawn di tengah proses pick) — supaya tidak pernah berakhir dengan RA.cur terisi
+  -- tapi player tidak ter-teleport/ter-anchor ke posisi yang benar (penyebab stuck lama).
   local _acquiring = false
   AcquireNewTargetRA = function()
    if _acquiring then return end -- sudah ada proses ganti target jalan, jangan dobel
    if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then return end -- target masih hidup, tidak perlu ganti
    _acquiring = true
-   UnanchorRA() -- [FIX] lepas kunci posisi musuh lama dulu sebelum cari/teleport ke target baru
-   StopRaAtkThread()
-   local _oldRAGuidForHero = RA.cur and RA.cur.guid
-   if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
-   RA.cur = PickRandomEnemyRA()
-   if RA.cur then
-    TpInstantRA(RA.cur)              -- lari kilat, posisi aman (BodyFrontAttachment/fallback HRP) — INSTAN, lalu Anchored=true
-    FreezePlayer()                   -- kunci WalkSpeed juga
-    WatchEnemyRA(RA.cur)
-    local atkPos = RA.cur.hrp.Position
-    local targetGuid = RA.cur.guid
-    if RE.Click then
-     -- [FIX] InvokeServer dipindah ke thread terpisah (non-blocking), sama seperti pola
-     -- TA — supaya tunggu balasan server TIDAK menahan teleport/spam attack berikutnya
-     task.spawn(function()
-      pcall(function() RE.Click:InvokeServer({enemyGuid=targetGuid, enemyPos=atkPos}) end)
-     end)
+   -- [FIX] Seluruh proses dibungkus pcall — apapun yang terjadi (error tak terduga di
+   -- tengah proses), _acquiring DIJAMIN balik ke false di akhir, tidak pernah deadlock
+   -- permanen yang bisa membuat RA berhenti merespons selamanya.
+   pcall(function()
+    UnanchorRA() -- [FIX] lepas kunci posisi musuh lama dulu sebelum cari/teleport ke target baru
+    StopRaAtkThread()
+    local _oldRAGuidForHero = RA.cur and RA.cur.guid
+    if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
+    RA.cur = nil
+
+    -- [FIX] Retry loop: coba sampai 5x kalau target yang dipilih ternyata invalid/gagal
+    -- teleport (race condition musuh despawn di tengah proses). Mencegah RA.cur terisi
+    -- tanpa player benar-benar sampai & ter-anchor di posisinya.
+    local picked, teleportedCFrame
+    for attempt = 1, 5 do
+     picked = PickRandomEnemyRA()
+     if not picked then break end -- benar-benar tidak ada musuh, stop coba
+     teleportedCFrame = TpInstantRA(picked)
+     if teleportedCFrame then break end -- berhasil teleport, keluar loop
+     picked = nil -- gagal, coba lagi dengan musuh lain
     end
-    EnsureHeroAtkThreadFor(targetGuid)   -- hero ikut menyerang target ini
-    StartRaAtkThread(targetGuid)         -- mulai spam PlayerClickAttackSkill, instan
-   end
+
+    if picked and teleportedCFrame then
+     RA.cur = picked
+     FreezePlayer()                   -- kunci WalkSpeed juga
+     WatchEnemyRA(RA.cur)
+     local atkPos = RA.cur.hrp.Position
+     local targetGuid = RA.cur.guid
+     if RE.Click then
+      -- [FIX] InvokeServer dipindah ke thread terpisah (non-blocking), sama seperti pola
+      -- TA — supaya tunggu balasan server TIDAK menahan teleport/spam attack berikutnya
+      task.spawn(function()
+       pcall(function() RE.Click:InvokeServer({enemyGuid=targetGuid, enemyPos=atkPos}) end)
+      end)
+     end
+     EnsureHeroAtkThreadFor(targetGuid)   -- hero ikut menyerang target ini
+     StartRaAtkThread(targetGuid)         -- mulai spam PlayerClickAttackSkill, instan
+    end
+    -- [FIX] Kalau sampai sini RA.cur masih nil (semua attempt gagal/tidak ada musuh),
+    -- player TIDAK di-Anchored (sudah dilepas di atas) — bebas bergerak, bukan stuck.
+   end)
    _acquiring = false
   end
 

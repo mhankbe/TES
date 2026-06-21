@@ -1927,7 +1927,7 @@ end
 
 -- [PER TARGET] Mulai thread hero-attack khusus untuk satu GUID target.
 -- Kalau GUID ini sudah punya thread aktif, tidak bikin baru (no-op).
--- [GANTI TOTAL] Loop 1 detik: ke MASING-MASING hero (scan Workspace.Heros tiap siklus),
+-- [GANTI] Loop 0.5 detik: ke MASING-MASING hero (scan Workspace.Heros tiap siklus),
 -- panggil HeroUseSkill attackType=1 sebanyak 5x berturut-turut. Tanpa throttle per-hero,
 -- tanpa PingWait, tanpa attackType 2/3.
 local function EnsureHeroAtkThreadFor(g)
@@ -1950,7 +1950,7 @@ local function EnsureHeroAtkThreadFor(g)
      end
     end
    end
-   task.wait(1)
+   task.wait(0.5)
   end
   _heroAtkThreads[g] = nil
  end)
@@ -1967,24 +1967,25 @@ end
 local _skillTarget = nil
 local function EnsureSkillThread(g) EnsureHeroAtkThreadFor(g) end
 
--- [GANTI TOTAL] FireAttack sekarang murni PlayerClickAttackSkill, 1000x per panggilan,
--- tanpa throttle 0.04s. HeroUseSkill TIDAK lagi ditembak dari sini (dipindah sepenuhnya
--- ke EnsureHeroAtkThreadFor, supaya tidak dobel-tembak dari 2 sumber berbeda).
+-- [GANTI] FireAttack sekarang PlayerClickAttackSkill 5x per panggilan (rate diturunkan
+-- dari 1000x, dipanggil tiap 0.5 detik dari TaSpamF/RaSpamF). HeroUseSkill TIDAK lagi
+-- ditembak dari sini (dipindah sepenuhnya ke EnsureHeroAtkThreadFor).
 function FireAttack(g, pos)
  if not g then return end
  if RE.Atk then
-  for i = 1, 1000 do
+  for i = 1, 5 do
    pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
   end
  end
 end
 
--- [GANTI TOTAL] FireAllDamage sekarang murni ClickEnemy, 1000x per panggilan,
--- tanpa PingGuard() sama sekali. Tetap memastikan thread hero-attack independen jalan.
+-- [GANTI] FireAllDamage sekarang ClickEnemy 5x per panggilan (rate diturunkan dari 1000x,
+-- dipanggil tiap 0.5 detik), tanpa PingGuard() sama sekali. Tetap memastikan thread
+-- hero-attack independen jalan.
 function FireAllDamage(g, ep)
  if not IsEnemyGuidValid(g) then return end
  if RE.Click then
-  for i = 1, 1000 do
+  for i = 1, 5 do
    task.spawn(function()
     pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=ep}) end)
    end)
@@ -5430,11 +5431,11 @@ do
   return ePos + dir2.Unit * 5
  end
 
- -- [GANTI TOTAL] RA dan TA sekarang identik & independent: tiap GUID target dapat 1 thread
- -- spam yang loop SEKALI PER DETIK (bukan per-frame lagi), karena FireAttack/FireAllDamage
- -- sendiri sudah membawa 1000x panggilan internal per siklus (PlayerClickAttackSkill 1000x,
- -- ClickEnemy 1000x). HeroUseSkill attackType=1 (5x per hero) berjalan independen di
- -- EnsureHeroAtkThreadFor, dipicu dari dalam FireAllDamage.
+ -- [GANTI] RA dan TA sekarang identik & independent: tiap GUID target dapat 1 thread
+ -- spam yang loop SETIAP 0.5 DETIK, dengan FireAttack/FireAllDamage masing-masing
+ -- membawa 5x panggilan internal per siklus (PlayerClickAttackSkill 5x, ClickEnemy 5x).
+ -- HeroUseSkill attackType=1 (5x per hero) berjalan independen di EnsureHeroAtkThreadFor
+ -- dengan interval 0.5 detik juga, dipicu dari dalam FireAllDamage.
  local _taSpamThreads = {}
  local function TaSpamF(g, enemyHRP)
   if not g then return end
@@ -5446,7 +5447,7 @@ do
     local atkPos = GetAtkPosF(enemyHRP)
     FireAttack(g, atkPos)
     FireAllDamage(g, atkPos)
-    task.wait(1) -- siklus 1 detik, selama target sama
+    task.wait(0.5) -- siklus 0.5 detik, selama target sama
    end
   end)
  end
@@ -5467,7 +5468,7 @@ do
   TaSpamF(g, enemyHRP)
  end
 
- -- [GANTI TOTAL] RA sekarang pakai sistem identik dengan TA (thread per-GUID, siklus 1 detik),
+ -- [GANTI TOTAL] RA sekarang pakai sistem identik dengan TA (thread per-GUID, siklus 0.5 detik),
  -- bukan lagi panggilan langsung sinkron dari loop utama RA. Mirror dari TaSpamF.
  local _raSpamThreads = {}
  local function RaSpamF(g, enemyHRP)
@@ -5480,7 +5481,7 @@ do
     local atkPos = GetAtkPosF(enemyHRP)
     FireAttack(g, atkPos)
     FireAllDamage(g, atkPos)
-    task.wait(1) -- siklus 1 detik, selama target sama, independent dari TA
+    task.wait(0.5) -- siklus 0.5 detik, selama target sama, independent dari TA
    end
   end)
  end

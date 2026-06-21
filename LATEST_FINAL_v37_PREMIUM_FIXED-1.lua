@@ -5555,19 +5555,7 @@ do
   end
   RA.running=true; RA.killed=0; RA.cur=nil; RA.threads={}
 
-  -- [V81] HumanoidDied listener — deteksi mati instan, trigger ganti target cepat
   local _raDiedConns = {}
-  local function WatchEnemyRA(e)
-   if not e or not e.model then return end
-   local hum = e.model:FindFirstChildOfClass("Humanoid"); if not hum then return end
-   local conn; conn = hum.Died:Connect(function()
-    _deadG_F[e.guid] = true
-    if RA.running then RA.killed = RA.killed + 1 end
-    if RA.cur and RA.cur.guid == e.guid then RA.cur = nil end
-    pcall(function() conn:Disconnect() end)
-   end)
-   table.insert(_raDiedConns, conn)
-  end
 
   -- [V81] Pilih musuh RANDOM dari list valid (bukan musuh pertama di list seperti sebelumnya)
   local function PickRandomEnemyRA()
@@ -5609,26 +5597,63 @@ do
    if _raAtkHandle then _raAtkHandle.running = false; _raAtkHandle = nil end
   end
 
+  -- [FIX] HumanoidDied listener — deteksi mati instan VIA EVENT (bukan polling).
+  -- Begitu musuh mati, langsung panggil AcquireNewTargetRA() saat itu juga,
+  -- tidak menunggu loop tChar cek ulang di tick berikutnya (0.05s).
+  local AcquireNewTargetRA -- forward declare, didefinisikan di bawah
+  local function WatchEnemyRA(e)
+   if not e or not e.model then return end
+   local hum = e.model:FindFirstChildOfClass("Humanoid"); if not hum then return end
+   local conn; conn = hum.Died:Connect(function()
+    _deadG_F[e.guid] = true
+    if RA.running then RA.killed = RA.killed + 1 end
+    pcall(function() conn:Disconnect() end)
+    -- [FIX] Trigger ganti target SEKARANG JUGA, event-driven, tanpa delay polling
+    if RA.running and RA.cur and RA.cur.guid == e.guid then
+     RA.cur = nil
+     task.spawn(AcquireNewTargetRA)
+    end
+   end)
+   table.insert(_raDiedConns, conn)
+  end
+
+  -- [FIX] AcquireNewTargetRA: logika ambil target baru, diekstrak supaya bisa dipanggil
+  -- baik dari loop tChar normal MAUPUN langsung dari event Died (instan, tanpa delay).
+  -- Guard _acquiring mencegah dua pemanggilan bertabrakan (loop + event bersamaan).
+  local _acquiring = false
+  AcquireNewTargetRA = function()
+   if _acquiring then return end -- sudah ada proses ganti target jalan, jangan dobel
+   if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then return end -- target masih hidup, tidak perlu ganti
+   _acquiring = true
+   StopRaAtkThread()
+   local _oldRAGuidForHero = RA.cur and RA.cur.guid
+   if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
+   RA.cur = PickRandomEnemyRA()
+   if RA.cur then
+    TpInstantRA(RA.cur)              -- lari kilat, persis ke HRP musuh — INSTAN, tidak menunggu apapun
+    FreezePlayer()                   -- kunci di situ
+    WatchEnemyRA(RA.cur)
+    local atkPos = RA.cur.hrp.Position
+    local targetGuid = RA.cur.guid
+    if RE.Click then
+     -- [FIX] InvokeServer dipindah ke thread terpisah (non-blocking), sama seperti pola
+     -- TA — supaya tunggu balasan server TIDAK menahan teleport/spam attack berikutnya
+     task.spawn(function()
+      pcall(function() RE.Click:InvokeServer({enemyGuid=targetGuid, enemyPos=atkPos}) end)
+     end)
+    end
+    EnsureHeroAtkThreadFor(targetGuid)   -- hero ikut menyerang target ini
+    StartRaAtkThread(targetGuid)         -- mulai spam PlayerClickAttackSkill, instan
+   end
+   _acquiring = false
+  end
+
   local tChar = task.spawn(function()
    while RA.running do
-    -- Target kosong/mati -> cari musuh random baru & lari kilat ke sana
+    -- Fallback polling (jaring pengaman) — kasus musuh hilang/despawn tanpa event Died,
+    -- atau saat RA baru pertama kali ON. Event Died di atas yang menangani kasus normal.
     if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
-     StopRaAtkThread()
-     local _oldRAGuidForHero = RA.cur and RA.cur.guid
-     _deadG_F={}; RA.cur=nil
-     if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
-     RA.cur = PickRandomEnemyRA()
-     if RA.cur then
-      TpInstantRA(RA.cur)              -- lari kilat, persis ke HRP musuh
-      FreezePlayer()                   -- kunci di situ
-      WatchEnemyRA(RA.cur)
-      local atkPos = RA.cur.hrp.Position
-      if RE.Click then
-       pcall(function() RE.Click:InvokeServer({enemyGuid=RA.cur.guid, enemyPos=atkPos}) end) -- ClickEnemy 1x
-      end
-      EnsureHeroAtkThreadFor(RA.cur.guid)   -- hero ikut menyerang target ini
-      StartRaAtkThread(RA.cur.guid)         -- mulai spam PlayerClickAttackSkill
-     end
+     AcquireNewTargetRA()
     end
     -- Jaga WalkSpeed tetap 0 & posisi terus nempel ke musuh (ikuti gerak musuh)
     ReassertFreeze()

@@ -1910,47 +1910,38 @@ local function IsEnemyGuidValid(g)
  return false
 end
 
--- [GANTI] Scan hero GUID langsung dari Workspace.Heros (bukan dari HERO_GUIDS/PlayerGui lagi).
--- Dipakai oleh sistem attack-loop baru RA/TA: tiap siklus 1 detik, baca ulang folder ini
--- supaya hero yang baru di-summon/equip otomatis ikut diserang tanpa perlu restart RA/TA.
-local function GetHeroGuidsFromWorkspaceF()
- local guids = {}
- local hFolder = workspace:FindFirstChild("Heros")
- if hFolder then
-  for _, h in ipairs(hFolder:GetChildren()) do
-   local g = h:GetAttribute("heroGuid") or h:GetAttribute("guid") or h:GetAttribute("GUID") or h:GetAttribute("Guid")
-   if type(g) == "string" and #g > 0 then table.insert(guids, g) end
-  end
- end
- return guids
-end
-
 -- [PER TARGET] Mulai thread hero-attack khusus untuk satu GUID target.
 -- Kalau GUID ini sudah punya thread aktif, tidak bikin baru (no-op).
--- [GANTI] Loop 0.5 detik: ke MASING-MASING hero (scan Workspace.Heros tiap siklus),
--- panggil HeroUseSkill attackType=1 sebanyak 5x berturut-turut. Tanpa throttle per-hero,
--- tanpa PingWait, tanpa attackType 2/3.
 local function EnsureHeroAtkThreadFor(g)
  if not g then return end
  if _heroAtkThreads[g] and _heroAtkThreads[g].running then return end
- local handle = {running = true}
+ local handle = {running = true, tick = 0}
  _heroAtkThreads[g] = handle
  task.spawn(function()
+  local _lastFire = {}
   while handle.running and ScreenGui and ScreenGui.Parent do
+   if #HERO_GUIDS > 0 and (tick() - handle.tick) >= 0.5 and IsEnemyGuidValid(g) then
+    handle.tick = tick()
+    for _, hGuid in ipairs(HERO_GUIDS) do
+     local last = _lastFire[hGuid] or 0
+     if (tick() - last) >= 0.05 then
+      _lastFire[hGuid] = tick()
+      if RE.HeroUseSkill then
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
+       PingWait(0.1)
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
+       PingWait(0.1)
+       pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
+      end
+     end
+     PingWait(0.05)
+    end
+   end
+   PingWait(0.05)
    if not IsEnemyGuidValid(g) then
     -- Target sudah mati/hilang -> hentikan thread ini, bersihkan slot
     handle.running = false
-    break
    end
-   local heroGuids = GetHeroGuidsFromWorkspaceF()
-   if RE.HeroUseSkill and #heroGuids > 0 then
-    for _, hGuid in ipairs(heroGuids) do
-     for i = 1, 5 do
-      pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
-     end
-    end
-   end
-   task.wait(0.5)
   end
   _heroAtkThreads[g] = nil
  end)
@@ -1967,32 +1958,56 @@ end
 local _skillTarget = nil
 local function EnsureSkillThread(g) EnsureHeroAtkThreadFor(g) end
 
--- [GANTI] FireAttack sekarang PlayerClickAttackSkill 5x per panggilan (rate diturunkan
--- dari 1000x, dipanggil tiap 0.5 detik dari TaSpamF/RaSpamF). HeroUseSkill TIDAK lagi
--- ditembak dari sini (dipindah sepenuhnya ke EnsureHeroAtkThreadFor).
+local _heroFireTick = {}
 function FireAttack(g, pos)
  if not g then return end
- if RE.Atk then
-  for i = 1, 5 do
-   pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
+ -- Hitung posisi 5 stud dari musuh ke arah player
+ local _atkPos = pos or Vector3.new(0,0,0)
+ local _char = LP and LP.Character
+ local _pHRP = _char and _char:FindFirstChild("HumanoidRootPart")
+ if _pHRP and pos then
+  local _dir = (_pHRP.Position - pos)
+  local _dir2 = Vector3.new(_dir.X, 0, _dir.Z)
+  if _dir2.Magnitude > 0.1 then
+   _atkPos = pos + _dir2.Unit * 5
+  else
+   _atkPos = pos + Vector3.new(1,0,0) * 5
+  end
+ end
+ if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end) end
+ if RE.HeroUseSkill and #HERO_GUIDS > 0 then
+  local now = tick()
+  local last = _heroFireTick[g] or 0
+  if now - last >= 0.04 then
+   _heroFireTick[g] = now
+   for _, hGuid in ipairs(HERO_GUIDS) do
+    -- [EDIT] Hanya attackType=1, posisi 5stud dari musuh ke arah player
+    pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g,targetPos=_atkPos}) end)
+   end
   end
  end
 end
 
--- [GANTI] FireAllDamage sekarang ClickEnemy 5x per panggilan (rate diturunkan dari 1000x,
--- dipanggil tiap 0.5 detik), tanpa PingGuard() sama sekali. Tetap memastikan thread
--- hero-attack independen jalan.
 function FireAllDamage(g, ep)
  if not IsEnemyGuidValid(g) then return end
  if RE.Click then
-  for i = 1, 5 do
-   task.spawn(function()
-    pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=ep}) end)
-   end)
-  end
+  task.spawn(function()
+   PingGuard()
+   pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=ep}) end)
+  end)
+ end
+ if RE.Atk then
+  pcall(function() RE.Atk:FireServer({attackEnemyGUID=g}) end)
  end
  -- [PER TARGET] Thread hero-attack khusus untuk GUID ini, tidak berbagi target global lagi
  EnsureHeroAtkThreadFor(g)
+ if not RE.HeroUseSkill and RE.HeroSkill then
+  for _, hGuid in ipairs(HERO_GUIDS) do
+   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=1,masterId=MY_USER_ID}) end)
+   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=2,masterId=MY_USER_ID}) end)
+   pcall(function() RE.HeroSkill:FireServer({heroGuid=hGuid,enemyGuid=g,skillType=3,masterId=MY_USER_ID}) end)
+  end
+ end
 end
 
 function FireHeroRemotes(enemyGuid, enemyPos)
@@ -5251,6 +5266,7 @@ do
 
  -- State
  local RA = { running=false, threads={}, killed=0, cur=nil }
+ local _raAtkHandle = nil -- [V81] outer-scope, supaya StopRA bisa stop thread spam langsung
  local TA = { running=false, threads={}, killed=0, cur=nil, targetName=nil }
  local _byNameLiveToken = nil  -- [FIX] token stop loop live update By Name lama
  local _raDiedConns = {}       -- [FIX] HumanoidDied connections untuk RA
@@ -5340,68 +5356,56 @@ do
   return result
  end
 
- -- [FIX] Freeze/Unfreeze player TOTAL (Anchored + WalkSpeed=0 selama RA/TA ON)
- -- Anchored mengunci posisi & rotasi terhadap physics engine sepenuhnya —
- -- tidak bisa didorong/knockback/jungkir oleh musuh, hero, atau gaya luar lain.
- local _frozenWS = nil  -- nil = tidak di-freeze
- local _frozenAnchor = false
+ -- [V80] BUANG TOTAL Heartbeat + Anchored + _lockedCFrame.
+ -- Pola sekarang = persis script teman: re-teleport (hrp.CFrame = posisiMusuh)
+ -- LANGSUNG tiap tick loop (per 0.1s), TANPA snap-back/freeze paksaan apapun.
+ -- Replikasi ke client lain jadi natural karena tidak ada yang melawan Roblox
+ -- network ownership — setiap tick server menerima CFrame baru dan broadcast
+ -- ke semua client real-time, persis seperti teleport manual berulang.
+ local _frozenWS = nil
+
+ -- FreezePlayer: HANYA lock WalkSpeed (supaya player tidak jalan sendiri).
+ -- TIDAK ada Heartbeat, TIDAK ada Anchored, TIDAK ada CFrame lock di sini.
  local function FreezePlayer()
   local char = LP and LP.Character; if not char then return end
   local hum = char:FindFirstChildOfClass("Humanoid"); if not hum then return end
-  local hrp = char:FindFirstChild("HumanoidRootPart")
   if _frozenWS == nil then _frozenWS = hum.WalkSpeed end
   hum.WalkSpeed = 0
-  if hrp then
-   -- Nolkan momentum residual dulu sebelum anchor, biar tidak ada "lompatan" terakhir
-   pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
-   pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
-   hum.PlatformStand = false
-   hrp.Anchored = true
-   _frozenAnchor = true
-  end
+  hum.PlatformStand = false
  end
+
  local function UnfreezePlayer()
   if _frozenWS == nil then return end
-  local char = LP and LP.Character; if not char then return end
-  local hum = char:FindFirstChildOfClass("Humanoid")
-  local hrp = char:FindFirstChild("HumanoidRootPart")
-  if hrp and _frozenAnchor then
-   hrp.Anchored = false
-   _frozenAnchor = false
-  end
-  if hum then hum.WalkSpeed = _walkSpeedState or _frozenWS end
-  _frozenWS = nil
- end
- -- [FIX] Re-assert freeze tiap tick (jaga-jaga kalau Anchored sempat ke-reset oleh
- -- respawn/replikasi server) — dipanggil dari loop RA/TA yang sudah jalan terus-menerus
- local function ReassertFreeze()
-  if _frozenWS == nil then return end -- tidak sedang freeze, skip
-  local char = LP and LP.Character; if not char then return end
-  local hum = char:FindFirstChildOfClass("Humanoid")
-  local hrp = char:FindFirstChild("HumanoidRootPart")
-  if hum and hum.WalkSpeed ~= 0 then hum.WalkSpeed = 0 end
-  if hrp and not hrp.Anchored then
-   pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0,0,0) end)
-   pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(0,0,0) end)
-   hrp.Anchored = true
+  if not RA.running and not TA.running then
+   local char = LP and LP.Character; if not char then return end
+   local hum = char:FindFirstChildOfClass("Humanoid")
+   if hum then
+    hum.WalkSpeed = _walkSpeedState or _frozenWS
+    hum.PlatformStand = false
+   end
+   _frozenWS = nil
   end
  end
 
- -- [EDIT] TpToF — teleport ke HumanoidRootPart musuh, jarak 5 stud dari musuh
- local function TpToF(tgt)
-  if not tgt or not tgt.hrp then return end
-  local char = LP.Character; if not char then return end
-  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
+ local function ReassertFreeze()
+  if _frozenWS == nil then return end
+  local char = LP and LP.Character; if not char then return end
+  local hum = char:FindFirstChildOfClass("Humanoid")
+  if hum and hum.WalkSpeed ~= 0 then hum.WalkSpeed = 0 end
+ end
+
+ -- [V79] _doTeleport: core teleport, return CFrame hasil atau nil
+ local function _doTeleport(tgt)
+  if not tgt or not tgt.hrp then return nil end
+  local char = LP.Character; if not char then return nil end
+  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil end
   local tgtPos = tgt.hrp.Position
-  if tgtPos.Y < -10 then return end
-  -- Arah dari musuh ke player (di-flatten sumbu Y)
+  if tgtPos.Y < -10 then return nil end
   local dir = (hrp.Position - tgtPos)
   local dir2 = Vector3.new(dir.X, 0, dir.Z)
   if dir2.Magnitude < 0.5 then dir2 = Vector3.new(1,0,0) end
   dir2 = dir2.Unit
-  -- Posisi target = HRP musuh + 5 stud ke arah player
   local nearPos = tgtPos + dir2 * 5
-  -- Raycast untuk cari lantai aman
   local params = RaycastParams.new()
   params.FilterType = Enum.RaycastFilterType.Exclude
   local ex = {}
@@ -5413,11 +5417,41 @@ do
    local r = workspace:Raycast(orig, Vector3.new(0,-80,0), params)
    if r and r.Position.Y >= (tgtPos.Y-30) then safePos = r.Position+Vector3.new(0,3,0); break end
   end
-  hrp.CFrame = CFrame.new(safePos or nearPos+Vector3.new(0,3,0))
-  -- [FIX] Langsung freeze setelah teleport (pastikan WalkSpeed tetap 0)
+  local finalCFrame = CFrame.new(safePos or nearPos+Vector3.new(0,3,0))
+  hrp.CFrame = finalCFrame
   local hum = char:FindFirstChildOfClass("Humanoid")
   if hum then hum.WalkSpeed = 0 end
+  return finalCFrame
  end
+
+ -- [V81] TpInstantRA: teleport "lari kilat" — langsung set CFrame player PERSIS
+ -- di posisi HumanoidRootPart musuh (tanpa offset 5 stud, tanpa raycast ground-snap).
+ -- Dipanggil ulang tiap tick selama RA punya target, supaya posisi terus nempel
+ -- mengikuti gerak musuh secara real-time.
+ local function TpInstantRA(tgt)
+  if not tgt or not tgt.hrp or not tgt.hrp.Parent then return nil end
+  local char = LP and LP.Character; if not char then return nil end
+  local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil end
+  local tgtCFrame = tgt.hrp.CFrame
+  hrp.CFrame = tgtCFrame
+  local hum = char:FindFirstChildOfClass("Humanoid")
+  if hum then hum.WalkSpeed = 0 end
+  return tgtCFrame
+ end
+
+ -- [V80] TpToF_RA/TpToF_TA: langsung teleport saja, tanpa simpan CFrame/Heartbeat.
+ -- Dipanggil ulang tiap tick dari loop RA/TA masing-masing → replikasi natural.
+ local function TpToF_RA(tgt)
+  _doTeleport(tgt)
+ end
+
+ local function TpToF_TA(tgt)
+  _doTeleport(tgt)
+ end
+
+ -- Legacy alias (konteks RA)
+ local function TpToF(tgt) TpToF_RA(tgt) end
+
 
  -- [EDIT] Hitung posisi 5 stud dari musuh ke arah player (untuk serangan)
  local function GetAtkPosF(enemyHRP)
@@ -5431,11 +5465,9 @@ do
   return ePos + dir2.Unit * 5
  end
 
- -- [GANTI] RA dan TA sekarang identik & independent: tiap GUID target dapat 1 thread
- -- spam yang loop SETIAP 0.5 DETIK, dengan FireAttack/FireAllDamage masing-masing
- -- membawa 5x panggilan internal per siklus (PlayerClickAttackSkill 5x, ClickEnemy 5x).
- -- HeroUseSkill attackType=1 (5x per hero) berjalan independen di EnsureHeroAtkThreadFor
- -- dengan interval 0.5 detik juga, dipicu dari dalam FireAllDamage.
+ -- [TA UNLIMITED] TA sekarang spam FireAttack+FireAllDamage tak terbatas via thread mandiri per-frame
+ -- (pola sama seperti ClickSpamF sebelumnya: 1 thread independen per target, jalan terus
+ -- selama target masih sama, stop otomatis saat target ganti/mati).
  local _taSpamThreads = {}
  local function TaSpamF(g, enemyHRP)
   if not g then return end
@@ -5447,7 +5479,7 @@ do
     local atkPos = GetAtkPosF(enemyHRP)
     FireAttack(g, atkPos)
     FireAllDamage(g, atkPos)
-    task.wait(0.5) -- siklus 0.5 detik, selama target sama
+    task.wait() -- 1 frame, tak terbatas selama target sama
    end
   end)
  end
@@ -5468,42 +5500,16 @@ do
   TaSpamF(g, enemyHRP)
  end
 
- -- [GANTI TOTAL] RA sekarang pakai sistem identik dengan TA (thread per-GUID, siklus 0.5 detik),
- -- bukan lagi panggilan langsung sinkron dari loop utama RA. Mirror dari TaSpamF.
- local _raSpamThreads = {}
- local function RaSpamF(g, enemyHRP)
-  if not g then return end
-  if _raSpamThreads[g] and _raSpamThreads[g].running then return end
-  local handle = {running = true}
-  _raSpamThreads[g] = handle
-  task.spawn(function()
-   while handle.running do
-    local atkPos = GetAtkPosF(enemyHRP)
-    FireAttack(g, atkPos)
-    FireAllDamage(g, atkPos)
-    task.wait(0.5) -- siklus 0.5 detik, selama target sama, independent dari TA
-   end
-  end)
- end
- local function StopRaSpamF(g)
-  if g and _raSpamThreads[g] then
-   _raSpamThreads[g].running = false
-   _raSpamThreads[g] = nil
-  end
- end
- local function StopAllRaSpamF()
-  for g, handle in pairs(_raSpamThreads) do
-   handle.running = false
-  end
-  _raSpamThreads = {}
- end
+ -- [RA] FireAttack + FireAllDamage
  local function FCharF_RA(g, enemyHRP)
   if not g then return end
-  RaSpamF(g, enemyHRP)
+  local atkPos = GetAtkPosF(enemyHRP)
+  FireAttack(g, atkPos)
+  FireAllDamage(g, atkPos)
  end
 
  local function FHeroF(g)
-  -- kosong, logic ada di FCharF / FCharF_RA
+  -- kosong, logic ada di FCharF
  end
 
  local function StartCollectF(checkFn)
@@ -5529,6 +5535,11 @@ do
  end
 
  -- Random Attack
+ -- [V81] RANDOM ATTACK — dirombak total.
+ -- Alur: pilih musuh random -> lari kilat (teleport instan, persis ke HRP musuh,
+ -- tanpa offset) -> kunci posisi di situ -> ClickEnemy 1x (ambil grip target di server)
+ -- -> spam PlayerClickAttackSkill 10x tiap 0.01 detik terus-menerus -> posisi
+ -- di-re-lock tiap tick mengikuti gerak musuh -> musuh mati/hilang -> ganti instan.
  local function StartRA()
   if #HERO_GUIDS == 0 then
    pcall(function()
@@ -5543,12 +5554,9 @@ do
    end)
   end
   RA.running=true; RA.killed=0; RA.cur=nil; RA.threads={}
-  -- [FIX] Note: FreezePlayer (anchor) dipasang setelah target & posisi ditentukan
-  -- di dalam loop (lihat WatchEnemyRA / pemilihan RA.cur di bawah), bukan di sini,
-  -- supaya tidak meng-anchor player di posisi lama sebelum sempat teleport.
-  -- [FIX] HumanoidDied listener untuk deteksi mati instan pada musuh RA
+
+  -- [V81] HumanoidDied listener — deteksi mati instan, trigger ganti target cepat
   local _raDiedConns = {}
-  local _raBonusForTaGuid = nil -- guid target TA yang sedang "dititipi" thread serang dari RA
   local function WatchEnemyRA(e)
    if not e or not e.model then return end
    local hum = e.model:FindFirstChildOfClass("Humanoid"); if not hum then return end
@@ -5560,64 +5568,76 @@ do
    end)
    table.insert(_raDiedConns, conn)
   end
+
+  -- [V81] Pilih musuh RANDOM dari list valid (bukan musuh pertama di list seperti sebelumnya)
+  local function PickRandomEnemyRA()
+   local pool = {}
+   for _,e in ipairs(GetEnemiesF()) do
+    local isTATarget = TA.running and TA.cur and (e.guid == TA.cur.guid)
+    if not IsDeadF(e) and not isTATarget then table.insert(pool, e) end
+   end
+   if #pool == 0 then
+    -- Fallback: kalau semua musuh adalah target TA, ambil musuh manapun yang valid
+    for _,e in ipairs(GetEnemiesF()) do
+     if not IsDeadF(e) then table.insert(pool, e) end
+    end
+   end
+   if #pool == 0 then return nil end
+   return pool[math.random(1, #pool)]
+  end
+
+  -- [V81] Thread spam serangan — independen per target, jalan 10x tiap 0.01 detik tanpa henti
+  -- [FIX] Handle disimpan di scope StartRA (bukan di dalam tChar) supaya StopRA bisa
+  -- langsung mematikannya, tidak bergantung pada task.cancel yang membunuh thread paksa
+  -- sebelum sempat menjalankan cleanup natural di akhir loop.
+  _raAtkHandle = nil
+  local function StartRaAtkThread(guid)
+   if _raAtkHandle then _raAtkHandle.running = false end
+   local handle = {running = true}
+   _raAtkHandle = handle
+   task.spawn(function()
+    while handle.running and RA.running do
+     for i = 1, 10 do
+      if not handle.running then break end
+      if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID=guid}) end) end
+      task.wait(0.01)
+     end
+    end
+   end)
+  end
+  local function StopRaAtkThread()
+   if _raAtkHandle then _raAtkHandle.running = false; _raAtkHandle = nil end
+  end
+
   local tChar = task.spawn(function()
    while RA.running do
-    -- Ganti musuh RA jika kosong/mati (instan via _deadG_F)
+    -- Target kosong/mati -> cari musuh random baru & lari kilat ke sana
     if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
+     StopRaAtkThread()
      local _oldRAGuidForHero = RA.cur and RA.cur.guid
      _deadG_F={}; RA.cur=nil
-     if _oldRAGuidForHero then
-      StopHeroAtkThreadFor(_oldRAGuidForHero)
-      StopRaSpamF(_oldRAGuidForHero) -- stop thread serang RA untuk target lama
-     end
-     for _,e in ipairs(GetEnemiesF()) do
-      -- [GETER] Pilih musuh RA yang BERBEDA dari target TA
-      local isTATarget = TA.running and TA.cur and (e.guid == TA.cur.guid)
-      if not IsDeadF(e) and not isTATarget then RA.cur=e; break end
-     end
-     -- Fallback: kalau semua musuh adalah target TA, ambil musuh manapun
-     if not RA.cur then
-      for _,e in ipairs(GetEnemiesF()) do
-       if not IsDeadF(e) then RA.cur=e; break end
-      end
-     end
+     if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
+     RA.cur = PickRandomEnemyRA()
      if RA.cur then
-      if not TA.running then TpToF(RA.cur) end
-      -- [FIX] Pasang HumanoidDied listener untuk target RA baru
+      TpInstantRA(RA.cur)              -- lari kilat, persis ke HRP musuh
+      FreezePlayer()                   -- kunci di situ
       WatchEnemyRA(RA.cur)
-      -- [FIX] Re-freeze setelah teleport (pastikan tidak slip)
-      FreezePlayer()
+      local atkPos = RA.cur.hrp.Position
+      if RE.Click then
+       pcall(function() RE.Click:InvokeServer({enemyGuid=RA.cur.guid, enemyPos=atkPos}) end) -- ClickEnemy 1x
+      end
+      EnsureHeroAtkThreadFor(RA.cur.guid)   -- hero ikut menyerang target ini
+      StartRaAtkThread(RA.cur.guid)         -- mulai spam PlayerClickAttackSkill
      end
     end
-    -- [FIX] Jaga posisi tetap terkunci tiap tick (anti reset Anchored oleh server/respawn)
+    -- Jaga WalkSpeed tetap 0 & posisi terus nempel ke musuh (ikuti gerak musuh)
     ReassertFreeze()
-
-    -- [RA+TA] Kalau TA aktif: RA berhenti total menyerang sendiri (cuma teleport/posisi,
-    -- "Bunshin"). Semua kapasitas serang RA dialihkan jadi thread bonus ke target TA
-    -- (TA dapat 2 thread independen = 2x rate). Kalau TA tidak aktif: RA serang target
-    -- sendiri seperti biasa.
-    if TA.running and TA.cur then
-     -- Pastikan RA tidak menyerang target RA sendiri selama TA aktif
-     if RA.cur and RA.cur.guid then StopRaSpamF(RA.cur.guid) end
-     -- Anchor TA berganti -> pindahkan thread bonus RA ke target TA yang baru
-     if _raBonusForTaGuid ~= TA.cur.guid then
-      if _raBonusForTaGuid then StopRaSpamF(_raBonusForTaGuid) end
-      _raBonusForTaGuid = TA.cur.guid
-     end
-     RaSpamF(TA.cur.guid, TA.cur.hrp) -- no-op kalau thread untuk guid ini sudah ada
-    else
-     -- TA tidak aktif (lagi) -> lepas thread bonus dari target TA, kembalikan ke target RA sendiri
-     if _raBonusForTaGuid then StopRaSpamF(_raBonusForTaGuid); _raBonusForTaGuid = nil end
-     if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
-      RaSpamF(RA.cur.guid, RA.cur.hrp) -- no-op kalau sudah ada
-     end
+    if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
+     TpInstantRA(RA.cur)
     end
-
-    task.wait(0.1)  -- ritme cek target mati/scan baru/cek state TA (bukan ritme serang)
+    task.wait(0.05) -- tick re-lock posisi, cepat tapi ringan (spam serang sudah independen di thread sendiri)
    end
-   -- Cleanup saat RA berhenti
-   if RA.cur and RA.cur.guid then StopRaSpamF(RA.cur.guid) end
-   if _raBonusForTaGuid then StopRaSpamF(_raBonusForTaGuid); _raBonusForTaGuid = nil end
+   StopRaAtkThread()
   end)
   RA.threads = {tChar}
   StartCollectF(function() return RA.running end)
@@ -5626,12 +5646,11 @@ do
  local function StopRA()
   RA.running = false
   for _,t in ipairs(RA.threads) do pcall(function() task.cancel(t) end) end
-  -- [FIX] Stop hero-attack + spam thread untuk target RA (dan bonus TA kalau ada)
-  if RA.cur and RA.cur.guid then
-   StopHeroAtkThreadFor(RA.cur.guid)
-   StopRaSpamF(RA.cur.guid)
-  end
-  StopAllRaSpamF() -- jaring pengaman: pastikan tidak ada thread RA nyangkut (termasuk bonus-for-TA)
+  -- [FIX] Stop thread spam PlayerClickAttackSkill secara langsung — tidak bergantung
+  -- pada task.cancel di atas yang bisa membunuh tChar sebelum sempat cleanup natural
+  if _raAtkHandle then _raAtkHandle.running = false; _raAtkHandle = nil end
+  -- [FIX] Stop hero-attack thread untuk target RA (dipicu via FireAllDamage di FCharF_RA)
+  if RA.cur and RA.cur.guid then StopHeroAtkThreadFor(RA.cur.guid) end
   RA.threads={}; RA.cur=nil
   -- [FIX] Disconnect semua HumanoidDied listener RA
   for _,c in ipairs(_raDiedConns or {}) do pcall(function() c:Disconnect() end) end
@@ -5649,7 +5668,7 @@ do
    -- 1x teleport nempel saat mulai
    local tgt = FindByGuidF(targetGuid)
    if tgt then
-    TpToF(tgt); TA.cur = tgt
+    TpToF_TA(tgt); TA.cur = tgt
     FreezePlayer()
     -- [FIX] HumanoidDied listener: instan deteksi mati
     local hum = tgt.model and tgt.model:FindFirstChildOfClass("Humanoid")
@@ -5680,6 +5699,8 @@ do
     if not IsDeadF(tgt) and tgt.model.Parent then
      TA.cur = tgt
      ReassertFreeze()
+     -- [V80] Re-teleport tiap tick (persis script teman)
+     TpToF_TA(tgt)
      FCharF(tgt.guid, tgt.hrp)
      if onStatus then onStatus(">> ["..targetName.."] •"..(tgt.guid:sub(1,5)).." Kill: "..TA.killed) end
      task.wait(0.1)
@@ -5737,7 +5758,7 @@ do
      TA.cur = tgt
      _curDied = false
      -- 1x teleport nempel saat ganti target
-     TpToF(tgt)
+     TpToF_TA(tgt)
      -- [FIX] Re-freeze setelah teleport
      FreezePlayer()
      -- [FIX] Pasang HumanoidDied listener pada target saat ini
@@ -5745,6 +5766,8 @@ do
      -- Serang musuh ini sampai mati (deteksi via _curDied = instan)
      while TA.running and not _curDied and not IsDeadF(tgt) and tgt.model.Parent do
       ReassertFreeze()
+      -- [V80] Re-teleport tiap tick (persis script teman)
+      TpToF_TA(tgt)
       FCharF(tgt.guid, tgt.hrp)
       if onStatus then onStatus(">> ["..targetName.."] ["..rrIdx.."/"..#pool.."] Kill: "..TA.killed) end
       task.wait(0.1)

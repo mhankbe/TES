@@ -5424,15 +5424,37 @@ do
   return finalCFrame
  end
 
- -- [V81] TpInstantRA: teleport "lari kilat" — langsung set CFrame player PERSIS
- -- di posisi HumanoidRootPart musuh (tanpa offset 5 stud, tanpa raycast ground-snap).
- -- Dipanggil ulang tiap tick selama RA punya target, supaya posisi terus nempel
- -- mengikuti gerak musuh secara real-time.
+ -- [FIX] Cari posisi aman musuh: EffectPointAccessory > Handle > BodyFrontAttachment.
+ -- Attachment ini selalu ada di permukaan/dekat lantai tempat musuh berdiri (terbukti
+ -- aman dari jurang/void via teleport DEX), berbeda dari HumanoidRootPart yang kadang
+ -- ada di pusat model dan bisa misleading kalau model/animasi musuh aneh.
+ -- Fallback ke HumanoidRootPart.CFrame kalau attachment tidak ditemukan di musuh tertentu.
+ local function GetSafeTargetCFrameRA(tgt)
+  if not tgt or not tgt.model then return tgt and tgt.hrp and tgt.hrp.CFrame or nil end
+  local epa = tgt.model:FindFirstChild("EffectPointAccessory")
+  if epa then
+   local handle = epa:FindFirstChild("Handle")
+   if handle then
+    local bfa = handle:FindFirstChild("BodyFrontAttachment")
+    if bfa and bfa:IsA("Attachment") then
+     return bfa.WorldCFrame
+    end
+   end
+  end
+  -- Fallback: attachment tidak ada di musuh ini, pakai HRP seperti sebelumnya
+  return tgt.hrp and tgt.hrp.CFrame or nil
+ end
+
+ -- [V81] TpInstantRA: teleport "lari kilat" — set CFrame player ke posisi AMAN musuh
+ -- (BodyFrontAttachment kalau ada, fallback HumanoidRootPart kalau tidak), tanpa offset,
+ -- supaya tidak nyemplung jurang/objek anomali. Dipanggil ulang tiap tick selama RA
+ -- punya target, supaya posisi terus nempel mengikuti gerak musuh secara real-time.
  local function TpInstantRA(tgt)
   if not tgt or not tgt.hrp or not tgt.hrp.Parent then return nil end
   local char = LP and LP.Character; if not char then return nil end
   local hrp = char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil end
-  local tgtCFrame = tgt.hrp.CFrame
+  local tgtCFrame = GetSafeTargetCFrameRA(tgt)
+  if not tgtCFrame then return nil end
   hrp.CFrame = tgtCFrame
   local hum = char:FindFirstChildOfClass("Humanoid")
   if hum then hum.WalkSpeed = 0 end
@@ -5630,7 +5652,7 @@ do
    if _oldRAGuidForHero then StopHeroAtkThreadFor(_oldRAGuidForHero) end
    RA.cur = PickRandomEnemyRA()
    if RA.cur then
-    TpInstantRA(RA.cur)              -- lari kilat, persis ke HRP musuh — INSTAN, tidak menunggu apapun
+    TpInstantRA(RA.cur)              -- lari kilat, posisi aman (BodyFrontAttachment/fallback HRP) — INSTAN
     FreezePlayer()                   -- kunci di situ
     WatchEnemyRA(RA.cur)
     local atkPos = RA.cur.hrp.Position

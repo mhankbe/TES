@@ -5720,24 +5720,45 @@ do
     end
    end
   end)
-  -- [SIDEKICK] Thread paralel: serang musuh random lain (bukan TA.cur) tanpa teleport
+  -- [SIDEKICK] Thread paralel: lock 1 musuh random (bukan TA.cur), serang tanpa teleport
+  -- Hanya 1 musuh sidekick aktif sekaligus — ganti saat mati, stop hero thread lama dulu
   local tSide = task.spawn(function()
+   local sideGuid = nil  -- GUID musuh sidekick yang sedang aktif
    while TA.running do
     local mainGuid = TA.cur and TA.cur.guid
-    -- Kumpulkan semua musuh hidup kecuali target utama
-    local pool = {}
-    for _,e in ipairs(GetEnemiesF()) do
-     if not IsDeadF(e) and e.guid ~= mainGuid then
-      table.insert(pool, e)
+    -- Cek apakah sidekick saat ini masih valid (hidup & bukan target utama)
+    local sideStillValid = false
+    if sideGuid and sideGuid ~= mainGuid then
+     local h = GetEnemiesF()
+     for _,e in ipairs(h) do
+      if e.guid == sideGuid and not IsDeadF(e) then
+       sideStillValid = true
+       FCharF_RA(e.guid, e.hrp)
+       break
+      end
      end
     end
-    -- Pilih 1 random dan serang via remote saja (tanpa teleport)
-    if #pool > 0 then
-     local pick = pool[math.random(1, #pool)]
-     FCharF_RA(pick.guid, pick.hrp)
+    -- Kalau sidekick mati / jadi target utama / belum ada → pilih 1 random baru
+    if not sideStillValid then
+     -- Stop hero thread sidekick lama dulu
+     if sideGuid then StopHeroAtkThreadFor(sideGuid) end
+     sideGuid = nil
+     local pool = {}
+     for _,e in ipairs(GetEnemiesF()) do
+      if not IsDeadF(e) and e.guid ~= mainGuid then
+       table.insert(pool, e)
+      end
+     end
+     if #pool > 0 then
+      local pick = pool[math.random(1, #pool)]
+      sideGuid = pick.guid
+      FCharF_RA(pick.guid, pick.hrp)
+     end
     end
     task.wait(0.1)
    end
+   -- Cleanup saat stop
+   if sideGuid then StopHeroAtkThreadFor(sideGuid) end
   end)
   TA.threads = {tChar, tSide}
   StartCollectF(function() return TA.running end)
@@ -5812,22 +5833,43 @@ do
    -- Cleanup listener saat loop selesai
    if _diedConn then pcall(function() _diedConn:Disconnect() end) end
   end)
-  -- [SIDEKICK] Thread paralel: serang musuh random lain (bukan TA.cur) tanpa teleport
+  -- [SIDEKICK] Thread paralel: lock 1 musuh random (bukan TA.cur), serang tanpa teleport
+  -- Hanya 1 musuh sidekick aktif sekaligus — ganti saat mati, stop hero thread lama dulu
   local tSide = task.spawn(function()
+   local sideGuid = nil
    while TA.running do
     local mainGuid = TA.cur and TA.cur.guid
-    local pool = {}
-    for _,e in ipairs(GetEnemiesF()) do
-     if not IsDeadF(e) and e.guid ~= mainGuid then
-      table.insert(pool, e)
+    -- Cek apakah sidekick saat ini masih valid (hidup & bukan target utama)
+    local sideStillValid = false
+    if sideGuid and sideGuid ~= mainGuid then
+     for _,e in ipairs(GetEnemiesF()) do
+      if e.guid == sideGuid and not IsDeadF(e) then
+       sideStillValid = true
+       FCharF_RA(e.guid, e.hrp)
+       break
+      end
      end
     end
-    if #pool > 0 then
-     local pick = pool[math.random(1, #pool)]
-     FCharF_RA(pick.guid, pick.hrp)
+    -- Kalau sidekick mati / jadi target utama / belum ada → pilih 1 random baru
+    if not sideStillValid then
+     if sideGuid then StopHeroAtkThreadFor(sideGuid) end
+     sideGuid = nil
+     local pool = {}
+     for _,e in ipairs(GetEnemiesF()) do
+      if not IsDeadF(e) and e.guid ~= mainGuid then
+       table.insert(pool, e)
+      end
+     end
+     if #pool > 0 then
+      local pick = pool[math.random(1, #pool)]
+      sideGuid = pick.guid
+      FCharF_RA(pick.guid, pick.hrp)
+     end
     end
     task.wait(0.1)
    end
+   -- Cleanup saat stop
+   if sideGuid then StopHeroAtkThreadFor(sideGuid) end
   end)
   TA.threads = {tChar, tSide}
   StartCollectF(function() return TA.running end)

@@ -5720,7 +5720,26 @@ do
     end
    end
   end)
-  TA.threads = {tChar}
+  -- [SIDEKICK] Thread paralel: serang musuh random lain (bukan TA.cur) tanpa teleport
+  local tSide = task.spawn(function()
+   while TA.running do
+    local mainGuid = TA.cur and TA.cur.guid
+    -- Kumpulkan semua musuh hidup kecuali target utama
+    local pool = {}
+    for _,e in ipairs(GetEnemiesF()) do
+     if not IsDeadF(e) and e.guid ~= mainGuid then
+      table.insert(pool, e)
+     end
+    end
+    -- Pilih 1 random dan serang via remote saja (tanpa teleport)
+    if #pool > 0 then
+     local pick = pool[math.random(1, #pool)]
+     FCharF_RA(pick.guid, pick.hrp)
+    end
+    task.wait(0.1)
+   end
+  end)
+  TA.threads = {tChar, tSide}
   StartCollectF(function() return TA.running end)
  end
 
@@ -5793,7 +5812,24 @@ do
    -- Cleanup listener saat loop selesai
    if _diedConn then pcall(function() _diedConn:Disconnect() end) end
   end)
-  TA.threads = {tChar}
+  -- [SIDEKICK] Thread paralel: serang musuh random lain (bukan TA.cur) tanpa teleport
+  local tSide = task.spawn(function()
+   while TA.running do
+    local mainGuid = TA.cur and TA.cur.guid
+    local pool = {}
+    for _,e in ipairs(GetEnemiesF()) do
+     if not IsDeadF(e) and e.guid ~= mainGuid then
+      table.insert(pool, e)
+     end
+    end
+    if #pool > 0 then
+     local pick = pool[math.random(1, #pool)]
+     FCharF_RA(pick.guid, pick.hrp)
+    end
+    task.wait(0.1)
+   end
+  end)
+  TA.threads = {tChar, tSide}
   StartCollectF(function() return TA.running end)
  end
 

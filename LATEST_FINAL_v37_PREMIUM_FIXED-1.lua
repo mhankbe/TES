@@ -5593,15 +5593,27 @@ do
     -- Cek apakah RA.cur mati / hilang
     if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
      local _oldGuid = RA.cur and RA.cur.guid
-     if _oldGuid then StopHeroAtkThreadFor(_oldGuid) end
-     _deadG_F = {}
+     -- [FIX] Stop hero atk thread untuk target lama SEBELUM apapun
+     if _oldGuid then
+      StopHeroAtkThreadFor(_oldGuid)
+      -- [FIX] Hanya clear entry guid lama, JANGAN reset _deadG_F global
+      -- agar status mati musuh lain (termasuk RA.next) tetap akurat
+      _deadG_F[_oldGuid] = nil
+     end
 
      -- [SNIPER] Eksekusi target yang sudah di-lock (RA.next)
-     -- Validasi ulang: pastikan RA.next masih hidup
-     if RA.next and not IsDeadF(RA.next) and RA.next.model.Parent then
+     -- Validasi workspace langsung (bukan lewat _deadG_F) untuk akurasi
+     local nextValid = RA.next
+      and RA.next.model
+      and RA.next.model.Parent
+      and (function()
+           local h = RA.next.model:FindFirstChildOfClass("Humanoid")
+           return h and h.Health > 0
+          end)()
+     if nextValid then
       RA.cur = RA.next
      else
-      -- RA.next juga sudah mati — fallback random
+      -- RA.next sudah mati duluan — fallback random
       RA.cur = PickRandomEnemy({})
      end
      RA.next = nil
@@ -5615,9 +5627,12 @@ do
      end
     end
 
-    -- [SNIPER] Validasi RA.next tiap tick — kalau RA.next sudah mati, refresh
-    if RA.next and (IsDeadF(RA.next) or not RA.next.model.Parent) then
-     LockNextTarget()
+    -- [SNIPER] Validasi RA.next tiap tick via workspace langsung (bukan _deadG_F)
+    if RA.next then
+     local nxtHum = RA.next.model and RA.next.model:FindFirstChildOfClass("Humanoid")
+     if not RA.next.model.Parent or not nxtHum or nxtHum.Health <= 0 then
+      LockNextTarget()
+     end
     end
     -- [SNIPER] Kalau belum ada RA.next (mis. cuma 1 musuh tersisa), coba lock lagi
     if not RA.next and RA.cur then
@@ -5627,7 +5642,7 @@ do
     -- [FIX] Jaga posisi tetap terkunci tiap tick
     ReassertFreeze()
 
-    -- Serang RA.cur
+    -- Serang RA.cur SAJA — RA.next tidak boleh diserang sebelum player teleport ke sana
     if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
      FCharF_RA(RA.cur.guid, RA.cur.hrp)
     end

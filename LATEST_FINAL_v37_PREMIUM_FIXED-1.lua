@@ -29,11 +29,9 @@ VIM = game:GetService("VirtualInputManager")
 LP = Players.LocalPlayer
 PG = LP.PlayerGui
 
--- ============================================================
 -- [v232] UpdateCityRaidInfo listener dipindah ke SETELAH GUI load
 -- (lihat ConnectUpdateCityRaidListener di bawah SwitchTab)
 -- Variabel buffer tetap dideklarasi di sini agar tersedia global
--- ============================================================
 CITY_TO_MAP_CONN = {[1000001]=3,[1000002]=7,[1000003]=10,[1000004]=13,[1000005]=18}
 
 -- Forward declare siege snapshot functions (definisi ada di bawah setelah SIEGE table siap)
@@ -46,98 +44,9 @@ ConnectUpdateCityRaidListener = nil -- forward declare
 -- setelah GUI load + delay 5 detik (lihat di bawah SwitchTab)
 end -- do globals
 
--- ============================================================
--- [PING GUARD v2] Sistem Keamanan Jaringan - Global Network Safety
--- Diperbaiki: PingGuard() sekarang BENAR-BENAR memblokir aksi saat ping buruk,
--- bukan sekadar cek lalu lanjut paksa. PingWait() scale delay otomatis.
--- ============================================================
 
--- Ambil ping realtime dari Stats service (sama dgn display di tab Settings)
-function GetPing()
-    local ok, ms = pcall(function()
-        return math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
-    end)
-    if ok and ms and ms > 0 then return ms end
-    return 999 -- fallback jika gagal baca = anggap ping buruk
-end
 
--- Hitung multiplier delay berdasarkan kondisi ping
--- GOOD  (<=80ms)   : 1.0x  → normal
--- MEDIUM(81-150ms) : 1.5x  → sedikit lebih lambat
--- BAD   (151-300ms): 2.5x  → jauh lebih lambat
--- WORST (>300ms)   : 4.0x  → super lambat, cegah server overwhelm
-function PingMultiplier()
-    local ms = GetPing()
-    if ms <= 80  then return 1.0
-    elseif ms <= 150 then return 1.5
-    elseif ms <= 300 then return 2.5
-    else return 4.0
-    end
-end
-
--- Pengganti task.wait() — auto-scale delay sesuai kondisi ping
--- Contoh: PingWait(0.5) → jadi 0.5s di ping bagus, 2.0s di ping buruk
-function PingWait(base)
-    local t = (base or 0) * PingMultiplier()
-    if t > 0 then task.wait(t) end
-    return t
-end
-
--- [FIX v2] Blocker sejati: pause sampai ping stabil ATAU timeout
--- Jika ping > threshold: tunggu per-detik sampai membaik.
--- Mengembalikan true jika ping berhasil stabil, false jika timeout habis.
--- Timeout default 60 detik (bukan 30) agar tidak terlalu cepat menyerah.
--- PEMAKAIAN BENAR: PingGuard()  -- langsung, tanpa if/else
--- Script otomatis pause di sini sampai jaringan OK, lalu lanjut sendiri.
-function PingGuard(threshold, timeout)
-    threshold = threshold or 300
-    timeout   = timeout   or 60
-    local ping = GetPing()
-    if ping <= threshold then return true end -- ping OK, langsung lanjut
-    -- Ping buruk: tampilkan status ke label jika tersedia
-    local elapsed = 0
-    while ping > threshold and elapsed < timeout do
-        -- Update status label jika ada (non-blocking)
-        pcall(function()
-            if _pingStatusLbl and _pingStatusLbl.Parent then
-                _pingStatusLbl.Text = "[!] PING BURUK ("..ping.."ms) - Tunggu... ("..tostring(timeout-elapsed).."s)"
-                _pingStatusLbl.TextColor3 = Color3.fromRGB(255, 80, 80)
-            end
-        end)
-        task.wait(1)
-        elapsed = elapsed + 1
-        ping = GetPing()
-    end
-    -- Bersihkan status label jika ada
-    pcall(function()
-        if _pingStatusLbl and _pingStatusLbl.Parent then
-            if ping <= threshold then
-                _pingStatusLbl.Text = "[OK] Jaringan stabil kembali ("..ping.."ms)"
-                _pingStatusLbl.TextColor3 = Color3.fromRGB(46, 204, 64)
-            else
-                _pingStatusLbl.Text = "[!] Timeout - lanjut meski ping masih "..ping.."ms"
-                _pingStatusLbl.TextColor3 = Color3.fromRGB(255, 140, 0)
-            end
-        end
-    end)
-    return ping <= threshold
-end
-
--- Cek cepat apakah ping saat ini aman untuk aksi server
-function PingOK()
-    return GetPing() <= 300
-end
-
--- Forward declare _pingStatusLbl (diisi oleh Settings panel saat GUI load)
-_pingStatusLbl = nil
-
--- ============================================================
--- [END PING GUARD v2]
--- ============================================================
-
--- ============================================================
 -- CLEANUP OLD GUI
--- ============================================================
 for _, name in ipairs({"ASH_GUI", "ASH_NightFrost", "ASH_DD"}) do
  pcall(function()
  local old = PG:FindFirstChild(name)
@@ -146,22 +55,17 @@ for _, name in ipairs({"ASH_GUI", "ASH_NightFrost", "ASH_DD"}) do
 end
 
 
--- [v254] Loop wait duplikat dihapus - sudah ditangani di block pertama atas
 
--- ============================================================
 -- REMOTES
--- ============================================================
 Remotes = RS:WaitForChild("Remotes", 10)
 if not Remotes then
  repeat task.wait(0.5) until RS:FindFirstChild("Remotes")
  Remotes = RS:FindFirstChild("Remotes")
 end
 
--- ============================================================
 -- CACHED SERVER ID - akses PrivateServerId/JobId HANYA SEKALI di sini
 -- agar tidak memicu warning "PrivateServerId cannot be checked on
 -- the client" berulang kali setiap kali dibutuhkan (notif RAID/SIEGE dll)
--- ============================================================
 _CACHED_SERVER_ID = (function()
  local ok, priv = pcall(function() return game.PrivateServerId end)
  if ok and priv and priv ~= "" then return priv end
@@ -235,7 +139,6 @@ local function _collectObj(obj)
         end
     end)
     -- Fire collect remote
-    PingGuard()
     pcall(function() RE.CollectItem:InvokeServer(guid) end)
     if RE.ExtraReward then
         pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
@@ -278,7 +181,7 @@ function StartInstantGoldCollector(on)
         for _, fn in ipairs(DROP_FOLDERS) do
             if obj.Name == fn then
                 task.spawn(function()
-                    PingWait(0.05)
+                    task.wait(0.05)
                     -- Batch collect isi folder baru
                     for _, child in ipairs(obj:GetChildren()) do
                         _collectObj(child)
@@ -303,21 +206,15 @@ HERO_GUIDS, HERO_DATA = {}, {} -- hero data
 -- HeroUseSkill capture: dilakukan via __namecall di SetupUniversalSpy (setelah 30s)
 -- ExtraReward & GainRaidsRewards: dipanggil langsung di AttackLoop, tidak perlu hook
 
--- ============================================================
 -- IsValidUUID
--- ============================================================
 -- Versi diperkuat: Mengecek tipe data sebelum memproses match
 function IsValidUUID(str)
     if type(str) ~= "string" then return false end -- [FIX] Cegah error jika tabel masuk
     return str:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$")
 end
 
--- ============================================================
 -- WARNA
--- ============================================================
--- ============================================================
 -- TEMA : Solo Leveling (1.lua T) - Dark Navy & Bright Accent + Glass
--- ============================================================
 C = {
  -- Background & panel (maps to T.BgMain / BgContent / BgSidebar / TabHover)
  BG = Color3.fromRGB( 9,  11, 22),
@@ -357,9 +254,7 @@ C = {
  KNOB_ON = Color3.fromRGB(235, 242, 255),
 }
 
--- ============================================================
 -- THEME SYSTEM CONFIGURATION
--- ============================================================
 _G.CurrentTheme = "Solo Leveling"
 _G.PotatoMode = false
 _G.ThemeTransparency = 0.42
@@ -401,9 +296,7 @@ local ThemePalettes = {
     ["Muzan"] = {BG = Color3.fromRGB(10, 10, 10), Accent = Color3.fromRGB(139, 0, 0), Text = Color3.fromRGB(255, 255, 255)} 
 }
 
--- ============================================================
  -- UI HELPERS
- -- ============================================================
 function SystemNotify(text, duration)
     local n = Instance.new("Frame", ScreenGui)
     n.Size = UDim2.new(0, 300, 0, 40)
@@ -499,9 +392,7 @@ function GuiInsetY()
  return (ok and type(y) == "number") and y or 36
 end
 
--- ============================================================
 -- SCREEN GUI
--- ============================================================
 ScreenGui = New("ScreenGui", {
  Parent = PG, Name = "ASH_NightFrost",
  ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -522,7 +413,6 @@ Corner(Window, 10)
 Stroke(Window, C.BORD, 1.5, 0.88)
 -- Glass rim (Solo Leveling accent)
 New("UIStroke", { Color = C.ACC, Thickness = 1.5, Transparency = 0.65, Parent = Window })
--- ============================================================
 Bubble = Btn(ScreenGui, C.TBAR, UDim2.new(0,58,0,58))
 Bubble.Position = UDim2.new(0.5,-29,0,50)
 Bubble.Visible = false
@@ -557,7 +447,7 @@ do
  logo.ScaleType = Enum.ScaleType.Fit
  
  task.spawn(function()
-     PingWait(2)
+     task.wait(2)
      if not logo.IsLoaded or logo.ContentImageSize == Vector2.new(0,0) then
          -- Fallback: Gunakan Headshot pemain jika ID tetap gagal (agar tidak blank hitam)
          local content, isReady = Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
@@ -572,7 +462,7 @@ function FloatBubble()
  task.spawn(function()
  local t = 0
  while Bubble.Visible do
- t = t + PingWait(0.03)
+ t = t + task.wait(0.03)
  local p = Bubble.Position
  Bubble.Position = UDim2.new(
  p.X.Scale, p.X.Offset,
@@ -614,9 +504,7 @@ do
  end)
 end
 
--- ============================================================
 -- TOPBAR
--- ============================================================
 function BuildTopBar()
  TopBar = Frame(Window, C.TBAR, UDim2.new(1,0,0,40))
  Corner(TopBar, 10)
@@ -701,7 +589,7 @@ function BuildTopBar()
  TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In),
  {Size = UDim2.new(0,0,0,0)}
  ):Play()
- PingWait(0.19)
+ task.wait(0.19)
  Bubble.Visible = false
  Bubble.Size = UDim2.new(0,58,0,58)
  Window.Visible = true
@@ -877,9 +765,7 @@ function BuildTopBar()
 end
 BuildTopBar()
 
--- ============================================================
 -- USER PROFILE SECTION (v273)
--- ============================================================
 local function CreateUserProfile(parent)
     local profileFrame = Frame(parent, C.BLACK, UDim2.new(1, -12, 0, 50))
     profileFrame.Position = UDim2.new(0, 6, 1, -56)
@@ -923,9 +809,7 @@ local function CreateUserProfile(parent)
     end)
 end
 
--- ============================================================
 -- BODY & SIDEBAR
--- ============================================================
 local SIDEBAR_W = _isSmallScreen and 72 or 100
 
 Body = Frame(Window, C.BG, UDim2.new(1,0,1,-44))
@@ -949,9 +833,7 @@ ContentFrame = Frame(Body, C.BLACK, UDim2.new(1,-SIDEBAR_W,1,0))
 ContentFrame.Position = UDim2.new(0, SIDEBAR_W, 0, 0)
 ContentFrame.BackgroundTransparency = 1
 
--- ============================================================
 -- TAB SYSTEM
--- ============================================================
 local NAV_ITEMS = {
  {tag="main", ico="", lbl="Main"},
  {tag="hide", ico="", lbl="Hide"},
@@ -1036,9 +918,7 @@ NavRefs[i] = {tag=item.tag, bg=bg, bar=bar, ico=icoL, lbl=lblL}
  bg.MouseButton1Click:Connect(function() SwitchTab(item.tag) end)
 end
 
--- ============================================================
 -- THEME ENGINE (VFX & COLORS)
--- ============================================================
 local function CleanupVFX()
     for _, v in ipairs(Window:GetChildren()) do
         if v.Name == "VFX" or v:IsA("UIGradient") then
@@ -1098,56 +978,56 @@ function ApplyTheme(name)
                     task.spawn(function() 
                         while _G.CurrentTheme == myTheme and g.Parent and not _G.PotatoMode do 
                             TweenService:Create(g, TweenInfo.new(1.5, Enum.EasingStyle.Linear), {Offset = Vector2.new(1, 0)}):Play()
-                            PingWait(1.5)
+                            task.wait(1.5)
                             g.Offset = Vector2.new(-1, 0)
                         end 
                     end)
                 end
                 SpawnVFXParticle({StartPos = UDim2.new(math.random(),0,1,0), EndPos = UDim2.new(math.random(),0,0,-50), Color = Color3.fromRGB(255,math.random(50,150),0), Size = UDim2.fromOffset(math.random(3,6),math.random(3,6)), Duration = math.random(1,2), Shape = "Circle"})
-                PingWait(0.2)
+                task.wait(0.2)
             elseif name == "Nezuko" then
                 SpawnVFXParticle({StartPos = UDim2.new(math.random(),0,-0.1,0), EndPos = UDim2.new(math.random()+0.2,0,1.1,0), Color = Color3.fromRGB(255,182,193), Size = UDim2.fromOffset(8,4), Duration = 4, Rotation = 45, EndRotation = 180})
-                PingWait(0.5)
+                task.wait(0.5)
             elseif name == "Kanroji Mitsuri" then
                 SpawnVFXParticle({StartPos = UDim2.new(math.random(),0,-0.1,0), EndPos = UDim2.new(math.random(),0,1.1,0), Color = math.random() > 0.5 and Color3.fromRGB(255,182,193) or Color3.fromRGB(191,255,0), Size = UDim2.fromOffset(6,6), Duration = 3, Shape = "Circle"})
-                PingWait(0.4)
+                task.wait(0.4)
             elseif name == "Tokito Muichiro" then
                 SpawnVFXParticle({StartPos = UDim2.new(-0.1,0,math.random(),0), EndPos = UDim2.new(1.1,0,math.random(),0), Color = Color3.fromRGB(0, 128, 128), Size = UDim2.fromOffset(math.random(20,50), 2), Duration = 5, BackgroundTransparency = 0.6})
-                PingWait(0.8)
+                task.wait(0.8)
             elseif name == "Shinazugawa Sanemi" then
                 SpawnVFXParticle({StartPos = UDim2.new(1.1,0,math.random(),0), EndPos = UDim2.new(-0.1,0,math.random()+0.2,0), Color = Color3.fromRGB(85, 107, 47), Size = UDim2.fromOffset(12, 2), Duration = 1.5, Rotation = math.random(-30,30)})
-                PingWait(0.25)
+                task.wait(0.25)
             elseif name == "Muzan" then
                 local b = Instance.new("Frame", Window); b.Name = "VFX"; b.Size = UDim2.fromOffset(15,15); b.Position = UDim2.new(math.random(),0,math.random(),0); b.BackgroundColor3 = Color3.fromRGB(139,0,0); b.BackgroundTransparency = 0.3; Corner(b, 10); TweenService:Create(b, TweenInfo.new(1.5), {Size = UDim2.fromOffset(0,0), BackgroundTransparency = 1, Rotation = 180}):Play(); task.delay(1.5, function() b:Destroy() end)
-                PingWait(0.6)
+                task.wait(0.6)
             elseif name == "Naruto" then
                 SpawnVFXParticle({StartPos = UDim2.new(math.random(),0,1,0), EndPos = UDim2.new(math.random(),0,0,-50), Color = Color3.fromRGB(255,100,0), Size = UDim2.fromOffset(5,5), Duration = 2, Shape = "Circle"})
-                PingWait(0.4)
+                task.wait(0.4)
             elseif name == "Sasuke" then
                 local l = Instance.new("Frame", Window); l.Name = "VFX"; l.Size = UDim2.new(0,2,0,math.random(40,120)); l.Position = UDim2.new(math.random(),0,math.random(),0); l.Rotation = math.random(0,360); l.BackgroundColor3 = Color3.fromRGB(100,200,255); l.BorderSizePixel = 0; l.ZIndex = 10; task.delay(0.1, function() l:Destroy() end)
-                PingWait(math.random(0.5, 1.5))
+                task.wait(math.random(0.5, 1.5))
             elseif name == "One Piece" then
                 SpawnVFXParticle({StartPos = UDim2.new(math.random(),0,-0.1,0), EndPos = UDim2.new(math.random(),0,1.1,0), Color = Color3.fromRGB(255,215,0), Size = UDim2.fromOffset(6,6), Duration = 3, Shape = "Circle"})
-                PingWait(0.5)
+                task.wait(0.5)
             elseif name == "Dragon Ball" then
                 SpawnVFXParticle({StartPos = UDim2.new(math.random(),0,1,0), EndPos = UDim2.new(math.random(),0,0,-50), Color = Color3.fromRGB(255,255,0), Size = UDim2.fromOffset(4,15), Duration = 1, Easing = Enum.EasingStyle.Exponential})
-                PingWait(0.2)
+                task.wait(0.2)
             elseif name == "One Punch Man" then
                 SpawnVFXParticle({StartPos = UDim2.new(0.5,0,0.5,0), EndPos = UDim2.new(math.random(),0,math.random(),0), Color = Color3.fromRGB(255,0,0), Size = UDim2.fromOffset(10,2), Duration = 0.5, Easing = Enum.EasingStyle.Quad})
-                PingWait(0.1)
+                task.wait(0.1)
             elseif name == "Jujutsu Kaisen" then
                 local b = Instance.new("Frame", Window); b.Name = "VFX"; b.Size = UDim2.fromOffset(20,20); b.Position = UDim2.new(math.random(),0,math.random(),0); b.BackgroundColor3 = Color3.fromRGB(150,0,255); b.BackgroundTransparency = 0.5; Corner(b, 10); TweenService:Create(b, TweenInfo.new(1), {Size = UDim2.fromOffset(0,0), BackgroundTransparency = 1}):Play(); task.delay(1, function() b:Destroy() end)
-                PingWait(0.8)
+                task.wait(0.8)
             elseif name == "Zenitsu" or name == "Demon Slayer" then
                 local l = Instance.new("Frame", Window); l.Name = "VFX"; l.Size = UDim2.new(math.random(),0,0,1); l.Position = UDim2.new(0,0,math.random(),0); l.BackgroundColor3 = Color3.fromRGB(255,255,0); task.delay(0.1, function() l:Destroy() end)
-                PingWait(1.5)
+                task.wait(1.5)
             elseif name == "Windows 11" or name == "MacOS" or name == "iPhone" then
                 if not Window:FindFirstChildWhichIsA("UIGradient") then
                     local g = Instance.new("UIGradient", Window)
                     g.Color = ColorSequence.new(p.BG, p.Accent)
                     task.spawn(function() while _G.CurrentTheme == myTheme and g.Parent do TweenService:Create(g, TweenInfo.new(5, Enum.EasingStyle.Sine), {Offset = Vector2.new(0.5, 0)}):Play(); task.wait(5); TweenService:Create(g, TweenInfo.new(5, Enum.EasingStyle.Sine), {Offset = Vector2.new(-0.5, 0)}):Play(); task.wait(5) end end)
                 end
-                PingWait(2)
+                task.wait(2)
             else
                 -- Generic Flowing Gradient for all other themes
                 if not Window:FindFirstChildWhichIsA("UIGradient") then
@@ -1155,15 +1035,13 @@ function ApplyTheme(name)
                     g.Color = ColorSequence.new({ColorSequenceKeypoint.new(0, p.BG), ColorSequenceKeypoint.new(0.5, p.Accent), ColorSequenceKeypoint.new(1, p.BG)})
                     task.spawn(function() while _G.CurrentTheme == myTheme and g.Parent do TweenService:Create(g, TweenInfo.new(4, Enum.EasingStyle.Linear), {Rotation = 360}):Play(); task.wait(4); g.Rotation = 0 end end)
                 end
-                PingWait(1)
+                task.wait(1)
             end
         end
     end)
 end
 
--- ============================================================
 -- PANEL HELPERS
--- ============================================================
 function SectionHeader(panel, title, order)
  local f = Frame(panel, C.BLACK, UDim2.new(1,0,0,20))
  f.BackgroundTransparency = 1; f.LayoutOrder = order or 0
@@ -1260,9 +1138,7 @@ function SliderRow(panel, title, min, max, default, onMove)
     return row, SetValue
 end
 
--- ============================================================
 -- STATE & LOOPS
--- ============================================================
 STATE = {autoCollect=false, autoCollectGoldItem=false, autoDestroyer=false, autoArise=false, noClip=false, antiAfk=false, autoConfirm=false, autoClose=false}
 LOOPS, COLLECTED = {}, {}
 
@@ -1315,9 +1191,7 @@ RAID = {
 }
 _raidOn = false
 
--- ============================================================
 -- AUTO ASCENSION STATE TABLE
--- ============================================================
 ASC = {
  running  = false,
  inMap    = false,
@@ -1345,7 +1219,6 @@ _ascWakeup = nil -- BindableEvent untuk wakeup loop
 _visAscension = nil -- visual pill toggle
 _ascBusy = false -- true selama ASC inMap ATAU cooldown -> RAID pause total
 _ASC_CHAT_CACHE = {} -- [mapNum] = {grade, bossName} dari chat parser; dipakai ParseRaidEntry
--- [v56 DEPRECATED] _ascDominatedThisEvent tidak dipakai lagi
 -- Logika baru: RAID standby selama ASC.running=true DAN ResolveAscEntry()~=nil
 -- RAID boleh jalan HANYA kalau ResolveAscEntry()=nil (tidak ada Tower match di event saat ini)
 _ascDominatedThisEvent = false -- tetap ada agar tidak crash referensi lama
@@ -1368,7 +1241,6 @@ _eventOwner = nil
 -- [v55 FIX] Mapping Ascension Tower: Tower X -> mapId = 50300 + X
 -- Data confirmed: Tower 1=50301, Tower 2=50302, ..., Tower 26=50326
 -- Formula langsung, tidak bergantung nama boss (yang bisa berubah setiap event)
--- ASC_BOSS_MAP dihapus - diganti formula ResolveAscTargetMapId(mapNum)
 local function ResolveAscTargetMapId(mapNum)
  -- mapNum = nomor Tower (1-26) dari chat "Ascension Tower X"
  -- Return: mapId untuk StartLocalPlayerTeleport (50301-50326)
@@ -1410,7 +1282,6 @@ _setAntiAfkToggle   = nil  -- Player: Anti AFK
 _walkSpeedState     = 160  -- Player: WalkSpeed value (default 1000%)
 _setMergeToggle     = nil  -- AutoRoll: Merge Potion
 _setUseToggle       = nil  -- AutoRoll: Use Potion
--- _setPotatoToggle removed (Potato Mode dihapus V28)
 _webhookModeSetIdx  = nil  -- Settings: webhook mode setter
 _webhookMode        = "both" -- Webhook mode: "raid" | "siege" | "both"
 _webhookUrlBox      = nil  -- Settings: urlBox reference untuk restore text
@@ -1428,7 +1299,6 @@ _visUse         = nil  -- AutoRoll: Use Potion visual
 _visSiege       = nil  -- Automation: Siege visual
 _visDungeon     = nil  -- Automation: Dungeon visual
 _visST2         = nil  -- Automation: ST2 visual
--- _visPotato removed (Potato Mode dihapus V28)
 _visWeaponSell  = nil  -- Main: Auto Sell Weapon visual (manual pill)
 _visDecompGem   = nil  -- Main: Auto Decomp Gem visual (manual pill)
 _setTransSlider = nil  -- Theme: UI Transparency slider setter
@@ -1437,9 +1307,7 @@ _setWebhookToggle = nil  -- Settings: Webhook toggle logic
 _setSpeedSlider = nil  -- Player: WalkSpeed slider setter
 _setGemLevelSlider = nil -- Main: Gem Level slider setter
 
--- ============================================================
 -- CONFIG SYSTEM - Global setters expose (diisi saat panel terbentuk)
--- ============================================================
 -- Hide panel setters (ApplyHide* di-expose ke global agar Config bisa restore)
 _setHideRerollChat  = nil  -- Hide: Apply Hide Reroll Chat
 _setHideAllUI       = nil  -- Hide: Apply Hide All UI
@@ -1504,9 +1372,7 @@ _setAscListEnabledVis  = nil  -- sync visual pill ASC List Entry toggle
 -- HR/WR slot refresh fns (set during panel build)
 -- accessed via _HR_RPT.slotRefreshFns and _WR_RPT.slotRefreshFns
 
--- ============================================================
 -- [v252] MODE DISPATCHER - Single source of truth
--- ============================================================
 MODE = {
  current = "idle", -- "idle"|"ma"|"raid"|"siege"|"dungeon"|"asc"|"st2"
  -- PRIORITY: dungeon > siege > raid > asc > st2 > ma > idle
@@ -1551,18 +1417,15 @@ function MODE:WaitAndRequest(name, timeout)
  local t = 0
  local limit = timeout or 30
  while not self:Request(name) and t < limit do
- PingWait(0.5); t = t + 0.5
+ task.wait(0.5); t = t + 0.5
  end
  return self.current == name
 end
 
 --  Alias getter (baca-saja) 
--- ============================================================
 
--- ============================================================
 -- [GUARD SYSTEM v50] Helper global: cek apakah ada fitur lain sedang di dalam map
 -- Dipakai oleh SEMUA fitur sebelum join map apapun
--- ============================================================
 
 -- [v52 FIX] Atomic map-enter lock untuk cegah race condition RAID vs ASC
 -- Ketika dua fitur lolos guard bersamaan (keduanya lihat inMap=false),
@@ -1619,16 +1482,14 @@ function WaitUntilIdle(featureName, timeout)
  while t < limit do
   local active, who = IsAnyMapActive()
   if not active then return true end
-  PingWait(0.5); t = t + 0.5
+  task.wait(0.5); t = t + 0.5
  end
  return false
 end
 
--- ============================================================
 -- [GUARD SYSTEM v50] GetEnemiesLocal(folder_hint)
 -- Setiap fitur baca musuh SENDIRI dari workspace.Enemys
 -- Tidak ada shared state antar fitur
--- ============================================================
 local ENEMY_FOLDERS_ALL = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy"}
 function GetEnemiesLocal()
  local list = {}
@@ -1704,9 +1565,7 @@ local _activeTbnRow = nil -- [v188-FIX] track row tbn yang sedang aktif
 local ORIGIN_POS, _destroyerConn, _ariseConn = Vector3.new(0,0,0), nil, nil
 local StatusDots, StatusLbls = {}, {}
 
--- ============================================================
 -- MAPS
--- ============================================================
 local MAPS = {}
 for i = 1, 20 do
  MAPS[i] = {name="Map "..i, id=50000+i, remote=i<=4 and "Start" or "Local"}
@@ -1722,9 +1581,7 @@ function TpMap(m)
  end
 end
 
--- ============================================================
 -- SKILL KEYS
--- ============================================================
 SKL = {
  Z={on=false,t=nil,label="Z"},
  X={on=false,t=nil,label="X"},
@@ -1740,7 +1597,7 @@ SKL = {
 function PK(k)
  pcall(function()
  VIM:SendKeyEvent(true, k, false, game)
- PingWait(0.05)
+ task.wait(0.05)
  VIM:SendKeyEvent(false, k, false, game)
  end)
 end
@@ -1774,7 +1631,7 @@ function SkOn(n)
  s.t = task.spawn(function()
  while s.on do
  SkFireOnce(n)
- PingWait(0.8)
+ task.wait(0.8)
  end
  s.t = nil
  end)
@@ -1802,9 +1659,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
  if SKL[n].on then SkOff(n) else SkOn(n) end
 end)
 
--- ============================================================
 -- ENEMY HELPERS
--- ============================================================
 function GetEnemies()
  local list = {}
  -- [BUG FIX] Jangan scan saat player berada di peta RAID, Siege, Dungeon, atau Anniversary.
@@ -1928,16 +1783,16 @@ local function EnsureHeroAtkThreadFor(g)
       _lastFire[hGuid] = tick()
       if RE.HeroUseSkill then
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=1,userId=MY_USER_ID,enemyGuid=g}) end)
-       PingWait(0.1)
+       task.wait(0.1)
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=2,userId=MY_USER_ID,enemyGuid=g}) end)
-       PingWait(0.1)
+       task.wait(0.1)
        pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
       end
      end
-     PingWait(0.05)
+     task.wait(0.05)
     end
    end
-   PingWait(0.05)
+   task.wait(0.05)
    if not IsEnemyGuidValid(g) then
     -- Target sudah mati/hilang -> hentikan thread ini, bersihkan slot
     handle.running = false
@@ -1992,7 +1847,6 @@ function FireAllDamage(g, ep)
  if not IsEnemyGuidValid(g) then return end
  if RE.Click then
   task.spawn(function()
-   PingGuard()
    pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=ep}) end)
   end)
  end
@@ -2040,9 +1894,7 @@ if RE.Death then
  end)
 end
 
--- ============================================================
 -- DESTROY WORKER
--- ============================================================
 function StartDestroyWorker(checkFn)
     local DROP_FOLDERS = {"Golds","Items","Drops","Rewards","Loot","DropItems","RewardItems"}
     local collected = {}
@@ -2066,7 +1918,6 @@ function StartDestroyWorker(checkFn)
                 end
             end
         end)
-        PingGuard()
         pcall(function() RE.CollectItem:InvokeServer(guid) end)
         if RE.ExtraReward then
             pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
@@ -2077,7 +1928,7 @@ function StartDestroyWorker(checkFn)
 
     -- [FIX] Connect ChildAdded langsung ke folder (bukan workspace), no delay
     task.spawn(function()
-        PingWait(1) -- Tunggu server siap
+        task.wait(1) -- Tunggu server siap
         for _, folderName in ipairs(DROP_FOLDERS) do
             local folder = workspace:FindFirstChild(folderName)
             if folder then
@@ -2104,20 +1955,17 @@ function StartDestroyWorker(checkFn)
                     end
                 end
             end
-            PingWait(0.15)
+            task.wait(0.15)
         end
         -- Cleanup connections
         for _, c in ipairs(folderConns) do pcall(function() c:Disconnect() end) end
     end)
 end
 
--- ============================================================
 -- [v257] AUTO GOLD MAGNET - TP semua gold/drop ke player
 -- Gold di game hanya ter-collect kalau dekat player
 -- Fungsi ini TP semua item di folder Golds/Items/Drops ke posisi player
 -- Dipanggil periodik selama MA/AG/Raid aktif
--- ============================================================
--- ============================================================
 -- [v258 FIXED] SUPER GOLD MAGNET - Batch TP + Collect, no delay, always aggressive
 -- FIX: _goldMagnetRunning direset saat checkFn false (tidak stuck)
 -- FIX: Semua item di-TP sekaligus ke posisi player, tidak satu per satu
@@ -2153,7 +2001,6 @@ function StartGoldMagnet(checkFn)
                                 -- Fire collect
                                 local guid = obj:GetAttribute("GUID") or obj:GetAttribute("Guid") or obj:GetAttribute("guid")
                                 if guid then
-                                    PingGuard()
                                     pcall(function() RE.CollectItem:InvokeServer(guid) end)
                                     if RE.ExtraReward then
                                         pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
@@ -2164,7 +2011,7 @@ function StartGoldMagnet(checkFn)
                     end
                 end
             end)
-            PingWait(0.05) -- 20x per detik, batch semua item sekaligus
+            task.wait(0.05) -- 20x per detik, batch semua item sekaligus
         end
         _goldMagnetRunning = false
     end)
@@ -2192,17 +2039,14 @@ end
 
 
 -- ATTACK LOOPS
--- ============================================================
 function AttackLoop_Mass(onStatus)
  _deadG = {}
- -- ============================================================
  -- FASE 1: Tunggu musuh muncul (maks 10 detik)
- -- ============================================================
  local wt = 0
  while wt < 10 and MA.running do
   if #GetEnemies() > 0 then break end
   if onStatus then onStatus("Nunggu musuh... ("..math.floor(10-wt).."s)") end
-  PingWait(0.4); wt = wt + 0.4
+  task.wait(0.4); wt = wt + 0.4
  end
  if not MA.running then return false end
  if #GetEnemies() == 0 then
@@ -2210,13 +2054,11 @@ function AttackLoop_Mass(onStatus)
   return true
  end
 
- -- ============================================================
  -- FASE 2: Attack loop
  -- Keluar jika:
  --   A) alive == 0  -> langsung sukses (tanpa timer tambahan)
  --   B) killTarget terpenuhi (non-Kill-All mode)
  --   C) Tidak bisa bunuh 1 musuh dalam 5 detik -> anggap stuck, skip
- -- ============================================================
  local start    = MA.killed
  local lastKill = MA.killed
  local stuckT   = 0
@@ -2303,7 +2145,7 @@ function AttackLoop_Mass(onStatus)
    end
   end
 
-  PingWait(0.08)
+  task.wait(0.08)
  end
  return false
 end
@@ -2357,7 +2199,7 @@ function AttackLoop_Goyang(onStatus)
  if first and not IsDead(first) and first.model.Parent then
  currentTgt = first
  TpToEnemy(currentTgt)
- PingWait(0)
+ task.wait(0)
  FireAttack(currentTgt.guid, currentTgt.hrp.Position)
  if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] (random) Kill: "..AG.killed) end
  end
@@ -2380,7 +2222,7 @@ end
  if next then
  currentTgt = next
  TpToEnemy(currentTgt)
- PingWait()
+ task.wait(0)
  FireAttack(currentTgt.guid, currentTgt.hrp.Position)
  _tpTimer = 0
  if onStatus then onStatus("Goyang -> ["..currentTgt.model.Name.."] Kill: "..AG.killed) end
@@ -2388,7 +2230,7 @@ end
  else
  if onStatus then onStatus("Waiting Enemy Spawn...") end
  waited = false
- PingWait(0.3)
+ task.wait(0.3)
  end
  end
  if not AG.running then end
@@ -2426,9 +2268,7 @@ function RunAG(onStatus, onDone)
 end
 
 
--- ============================================================
 -- AUTO FUNCTIONS
--- ============================================================
 function DoAutoCollect(on)
  StopLoop("collect"); COLLECTED = {}
  if not on then return end
@@ -2444,18 +2284,17 @@ function DoAutoCollect(on)
  local guid = obj:GetAttribute("GUID")
  if guid and not COLLECTED[guid] then
  COLLECTED[guid] = true
- PingGuard()
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
  -- [v112-FIX] Nil guard ExtraReward
  if RE.ExtraReward then
   pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
  end
- PingWait(0.03)
+ task.wait(0.03)
  end
  end
  end
  end
- PingWait(0.2)
+ task.wait(0.2)
  end
  end)
 end
@@ -2467,11 +2306,11 @@ function DoAutoDestroyer(on)
     if not on then return end
     
     _destroyerThread = task.spawn(function()
-        PingWait(4) -- [v112-FIX] Tunggu PlayerEntity server ready sebelum FireServer
+        task.wait(4) -- [v112-FIX] Tunggu PlayerEntity server ready sebelum FireServer
         while STATE.autoDestroyer do
             repeat
             -- [v112-FIX] Guard nil: skip jika remote belum tersedia
-            if not RE.ExtraReward then PingWait(2); break end
+            if not RE.ExtraReward then task.wait(2); break end
             pcall(function()
                 for _, obj in ipairs(workspace:GetChildren()) do
                     if obj:IsA("Model") or obj:IsA("Part") then
@@ -2482,7 +2321,7 @@ function DoAutoDestroyer(on)
                     end
                 end
             end)
-            PingWait(2)
+            task.wait(2)
             until true
         end
     end)
@@ -2495,11 +2334,11 @@ function DoAutoArise(on)
     if not on then return end
     
     _ariseThread = task.spawn(function()
-        PingWait(4) -- [v112-FIX] Tunggu PlayerEntity server ready sebelum FireServer
+        task.wait(4) -- [v112-FIX] Tunggu PlayerEntity server ready sebelum FireServer
         while STATE.autoArise do
             repeat
             -- [v112-FIX] Guard nil: skip jika remote belum tersedia
-            if not RE.ExtraReward then PingWait(2.5); break end
+            if not RE.ExtraReward then task.wait(2.5); break end
             pcall(function()
                 for _, obj in ipairs(workspace:GetChildren()) do
                     if obj:IsA("Model") or obj:IsA("Part") then
@@ -2510,7 +2349,7 @@ function DoAutoArise(on)
                     end
                 end
             end)
-            PingWait(2.5)
+            task.wait(2.5)
             until true
         end
     end)
@@ -2584,17 +2423,16 @@ function WaitRaidDone()
             _maStatusLbl.Text = "[||] Pause ("..label..") - "..math.floor(t).."s"
             _maStatusLbl.TextColor3 = Color3.fromRGB(255,140,0)
         end
-        PingWait(0.5)
+        task.wait(0.5)
         pause, reason = shouldPause()
     end
 
-    if MA.running then PingWait(0.5) end
+    if MA.running then task.wait(0.5) end
     if _maStatusLbl and MA.running then
         _maStatusLbl.Text = "> Continue After pause..."
         _maStatusLbl.TextColor3 = C.ACC3
     end
 end
--- ============================================================
 function WaitSiegeDone()
     local waited = 0
     while (SIEGE and SIEGE.inMap) or _siegeInterrupt or MODE.current == "siege" do
@@ -2606,7 +2444,7 @@ function WaitSiegeDone()
             if SIEGE then SIEGE.inMap = false end
             break
         end
-        PingWait(0.5)
+        task.wait(0.5)
         waited = waited + 0.5
         local inSiege, _ = IsInSiegeMap()
         if not inSiege and not (SIEGE and SIEGE.inMap) then
@@ -2663,7 +2501,7 @@ function DoMassAttack(on)
  break
  end
  if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or _ascInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
- PingWait(MR.nextMapDelay)
+ task.wait(MR.nextMapDelay)
  else
  -- [FIX] while+index manual: loop balik ke map pertama setelah map terakhir
  -- Rebuild _fresh tiap iterasi dari MR.selected terbaru
@@ -2683,7 +2521,7 @@ function DoMassAttack(on)
  if _raidInterrupt then _mapIdx = _mapIdx + 1; break end
  maStatus("-> TP ke "..m.name.."...", Color3.fromRGB(180,220,255))
  TpMap(m)
- PingWait(MR.teleportDelay)
+ task.wait(MR.teleportDelay)
  if not MA.running then break end
  local cont = AttackLoop_Mass(function(msg)
  maStatus("["..m.name.."] "..msg)
@@ -2696,7 +2534,7 @@ function DoMassAttack(on)
  if MODE.current ~= "idle" and MODE.current ~= "ma" or _raidInterrupt or _siegeInterrupt or _ascInterrupt or (DUNGEON and DUNGEON.interrupt) or (DUNGEON and DUNGEON.inMap) or (ST2 and ST2.running) then WaitRaidDone() end
  if not MA.running then break end
  maStatus("[OK] SUCCES "..m.name.." - Go to...", Color3.fromRGB(100,255,150))
- PingWait(MR.nextMapDelay)
+ task.wait(MR.nextMapDelay)
  _mapIdx = _mapIdx + 1
  if _mapIdx > #_fresh then
  _mapIdx = 1
@@ -2719,38 +2557,93 @@ function DoMassAttack(on)
  end
 end
 
--- ============================================================
--- [FIXED] FUNGSI REJOIN SERVER (ANTI-NIL)
--- ============================================================
+-- FUNGSI REJOIN SERVER — masuk ulang ke server ID yang sama
 local function RejoinServer()
     local TS = game:GetService("TeleportService")
-    local Players = game:GetService("Players")
-    local LP = Players.LocalPlayer
-
-    -- Deteksi VIP Server agar tidak ditendang saat rejoin
-    local isVIP = (game.VIPServerId ~= "" and game.VIPServerId ~= nil) or (game.VIPServerOwnerId ~= 0)
-
+    local LP = game:GetService("Players").LocalPlayer
     task.spawn(function()
-        while PingWait(2) do
-            pcall(function()
-                if isVIP then
-                    -- Jika VIP, lempar ke server publik (biar tidak Unauthorized)
-                    TS:Teleport(game.PlaceId, LP)
-                elseif #Players:GetPlayers() <= 1 then
-                    -- Jika sendirian, cari server baru (biar tidak shutdown)
-                    TS:Teleport(game.PlaceId, LP)
-                else
-                    -- Jika ramai, masuk kembali ke JobId yang sama
-                    TS:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
-                end
-            end)
+        -- Coba TeleportToPlaceInstance dulu, fallback ke Teleport biasa
+        local ok = pcall(function()
+            TS:TeleportToPlaceInstance(game.PlaceId, game.JobId, LP)
+        end)
+        if not ok then
+            pcall(function() TS:Teleport(game.PlaceId, LP) end)
         end
     end)
 end
 
--- ============================================================
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local Players = game:GetService("Players")
+
+-- FUNGSI SERVER HOP — join server lain secara random/acak
+local function ServerHop()
+    local LP = Players.LocalPlayer
+    task.spawn(function()
+        local ok, err = pcall(function()
+            -- Ambil data server publik
+            local url = "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Desc&limit=100"
+            local req = game:HttpGet(url)
+            local data = HttpService:JSONDecode(req)
+            
+            if data and data.data then
+                local availableServers = {}
+                for _, v in ipairs(data.data) do
+                    -- Pastikan bukan server saat ini dan belum penuh
+                    if type(v) == "table" and v.id ~= game.JobId and v.playing < v.maxPlayers then
+                        table.insert(availableServers, v.id)
+                    end
+                end
+                
+                if #availableServers > 0 then
+                    -- Pilih satu server secara acak
+                    local randomServerId = availableServers[math.random(1, #availableServers)]
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, randomServerId, LP)
+                    return
+                end
+            end
+            -- Fallback jika tidak ada server yang cocok
+            TeleportService:Teleport(game.PlaceId, LP)
+        end)
+        
+        if not ok then
+            -- Fallback darurat jika HttpGet diblokir
+            TeleportService:Teleport(game.PlaceId, LP)
+        end
+    end)
+end
+
+-- FUNGSI SMALL SERVER — join server dengan player paling sedikit
+local function SmallServer()
+    local LP = Players.LocalPlayer
+    task.spawn(function()
+        local ok, err = pcall(function()
+            -- sortOrder=Asc mengurutkan dari server dengan pemain paling sedikit
+            local url = "https://games.roblox.com/v1/games/" .. tostring(game.PlaceId) .. "/servers/Public?sortOrder=Asc&limit=100"
+            local req = game:HttpGet(url)
+            local data = HttpService:JSONDecode(req)
+            
+            if data and data.data then
+                for _, v in ipairs(data.data) do
+                    -- Cari server pertama yang playernya lebih dari 0 (mencegah error server mati), belum penuh, dan bukan server saat ini
+                    if type(v) == "table" and v.id ~= game.JobId and v.playing < v.maxPlayers and v.playing > 0 then
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, v.id, LP)
+                        return
+                    end
+                end
+            end
+            -- Fallback jika loop tidak menemukan server
+            TeleportService:Teleport(game.PlaceId, LP)
+        end)
+        
+        if not ok then
+            -- Fallback darurat jika HttpGet diblokir
+            TeleportService:Teleport(game.PlaceId, LP)
+        end
+    end)
+end
+
 -- QUIRK DATA
--- ============================================================
 -- Hero: hanya tampilkan quirk tier tinggi per slot, max pilih 3
 QUIRK_LIST_PER_SLOT = {
  -- Slot 1 (9 pilihan, max 3)
@@ -2878,7 +2771,6 @@ for _, list in ipairs(PG_GRADES_PER_MACHINE) do
  for _, g in ipairs(list) do PG_GRADE_MAP[g.id] = g.name end
 end
 
--- ============================================================
 PGR = {
  guids = {"","",""},
  captured = {false,false,false},
@@ -2957,25 +2849,22 @@ DoAutoRollHalo = function(hi, on)
  setStatus("[R] Rolling #"..attempt.."...", Color3.fromRGB(255,200,60))
 
  local ok, res = pcall(function()
- PingGuard()
  return RE.RerollHalo:InvokeServer(drawId)
  end)
 
  if not ok then
  setStatus("[!] Error - retry...", Color3.fromRGB(255,100,60))
- PingWait(1)
+ task.wait(1)
  else
  setStatus("[OK] Roll #"..attempt.." DONE", Color3.fromRGB(80,220,80))
- PingWait(0.05)
+ task.wait(0.05)
  end
  end
  setStatus("[.] Idle", Color3.fromRGB(160,148,135))
  end)
 end
 
--- ============================================================
 -- ORNAMENT DATA (di-wrap dalam 1 tabel untuk hemat local slot)
--- ============================================================
 _ASH_ORN = {}
 
 _ASH_ORN.MACHINES = {
@@ -3059,7 +2948,7 @@ PGR100.Loop = function(msi)
             PGR100.Loop(msi)
             return
           end
-          PingWait(0.5)
+          task.wait(0.5)
         end
       end)
       return
@@ -3077,7 +2966,7 @@ PGR100.Loop = function(msi)
         -- [FIX] Cek GUID tiap iterasi (bukan sekali di luar)
         if not (PGR.guids[msi] and PGR.guids[msi] ~= "") then
           setStatus100("[..] Click 1x on Reroll Machine", Color3.fromRGB(180,220,255))
-          PingWait(1); break
+          task.wait(1); break
         end
 
         -- [FIX] Rebuild stopIds tiap iterasi agar selalu fresh (antisipasi target berubah)
@@ -3087,7 +2976,7 @@ PGR100.Loop = function(msi)
         end
         if #stopIds == 0 then
           setStatus100("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
-          PingWait(1); break
+          task.wait(1); break
         end
 
         attempt = attempt + 1
@@ -3101,11 +2990,10 @@ PGR100.Loop = function(msi)
         local autoRemote = Remotes:FindFirstChild("AutoRandomHeroEquipGrade")
         if not autoRemote then
           setStatus100("[!] Remote Auto100x tidak ditemukan!", Color3.fromRGB(255,100,60))
-          PingWait(2); break
+          task.wait(2); break
         end
         _ourCall = true
         local ok, res = pcall(function()
-          PingGuard()
           return autoRemote:InvokeServer({
             drawId = PG_DRAW_IDS[msi],
             stopGradeIds = stopIds,
@@ -3116,7 +3004,7 @@ PGR100.Loop = function(msi)
 
         if not ok then
           setStatus100("[!] Error - retry...", Color3.fromRGB(255,100,60))
-          PingWait(0.5); break
+          task.wait(0.5); break
         end
 
         -- [FIX] Parse gradeId rekursif deep scan (sama dengan Hero x100)
@@ -3167,7 +3055,7 @@ PGR100.Loop = function(msi)
             PGR100.lastLbls[msi].Text = "Last: "..gradeName
           end
         end
-        PingWait(0.05)
+        task.wait(0.05)
       until true
     end
     setOff100()
@@ -3237,7 +3125,7 @@ function _ASH_ORN.DoRoll(mi, on)
  end
  if not RE.RerollOrnament then
  setStatus(Color3.fromRGB(255,80,80), "[!] RerollOrnament NOT FOUND!", Color3.fromRGB(255,80,80))
- PingWait(2); break
+ task.wait(2); break
  end
  attempt = attempt + 1
  setStatus(Color3.fromRGB(255,160,30), "[~] Roll #"..attempt, C.ACC2)
@@ -3247,12 +3135,11 @@ function _ASH_ORN.DoRoll(mi, on)
  end
 
  local ok, res = pcall(function()
- PingGuard()
  return RE.RerollOrnament:InvokeServer({machineId=mInfo.machineId, isAuto=false})
  end)
  if not ok then
  setStatus(Color3.fromRGB(255,80,80), "[!] Error (#"..attempt..")", Color3.fromRGB(255,80,80))
- PingWait(0.5); break
+ task.wait(0.5); break
  end
 
  local gotId = nil
@@ -3322,7 +3209,7 @@ function _ASH_ORN.DoRoll(mi, on)
  ScanNum(res, 0)
  end
  elseif res == false or res == nil then
- PingWait(0.5); break
+ task.wait(0.5); break
  end
 
  if ORN.lastLbls[mi] then
@@ -3330,7 +3217,7 @@ function _ASH_ORN.DoRoll(mi, on)
  ORN.lastLbls[mi].TextColor3 = Color3.fromRGB(180,180,180)
  end
 
- PingWait(0.1)
+ task.wait(0.1)
  until true
  end
  setStatus(Color3.fromRGB(100,100,100), "[.] STOPPED ("..attempt.."x roll)", C.TXT2)
@@ -3349,9 +3236,7 @@ _HR_RPT = nil -- laporan hero fastroll
 _WR_RPT = nil -- laporan weapon fastroll
 _watcherConns = {}
 
--- ============================================================
 -- DD LAYER
--- ============================================================
 DDLayer = Frame(ScreenGui, C.BLACK, UDim2.new(1,0,1,0))
 DDLayer.BackgroundTransparency = 1; DDLayer.ZIndex = 9998; DDLayer.Visible = false
 DDLayer.Active = false
@@ -3378,7 +3263,6 @@ end)
 
 
 -- DROPDOWN HELPER (shared)
--- ============================================================
 MakeGenericDropdown = function(params)
  local ddBtn = params.ddBtn
  local list = params.list
@@ -3487,9 +3371,7 @@ MakeGenericDropdown = function(params)
  end)
 end
 
--- ============================================================
 -- PANEL : MAIN
--- ============================================================
 do
  local p = NewPanel("main")
  -- [v186] FIX: deklarasi variabel yang hilang
@@ -3499,9 +3381,7 @@ do
  local _cnt = {R=0, Y=0, B=0, other=0, skipped=0}
  local _sellToggleCb = nil
 
- -- ============================================================
 -- FITUR: DISABLE ALL ANIMATIONS & DAMAGE TEXT (GHOST POLLING)
--- ============================================================
 local _dmgTextConnWorkspace = nil
 local _animLoopConn = nil
 STATE.disableAnim = false
@@ -3553,7 +3433,7 @@ local function DoDisableAllAnimations(on)
         -- 3. RAZIA DI LAYAR 2D (PLAYER GUI) -> GHOST POLLING (ANTI CRASH)
         task.spawn(function()
             while STATE.disableAnim do
-                PingWait(0.1)
+                task.wait(0.1)
                 pcall(function()
                     for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
                         -- Sembunyikan BillboardGui Damage
@@ -3767,7 +3647,7 @@ end
  if not _autoSellOn then return end
  if type(data) ~= "table" then return end
  task.spawn(function()
- PingWait(0.3)
+ task.wait(0.3)
  -- [v186] Struktur confirmed dari sniff:
  -- item = { guid="...", data = { id=970002, isLock=bool, grade=990001, guid="..." } }
  local items = {}
@@ -3790,7 +3670,7 @@ end
          local name = _guidNames[tostring(guid)] or ""
          local prefix = getType(name)
 
-         PingWait(0.15)
+         task.wait(0.15)
          local remote = Remotes:FindFirstChild("DelectHeroEquips")
          if remote then
              local ok = pcall(function() remote:FireServer({tostring(guid)}) end)
@@ -3825,13 +3705,11 @@ end
  local divMain = Frame(p, C.BORD, UDim2.new(1,0,0,1))
  divMain.LayoutOrder=6; divMain.BackgroundTransparency=0.42
 
- -- ============================================================
  -- AUTO SELL WEAPON [v56b FIX] + WEAPON FILTER DROPDOWN
  -- Persistent listener di UpdateWeapon.OnClientEvent
  -- Dropdown pakai DDLayer (sistem existing) - no MaxSize bug
  -- LayoutOrder: swRow=6, swDropCard=7, swStatusCard=8
  --              dgRow=8, dgSliderCard=9 (geser +2)
- -- ============================================================
 
  local WEAPON_LIST = {
   {180002, "Nail", 1, Color3.fromRGB(200,200,200)},
@@ -4346,7 +4224,7 @@ end
       pcall(function() re:FireServer(batch) end)
       _swSoldCount = _swSoldCount + #batch
       SetSWStatus("[OK] Sold [".._swSoldCount.."] weapon", Color3.fromRGB(255,160,40))
-      PingWait(0.5)
+      task.wait(0.5)
      end
     else
      local fd = _swSelectAll and "All" or (function()
@@ -4354,7 +4232,7 @@ end
      end)()
      SetSWStatus("[OK] Active ("..fd..") - waiting...", Color3.fromRGB(100,220,100))
     end
-    PingWait(2)
+    task.wait(2)
    end
   end)
 
@@ -4441,7 +4319,6 @@ end
  -- Nama child = UUID gem. NumText "Lv.X" = level gem.
  -- Filter berdasarkan itemId dari config game.
  -- Remote: DecomposeItems:FireServer({itemType=7, data={guid1,...}})
- -- 
  local _autoDecompGemOn = false
  local _autoDecompGemThread = nil
  local GEM_ITEM_TYPE = 7
@@ -4692,14 +4569,14 @@ end
  -- Validasi: kedua input harus diisi
  if minText == "" or minText == nil then
   SetDGStatus("[ERROR] Min Level wajib diisi!", Color3.fromRGB(255,80,80))
-  PingWait(2); SetDGPillOff()
+  task.wait(2); SetDGPillOff()
   SetDGStatus("Idle - Input Error", C.TXT3)
   return
  end
  
  if maxText == "" or maxText == nil then
   SetDGStatus("[ERROR] Max Level wajib diisi!", Color3.fromRGB(255,80,80))
-  PingWait(2); SetDGPillOff()
+  task.wait(2); SetDGPillOff()
   SetDGStatus("Idle - Input Error", C.TXT3)
   return
  end
@@ -4710,7 +4587,7 @@ end
  -- Validasi: harus angka valid
  if not minLv or not maxLv then
   SetDGStatus("[ERROR] Input harus berupa angka!", Color3.fromRGB(255,80,80))
-  PingWait(2); SetDGPillOff()
+  task.wait(2); SetDGPillOff()
   SetDGStatus("Idle - Input Error", C.TXT3)
   return
  end
@@ -4718,7 +4595,7 @@ end
  -- Validasi: Min tidak boleh > Max
  if minLv > maxLv then
   SetDGStatus("[ERROR] Min Level > Max Level!", Color3.fromRGB(255,80,80))
-  PingWait(2); SetDGPillOff()
+  task.wait(2); SetDGPillOff()
   SetDGStatus("Idle - Input Error", C.TXT3)
   return
  end
@@ -4726,7 +4603,7 @@ end
  -- Validasi: range 1-150
  if minLv < 1 or minLv > 150 or maxLv < 1 or maxLv > 150 then
   SetDGStatus("[ERROR] Level harus antara 1-150!", Color3.fromRGB(255,80,80))
-  PingWait(2); SetDGPillOff()
+  task.wait(2); SetDGPillOff()
   SetDGStatus("Idle - Input Error", C.TXT3)
   return
  end
@@ -4738,26 +4615,26 @@ end
  _gemMaxLevelState = maxLv
  
  SetDGStatus("SCAN Inventory...", C.ACC2)
- PingWait(0.5)
+ task.wait(0.5)
 
  local guids = GetGemGuidsFromPanel(_gemMinLevel, _gemMaxLevel)
 
  if #guids == 0 then
  SetDGStatus("[!] OPEN GemsPanel First! (Lv".._gemMinLevel.."-".._gemMaxLevel..")", Color3.fromRGB(255,180,60))
- PingWait(2); SetDGPillOff()
+ task.wait(2); SetDGPillOff()
  SetDGStatus("Idle - OPEN GemsPanel First", C.TXT3)
  return
  end
 
  SetDGStatus("GOT "..#guids.." gem (Lv".._gemMinLevel.."-".._gemMaxLevel..")...", C.ACC2)
- PingWait(0.3)
+ task.wait(0.3)
 
  local decomposed = 0
  local BATCH = 20
  local re = Remotes:FindFirstChild("DecomposeItems")
  if not re then
  SetDGStatus("[!] DecomposeItems remote NOT FOUND!", Color3.fromRGB(255,80,80))
- PingWait(2); SetDGPillOff()
+ task.wait(2); SetDGPillOff()
  return
  end
 
@@ -4773,11 +4650,11 @@ end
  -- Format 2: {itemType=7, guids=batch} (fallback beberapa versi game)
  pcall(function() re:FireServer({itemType=GEM_ITEM_TYPE, data=batch}) end)
  decomposed = decomposed + #batch
- PingWait(0.5)
+ task.wait(0.5)
  end
 
  SetDGStatus("[OK] "..decomposed.." gem DECOMPOSED! (Lv".._gemMinLevel.."-".._gemMaxLevel..")", Color3.fromRGB(110,231,183))
- PingWait(2); SetDGPillOff()
+ task.wait(2); SetDGPillOff()
  SetDGStatus("Idle", C.TXT3)
  end
 
@@ -4826,9 +4703,7 @@ end
 end
 
 
--- ============================================================
 -- AUTO COLLECT GOLD & ITEM TOGGLE (inject ke panel MAIN)
--- ============================================================
 do
  local ok, err = pcall(function()
   local p = Panels["main"]
@@ -4847,13 +4722,9 @@ do
 end
 
 
--- ============================================================
 
--- ============================================================
 
--- ============================================================
 -- PANEL : HIDE
--- ============================================================
 do
  local p = NewPanel("hide")
  local _hideRerollOn = false
@@ -4881,14 +4752,12 @@ do
  local hSub = Label(hCard,"Sembunyikan elemen game. Toggle OFF untuk restore penuh.",10,C.DIM,Enum.Font.Gotham,Enum.TextXAlignment.Left)
  hSub.Size=UDim2.new(1,0,0,24); hSub.Position=UDim2.new(0,0,0,22); hSub.TextWrapped=true
 
- -- ============================================================
  -- 1. HIDE REROLL CHAT
  -- Struktur ExperienceChat:
  --   ScrollingFrame[scrollView]
  --     Frame[0-{uuid}]    <-- satu baris chat (INI yang di-hide)
  --       Frame[TextMessage]
  --         TextLabel[BodyText]  <-- teks "... just reroll a ..."
- -- ============================================================
  local function isRerollText(t)
      t = (t or ""):gsub("<[^>]+>",""):lower()
      return t:find("reroll a",1,true) ~= nil
@@ -4978,9 +4847,7 @@ do
  _setHideRerollChat = ApplyHideReroll
  _visHideRerollChat = _hrcrVis
 
- -- ============================================================
  -- 2. HIDE ALL UI
- -- ============================================================
  local function ApplyHideUI(on)
      _hideAllUIState = on
      _hideUIOn = on
@@ -5061,9 +4928,7 @@ do
  _setHideAllUI = ApplyHideUI
  _visHideAllUI = _hauiVis
 
- -- ============================================================
  -- 3. HIDE ALL ANIMATION (versi penuh, restore sempurna)
- -- ============================================================
  local function ApplyHideAnim(on)
      _hideAllAnimState = on
      _hideAnimOn = on
@@ -5181,9 +5046,7 @@ do
  _setHideAllAnim = ApplyHideAnim
  _visHideAllAnim = _hanimVis
 
- -- ============================================================
  -- 4. AUTO HIDE REWARD (logic sama persis dengan HIDE_REWARD.lua)
- -- ============================================================
  local _hideRewardOn = false
 
  local function ApplyHideReward(on)
@@ -5209,7 +5072,7 @@ do
              if not (obj:IsA("GuiObject") or obj:IsA("ScreenGui")) then return end
              for _, name in ipairs(HIDE_PANELS) do
                  if obj.Name == name or obj.Name:find("GarrisonBoss") then
-                     PingWait(0.1)
+                     task.wait(0.1)
                      if _hideRewardOn then forceHide(obj) end
                      pcall(function()
                          if obj:IsA("GuiObject") then
@@ -5233,7 +5096,7 @@ do
          -- Ghost polling
          task.spawn(function()
              while _hideRewardOn do
-                 PingWait(0.5)
+                 task.wait(0.5)
                  pcall(function()
                      for _, obj in ipairs(LP.PlayerGui:GetChildren()) do
                          for _, name in ipairs(HIDE_PANELS) do
@@ -5257,10 +5120,8 @@ do
 
 
 end -- end do PANEL HIDE
--- ============================================================
 
 -- PANEL : FARM
--- ============================================================
 do
  local p = NewPanel("farm")
 
@@ -5272,7 +5133,6 @@ do
  local _deadG_F = {}
  local HERO_GUIDS_F = {}
 
- -- [FIX] SetupFarmHook dihapus - hook __namecall cukup satu di SetupUniversalSpy
  -- HERO_GUIDS_F sekarang alias ke HERO_GUIDS global agar tidak ada duplikasi hook
  local HERO_GUIDS_F = HERO_GUIDS -- alias, bukan copy
 
@@ -5504,7 +5364,6 @@ do
       local g = o:GetAttribute("GUID") or o:GetAttribute("Guid")
       if g and not col[g] then
        col[g] = true
-       PingGuard()
        pcall(function() RE.CollectItem:InvokeServer(g) end)
        task.wait(0.1)
       end
@@ -5531,12 +5390,54 @@ do
   end
   RA.running=true; RA.killed=0; RA.cur=nil; RA.next=nil; RA.threads={}
 
-  -- [SNIPER] Pilih 1 musuh random dari list, kecualikan GUID yang di-exclude
+  -- ── HELPERS ───────────────────────────────────────────────
+
+  -- [ALIVE CHECK] Sesuai standalone: cek model.Parent dulu, baru Humanoid Health
+  local function IsTargetAliveRA(t)
+   if not t or not t.model or not t.model.Parent then return false end
+   local hum = t.model:FindFirstChildOfClass("Humanoid")
+   if not hum or hum.Health <= 0 then return false end
+   return true
+  end
+
+  -- [FREEZE] Sesuai standalone: WalkSpeed=0 + JumpPower=0, simpan nilai asli sekali
+  local _raFrozenWS = nil
+  local function RAFreezePlayer()
+   local char = LP.Character
+   local hum = char and char:FindFirstChildOfClass("Humanoid")
+   if hum then
+    if not _raFrozenWS then _raFrozenWS = hum.WalkSpeed end
+    hum.WalkSpeed = 0
+    hum.JumpPower = 0
+   end
+  end
+  local function RAUnfreezePlayer()
+   local char = LP.Character
+   local hum = char and char:FindFirstChildOfClass("Humanoid")
+   if hum then
+    hum.WalkSpeed = _raFrozenWS or 16
+    hum.JumpPower = 50
+   end
+   _raFrozenWS = nil
+  end
+
+  -- [TELEPORT] Sesuai standalone: player 3 stud di depan musuh via CFrame
+  local function TpToRA(tgt)
+   if not tgt or not tgt.hrp then return end
+   local char = LP.Character
+   local hrp = char and char:FindFirstChild("HumanoidRootPart")
+   if not hrp then return end
+   pcall(function()
+    hrp.CFrame = tgt.hrp.CFrame * CFrame.new(0, 0, -3)
+   end)
+  end
+
+  -- [SNIPER] Pilih 1 musuh random, kecualikan GUID tertentu & target TA
   local function PickRandomEnemy(excludeGuids)
    local pool = {}
    local taGuid = TA.running and TA.cur and TA.cur.guid
    for _,e in ipairs(GetEnemiesF()) do
-    if not IsDeadF(e) then
+    if IsTargetAliveRA(e) then
      local skip = false
      if taGuid and e.guid == taGuid then skip = true end
      if excludeGuids then
@@ -5547,10 +5448,10 @@ do
      if not skip then table.insert(pool, e) end
     end
    end
+   -- Fallback: kalau semua dikecualikan, ambil musuh manapun
    if #pool == 0 then
-    -- Fallback: kalau semua musuh dikecualikan (mis. hanya 1 musuh + TA), ambil musuh manapun
     for _,e in ipairs(GetEnemiesF()) do
-     if not IsDeadF(e) then table.insert(pool, e) end
+     if IsTargetAliveRA(e) then table.insert(pool, e) end
     end
    end
    if #pool == 0 then return nil end
@@ -5564,7 +5465,7 @@ do
    RA.next = PickRandomEnemy(excludes)
   end
 
-  -- [FIX] HumanoidDied listener untuk deteksi mati instan pada musuh RA
+  -- [DIED] HumanoidDied listener: deteksi mati instan, update kill count
   local _raDiedConns = {}
   local function WatchEnemyRA(e)
    if not e or not e.model then return end
@@ -5578,98 +5479,133 @@ do
    table.insert(_raDiedConns, conn)
   end
 
-  local tChar = task.spawn(function()
-   -- Pilih target pertama secara random
-   RA.cur = PickRandomEnemy({})
-   if RA.cur then
-    if not TA.running then TpToF(RA.cur) end
-    FreezePlayer()
-    WatchEnemyRA(RA.cur)
-    -- Langsung pre-lock target berikutnya (sniper)
-    LockNextTarget()
-   end
-
-   while RA.running do
-    -- Cek apakah RA.cur mati / hilang
-    if not RA.cur or IsDeadF(RA.cur) or not RA.cur.model.Parent then
-     local _oldGuid = RA.cur and RA.cur.guid
-     -- [FIX] Stop hero atk thread untuk target lama SEBELUM apapun
-     if _oldGuid then
-      StopHeroAtkThreadFor(_oldGuid)
-      -- [FIX] Hanya clear entry guid lama, JANGAN reset _deadG_F global
-      -- agar status mati musuh lain (termasuk RA.next) tetap akurat
-      _deadG_F[_oldGuid] = nil
-     end
-
-     -- [SNIPER] Eksekusi target yang sudah di-lock (RA.next)
-     -- Validasi workspace langsung (bukan lewat _deadG_F) untuk akurasi
-     local nextValid = RA.next
-      and RA.next.model
-      and RA.next.model.Parent
-      and (function()
-           local h = RA.next.model:FindFirstChildOfClass("Humanoid")
-           return h and h.Health > 0
-          end)()
-     if nextValid then
-      RA.cur = RA.next
-     else
-      -- RA.next sudah mati duluan — fallback random
-      RA.cur = PickRandomEnemy({})
-     end
-     RA.next = nil
-
-     if RA.cur then
-      if not TA.running then TpToF(RA.cur) end
-      FreezePlayer()
-      WatchEnemyRA(RA.cur)
-      -- [SNIPER] Langsung lock target berikutnya lagi
-      LockNextTarget()
-     end
-    end
-
-    -- [SNIPER] Validasi RA.next tiap tick via workspace langsung (bukan _deadG_F)
-    if RA.next then
-     local nxtHum = RA.next.model and RA.next.model:FindFirstChildOfClass("Humanoid")
-     if not RA.next.model.Parent or not nxtHum or nxtHum.Health <= 0 then
-      LockNextTarget()
-     end
-    end
-    -- [SNIPER] Kalau belum ada RA.next (mis. cuma 1 musuh tersisa), coba lock lagi
-    if not RA.next and RA.cur then
-     LockNextTarget()
-    end
-
-    -- [FIX] Jaga posisi tetap terkunci tiap tick
-    ReassertFreeze()
-
-    -- Serang RA.cur SAJA — RA.next tidak boleh diserang sebelum player teleport ke sana
-    if RA.cur and not IsDeadF(RA.cur) and RA.cur.model.Parent then
-     FCharF_RA(RA.cur.guid, RA.cur.hrp)
-    end
-    -- Sekaligus serang target TA jika aktif — RA bawa remote sendiri, 2x lipat
-    if TA.running and TA.cur and not IsDeadF(TA.cur) and TA.cur.model.Parent then
-     FCharF_RA(TA.cur.guid, TA.cur.hrp)
-     FCharF_RA(TA.cur.guid, TA.cur.hrp)
-    end
-
-    task.wait(0.1)  -- 10x/detik
+  -- ── COMBAT LOCK (Heartbeat) ────────────────────────────────
+  -- Sesuai standalone: kunci musuh nempel 3 stud di belakang player tiap frame,
+  -- nolkan velocity agar tidak geser — musuh ikut irama animasi serangan player
+  local _raLockConn = RunService.Heartbeat:Connect(function()
+   if not RA.running then return end
+   if not RA.cur or not IsTargetAliveRA(RA.cur) then return end
+   local char = LP.Character
+   local pHRP = char and char:FindFirstChild("HumanoidRootPart")
+   local eHRP = RA.cur.hrp
+   if pHRP and eHRP then
+    pcall(function()
+     eHRP.CFrame = pHRP.CFrame * CFrame.new(0, 0, 3)
+     eHRP.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+     eHRP.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    end)
    end
   end)
-  RA.threads = {tChar}
+  RA._lockConn = _raLockConn
+
+  -- ── MAIN THREAD ───────────────────────────────────────────
+  -- Sesuai standalone: cari target random, ganti saat mati, sniper pre-lock RA.next
+  local tMain = task.spawn(function()
+   RA.cur = PickRandomEnemy({})
+   if RA.cur then
+    TpToRA(RA.cur)
+    RAFreezePlayer()
+    WatchEnemyRA(RA.cur)
+    local hum = RA.cur.model:FindFirstChildOfClass("Humanoid")
+    if hum then
+     local capturedGuid = RA.cur.guid
+     hum.Died:Connect(function()
+      RA.killed = RA.killed + 1
+      if RA.cur and RA.cur.guid == capturedGuid then RA.cur = nil end
+     end)
+    end
+    LockNextTarget()
+   end
+   while RA.running do
+    if not RA.cur or not IsTargetAliveRA(RA.cur) then
+     local _oldGuid = RA.cur and RA.cur.guid
+     if _oldGuid then
+      StopHeroAtkThreadFor(_oldGuid)
+      _deadG_F[_oldGuid] = nil
+     end
+     -- [SNIPER] Eksekusi RA.next, validasi langsung ke workspace
+     RA.cur = IsTargetAliveRA(RA.next) and RA.next or PickRandomEnemy({})
+     RA.next = nil
+     if RA.cur then
+      TpToRA(RA.cur)
+      RAFreezePlayer()
+      WatchEnemyRA(RA.cur)
+      local hum = RA.cur.model:FindFirstChildOfClass("Humanoid")
+      if hum then
+       local capturedGuid = RA.cur.guid
+       hum.Died:Connect(function()
+        RA.killed = RA.killed + 1
+        if RA.cur and RA.cur.guid == capturedGuid then RA.cur = nil end
+       end)
+      end
+      LockNextTarget()
+     end
+    end
+    -- Refresh RA.next tiap tick: kalau sudah mati, lock ulang
+    if not IsTargetAliveRA(RA.next) then LockNextTarget() end
+    task.wait(0.15)
+   end
+  end)
+
+  -- ── SPAM THREAD ───────────────────────────────────────────
+  -- Sesuai standalone: spam RE_Atk (PlayerClickAttackSkill) tiap 1 frame
+  -- Tambahan V76: co-attack target TA jika aktif, 2x lipat
+  local tSpam = task.spawn(function()
+   while RA.running do
+    if RA.cur and IsTargetAliveRA(RA.cur) and RE.Atk then
+     local guid = RA.cur.guid
+     pcall(function() RE.Atk:FireServer({attackEnemyGUID=guid}) end)
+    end
+    -- Co-attack target TA jika aktif, 2x lipat
+    if TA.running and TA.cur and IsTargetAliveRA(TA.cur) then
+     FCharF_RA(TA.cur.guid, TA.cur.hrp)
+     FCharF_RA(TA.cur.guid, TA.cur.hrp)
+    end
+    task.wait()  -- 1 frame
+   end
+  end)
+
+  -- ── CLICK THREAD ──────────────────────────────────────────
+  -- Sesuai standalone: spam RE_Click (ClickEnemy InvokeServer) tiap 1 frame
+  local tClick = task.spawn(function()
+   while RA.running do
+    if RA.cur and IsTargetAliveRA(RA.cur) and RE.Click then
+     local guid = RA.cur.guid
+     local pos  = RA.cur.hrp.Position
+     task.spawn(function()
+      pcall(function() RE.Click:InvokeServer({enemyGuid=guid, enemyPos=pos}) end)
+     end)
+    end
+    task.wait()  -- 1 frame
+   end
+  end)
+
+  RA.threads = {tMain, tSpam, tClick}
   StartCollectF(function() return RA.running end)
  end
 
  local function StopRA()
   RA.running = false
+  -- [COMBAT LOCK] Disconnect Heartbeat connection dulu
+  if RA._lockConn then
+   pcall(function() RA._lockConn:Disconnect() end)
+   RA._lockConn = nil
+  end
   for _,t in ipairs(RA.threads) do pcall(function() task.cancel(t) end) end
-  -- [FIX] Stop hero-attack thread untuk target RA (dipicu via FireAllDamage di FCharF_RA)
   if RA.cur and RA.cur.guid then StopHeroAtkThreadFor(RA.cur.guid) end
   RA.threads={}; RA.cur=nil; RA.next=nil
-  -- [FIX] Disconnect semua HumanoidDied listener RA
   for _,c in ipairs(_raDiedConns or {}) do pcall(function() c:Disconnect() end) end
   _raDiedConns = {}
-  -- [FIX] Unfreeze player hanya jika TA juga tidak running
-  if not TA.running then UnfreezePlayer() end
+  -- Unfreeze: restore WalkSpeed + JumpPower, hanya jika TA juga tidak running
+  if not TA.running then
+   local char = LP.Character
+   local hum = char and char:FindFirstChildOfClass("Humanoid")
+   if hum then
+    hum.WalkSpeed = _walkSpeedState or 16
+    hum.JumpPower = 50
+   end
+   UnfreezePlayer()
+  end
  end
 
  -- StartTA By ID — target spesifik GUID, stop jika mati
@@ -5720,47 +5656,7 @@ do
     end
    end
   end)
-  -- [SIDEKICK] Thread paralel: lock 1 musuh random (bukan TA.cur), serang tanpa teleport
-  -- Hanya 1 musuh sidekick aktif sekaligus — ganti saat mati, stop hero thread lama dulu
-  local tSide = task.spawn(function()
-   local sideGuid = nil  -- GUID musuh sidekick yang sedang aktif
-   while TA.running do
-    local mainGuid = TA.cur and TA.cur.guid
-    -- Cek apakah sidekick saat ini masih valid (hidup & bukan target utama)
-    local sideStillValid = false
-    if sideGuid and sideGuid ~= mainGuid then
-     local h = GetEnemiesF()
-     for _,e in ipairs(h) do
-      if e.guid == sideGuid and not IsDeadF(e) then
-       sideStillValid = true
-       FCharF_RA(e.guid, e.hrp)
-       break
-      end
-     end
-    end
-    -- Kalau sidekick mati / jadi target utama / belum ada → pilih 1 random baru
-    if not sideStillValid then
-     -- Stop hero thread sidekick lama dulu
-     if sideGuid then StopHeroAtkThreadFor(sideGuid) end
-     sideGuid = nil
-     local pool = {}
-     for _,e in ipairs(GetEnemiesF()) do
-      if not IsDeadF(e) and e.guid ~= mainGuid then
-       table.insert(pool, e)
-      end
-     end
-     if #pool > 0 then
-      local pick = pool[math.random(1, #pool)]
-      sideGuid = pick.guid
-      FCharF_RA(pick.guid, pick.hrp)
-     end
-    end
-    task.wait(0.1)
-   end
-   -- Cleanup saat stop
-   if sideGuid then StopHeroAtkThreadFor(sideGuid) end
-  end)
-  TA.threads = {tChar, tSide}
+  TA.threads = {tChar}
   StartCollectF(function() return TA.running end)
  end
 
@@ -5833,45 +5729,7 @@ do
    -- Cleanup listener saat loop selesai
    if _diedConn then pcall(function() _diedConn:Disconnect() end) end
   end)
-  -- [SIDEKICK] Thread paralel: lock 1 musuh random (bukan TA.cur), serang tanpa teleport
-  -- Hanya 1 musuh sidekick aktif sekaligus — ganti saat mati, stop hero thread lama dulu
-  local tSide = task.spawn(function()
-   local sideGuid = nil
-   while TA.running do
-    local mainGuid = TA.cur and TA.cur.guid
-    -- Cek apakah sidekick saat ini masih valid (hidup & bukan target utama)
-    local sideStillValid = false
-    if sideGuid and sideGuid ~= mainGuid then
-     for _,e in ipairs(GetEnemiesF()) do
-      if e.guid == sideGuid and not IsDeadF(e) then
-       sideStillValid = true
-       FCharF_RA(e.guid, e.hrp)
-       break
-      end
-     end
-    end
-    -- Kalau sidekick mati / jadi target utama / belum ada → pilih 1 random baru
-    if not sideStillValid then
-     if sideGuid then StopHeroAtkThreadFor(sideGuid) end
-     sideGuid = nil
-     local pool = {}
-     for _,e in ipairs(GetEnemiesF()) do
-      if not IsDeadF(e) and e.guid ~= mainGuid then
-       table.insert(pool, e)
-      end
-     end
-     if #pool > 0 then
-      local pick = pool[math.random(1, #pool)]
-      sideGuid = pick.guid
-      FCharF_RA(pick.guid, pick.hrp)
-     end
-    end
-    task.wait(0.1)
-   end
-   -- Cleanup saat stop
-   if sideGuid then StopHeroAtkThreadFor(sideGuid) end
-  end)
-  TA.threads = {tChar, tSide}
+  TA.threads = {tChar}
   StartCollectF(function() return TA.running end)
  end
 
@@ -5891,13 +5749,11 @@ do
 
  -- ── GUI ──────────────────────────────────────────────────────
 
- -- ═══════════════════════════════════════════════════════════
  -- ENEMY HP MONITOR - HP, persentase + STOPWATCH manual
  -- Tombol START: mulai timer dari 0
  -- Tombol STOP : pause timer (bisa dilanjut lagi)
  -- Tombol RESET: reset timer ke 0 dan pause
  -- HP bar update otomatis dari ShowEnemyTakeDamageInfo
- -- ═══════════════════════════════════════════════════════════
  do
   local _ehpLastEnemyId = nil
   local _ehpMaxHp       = 0
@@ -6103,7 +5959,6 @@ do
   end)
 
  end -- end Enemy HP Monitor block
- -- ═══════════════════════════════════════════════════════════
 
  local _, SetRA, SetRAVis = ToggleRow(p, "Random Attack", "Attack Enemy", 1, function(on)
   _raRunningState = on
@@ -6381,9 +6236,7 @@ do
  end)
 end
 
--- ============================================================
 -- PANEL : ATTACK
--- ============================================================
 do
  local p = NewPanel("attack")
 
@@ -6620,9 +6473,7 @@ do
 
 end
 
--- ============================================================
 -- PANEL : PLAYER
--- ============================================================
 do
  local p = NewPanel("player")
 
@@ -6635,7 +6486,7 @@ do
 
  task.spawn(function()
  while ScreenGui and ScreenGui.Parent do
- PingWait(1)
+ task.wait(1)
  local utc=os.time(); local wib=utc+(7*3600)
  local h=math.floor(wib/3600)%24; local m=math.floor(wib/60)%60; local s=wib%60
  local wibStr=string.format("%02d:%02d:%02d",h,m,s)
@@ -6762,7 +6613,7 @@ do
   local interval = 180 + _rng:NextInteger(0, 120)
   local waited = 0
   while waited < interval and STATE.antiAfk do
-  PingWait(1); waited = waited + 1
+  task.wait(1); waited = waited + 1
   end
   if not STATE.antiAfk then break end
   pcall(function()
@@ -6772,7 +6623,7 @@ do
   local hrp = char:FindFirstChild("HumanoidRootPart")
   if not hum or hum.Health <= 0 then return end
   pcall(function()
-  if hum then hum:Move(Vector3.new(0.001,0,0)); PingWait(0.05); hum:Move(Vector3.new(0,0,0)) end
+  if hum then hum:Move(Vector3.new(0.001,0,0)); task.wait(0.05); hum:Move(Vector3.new(0,0,0)) end
   end)
   pcall(function()
   if hrp then
@@ -6780,34 +6631,33 @@ do
   local dx = (_rng:NextNumber() - 0.5) * 0.05
   local dz = (_rng:NextNumber() - 0.5) * 0.05
   hrp.CFrame = cf * CFrame.new(dx, 0, dz)
-  PingWait(0.05)
+  task.wait(0.05)
   hrp.CFrame = cf
   end
   end)
-  PingWait(0.1)
+  task.wait(0.1)
   pcall(function()
   local cam = workspace.CurrentCamera
   if cam and cam.CameraType == Enum.CameraType.Custom then
   local cf = cam.CFrame
   cam.CFrame = cf * CFrame.Angles(0, 0.0001 * (_rng:NextNumber() - 0.5), 0)
-  PingWait(0.05)
+  task.wait(0.05)
   cam.CFrame = cf
   end
   end)
-  PingWait(0.05)
+  task.wait(0.05)
   pcall(function()
   local now = tick()
   if (now - _lastRemoteUse) >= 60 then
   _lastRemoteUse = now
   local safe = Remotes:FindFirstChild("GetRaidTeamInfos") or Remotes:FindFirstChild("GetCityRaidInfos")
-  PingGuard()
   if safe then pcall(function() safe:InvokeServer() end) end
   end
   end)
   pcall(function()
   if VIM then
   VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-  PingWait(0.04 + _rng:NextNumber() * 0.06)
+  task.wait(0.04 + _rng:NextNumber() * 0.06)
   VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
   end
   end)
@@ -6822,27 +6672,9 @@ do
   _setAntiAfkToggle = _s
   _visAntiAfk = _v
  end
- SectionHeader(p,"OTHER",10)
- local rejoinCard=Frame(p,C.SURFACE,UDim2.new(1,0,0,50))
- rejoinCard.LayoutOrder=11; Corner(rejoinCard, 10); Stroke(rejoinCard,C.BORD, 1.5,0.88); Padding(rejoinCard,8,8,12,8)
- local rejoinLbl=Label(rejoinCard,"REJOIN SERVER",12,C.TXT,Enum.Font.GothamBold)
- rejoinLbl.Size=UDim2.new(0.65,0,0,18); rejoinLbl.Position=UDim2.new(0,0,0,6)
- local rejoinSub=Label(rejoinCard,"Reconnect Same Server",10,C.TXT3,Enum.Font.GothamBold)
- rejoinSub.Size=UDim2.new(0.85,0,0,14); rejoinSub.Position=UDim2.new(0,0,0,26)
- local rejoinBtn=Btn(rejoinCard,C.ACC,UDim2.new(0,70,0,30))
- rejoinBtn.Position=UDim2.new(1,-76,0.5,-15); Corner(rejoinBtn, 10); Stroke(rejoinBtn,C.ACC2, 1.5,0.2)
- local rejoinBtnLbl=Label(rejoinBtn,"REJOIN",12,C.BLACK,Enum.Font.GothamBold,Enum.TextXAlignment.Center)
- rejoinBtnLbl.Size=UDim2.new(1,0,1,0)
- rejoinBtn.MouseButton1Click:Connect(function()
- rejoinBtnLbl.Text = "..."; 
-    PingWait(0.5); 
-    if RejoinServer then RejoinServer() end
- end)
 end
 
--- ============================================================
 -- PANEL : HERO FASTROLL
--- ============================================================
 do
  local p = NewPanel("autoroll")
  local hrOpen = false
@@ -7080,9 +6912,9 @@ do
    -- Tunggu GUID tersedia
    if not (_HR_RPT.guid and _HR_RPT.guid ~= "") then
     for i=1,3 do _HR_RPT.SetSlot(i,"[..] Klik 1x di Mesin Reroll dulu",Color3.fromRGB(180,220,255)) end
-    while _HR_RPT.x100 and not (_HR_RPT.guid and _HR_RPT.guid ~= "") do PingWait(0.5) end
+    while _HR_RPT.x100 and not (_HR_RPT.guid and _HR_RPT.guid ~= "") do task.wait(0.5) end
     if not _HR_RPT.x100 then return end
-    PingWait(1.5)
+    task.wait(1.5)
    end
    -- Validasi remote
    if not RE.AutoHeroQuirk then
@@ -7170,7 +7002,6 @@ do
        _HR_RPT.SetSlot(si,"[x100] Slot"..si.." #"..attempt.."..",Color3.fromRGB(100,200,255))
        _ourCall = true
        local ok, res = pcall(function()
-        PingGuard()
         return RE.AutoHeroQuirk:InvokeServer({
          heroGuid = _HR_RPT.guid,
          drawId = drawId,
@@ -7196,7 +7027,7 @@ do
       end
      end
     end
-    PingWait(0.05)
+    task.wait(0.05)
    end
   end)
  end
@@ -7235,9 +7066,7 @@ do
  end)
 end
 
--- ============================================================
 -- PANEL : WEAPON FASTROLL
--- ============================================================
 do
  local p = Panels["autoroll"]
  local wrOpen = false
@@ -7453,9 +7282,9 @@ do
    -- Tunggu GUID tersedia
    if not (_WR_RPT.guid and _WR_RPT.guid ~= "") then
     for i = 1, 3 do _WR_RPT.SetSlot(i, "[..] Klik 1x di Mesin Reroll dulu", Color3.fromRGB(180,220,255)) end
-    while _WR_RPT.x100 and not (_WR_RPT.guid and _WR_RPT.guid ~= "") do PingWait(0.5) end
+    while _WR_RPT.x100 and not (_WR_RPT.guid and _WR_RPT.guid ~= "") do task.wait(0.5) end
     if not _WR_RPT.x100 then return end
-    PingWait(1.5)
+    task.wait(1.5)
    end
    -- Validasi remote
    if not RE.AutoWeaponQuirk then
@@ -7542,7 +7371,6 @@ do
        _WR_RPT.SetSlot(si, "[x100] Slot"..si.." #"..attempt.."..", Color3.fromRGB(100,200,255))
        _ourCall = true
        local ok, res = pcall(function()
-        PingGuard()
         return RE.AutoWeaponQuirk:InvokeServer({
          guid = _WR_RPT.guid,
          drawId = drawId,
@@ -7567,7 +7395,7 @@ do
       end
      end
     end
-    PingWait(0.05)
+    task.wait(0.05)
    end
   end)
  end
@@ -7607,9 +7435,7 @@ do
  end)
 end
 
--- ============================================================
 -- PANEL : AUTO ROLL - PET GEAR
--- ============================================================
 do
  local p = Panels["autoroll"]
  local pgOpen = false
@@ -7744,9 +7570,7 @@ do
   DoAutoRollPetGear(msi_l, enOn)
  end)
 
- -- ============================================================
  -- [v38] 100x Reroll Toggle Row
- -- ============================================================
  local r100Row = Frame(mCard, C.BG2, UDim2.new(1,0,0,34))
  r100Row.LayoutOrder = 6; Corner(r100Row, 10); Stroke(r100Row, Color3.fromRGB(0,180,200), 1.5, 0.7)
 
@@ -7826,9 +7650,7 @@ do
  end)
 end
 
--- ============================================================
 -- PANEL : AUTO ROLL - HALO
--- ============================================================
 do
  local p = Panels["autoroll"]
  local haloOpen = false
@@ -7922,9 +7744,7 @@ do
  end)
 end
 
--- ============================================================
 -- PANEL : AUTO ROLL - ORNAMENT
--- ============================================================
 do
  local p = Panels["autoroll"]
  local ornOpen = false
@@ -8059,9 +7879,7 @@ do
  -- [v243] Merge & Use Potion dipindah ke panel MAIN (di bawah Auto Sell HeroEquip)
  local p = Panels["main"]
 
- -- ============================================================
  -- POTION DATA
- -- ============================================================
  local MERGE_POTIONS = {
  {name="Small Attack Potion", id=10048},
  {name="Small Gold Potion", id=10049},
@@ -8083,7 +7901,6 @@ do
  {name="Super Potion Luck", id=10059},
  }
 
- -- ============================================================
  -- HELPER: Dropdown list (arah ke bawah, single-select)
  -- [v243 FIX] Bug dropdown tidak bisa pilih item:
  -- Root cause: UserInputService.InputBegan terpicu lebih dulu dari
@@ -8091,7 +7908,6 @@ do
  -- Saat user klik item -> handler item jalan dulu (ZIndex lebih tinggi),
  -- backdrop tidak pernah racing dengan item click sama sekali.
  -- Default sel = nil (kosong) agar user pilih sendiri.
- -- ============================================================
  local _activeDD = nil
 
  local function MakeDropdown(parent, options, onChange)
@@ -8188,9 +8004,7 @@ do
  return wrap, GetSelected
  end
 
- -- ============================================================
  -- HELPER: Slider (min..max, step 1)
- -- ============================================================
  local function MakeSlider(parent, minV, maxV, defaultV, onChange)
  local val = defaultV or minV
  local wrap = Frame(parent, C.BLACK, UDim2.new(1,0,0,32))
@@ -8246,9 +8060,7 @@ do
  return wrap, GetVal
  end
 
- -- ============================================================
  -- PANEL: AUTO MERGE POTION
- -- ============================================================
  local mergeOpen = false
  local mergeHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
  mergeHeader.LayoutOrder = 10; Corner(mergeHeader, 10); Stroke(mergeHeader,C.BORD, 1.5,0.88)
@@ -8347,11 +8159,10 @@ do
  if _mergeStatusLbl then _mergeStatusLbl.Text = "[M] Merging id=" .. id .. " x" .. cnt end
  pcall(function()
  local re = Remotes:FindFirstChild("PotionMerge")
- PingGuard()
  if re then re:InvokeServer({id=id, count=cnt}) end
  end)
  if _mergeStatusLbl then _mergeStatusLbl.Text = "[OK] Merge DONE x" .. cnt end
- PingWait(0.5)
+ task.wait(0.5)
  end
  if _mergeStatusLbl then _mergeStatusLbl.Text = "Idle - toggle OFF" end
  end)
@@ -8372,9 +8183,7 @@ do
  end)
  task.defer(ResizeMergeBody)
 
- -- ============================================================
  -- PANEL: AUTO USE POTION
- -- ============================================================
  local useOpen = false
  local useHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,38))
  useHeader.LayoutOrder = 12; Corner(useHeader, 10); Stroke(useHeader,C.BORD, 1.5,0.88)
@@ -8472,11 +8281,10 @@ do
  if _useStatusLbl then _useStatusLbl.Text = "[U] Using id=" .. id .. " x" .. cnt end
  pcall(function()
  local re = Remotes:FindFirstChild("UseItem")
- PingGuard()
  if re then re:InvokeServer({useCount=cnt, itemId=id}) end
  end)
  if _useStatusLbl then _useStatusLbl.Text = "[OK] Use DONE x" .. cnt end
- PingWait(0.5)
+ task.wait(0.5)
  end
  if _useStatusLbl then _useStatusLbl.Text = "Idle - toggle OFF" end
  end)
@@ -8500,7 +8308,6 @@ do
 end
 
 
--- ============================================================
 do -- [FIX] AutoRaid+Webhook: isolated scope
 -- AUTO RAID : LOGIC (Data dari RaidSniffer v2)
 -- Format confirmed:
@@ -8515,7 +8322,6 @@ do -- [FIX] AutoRaid+Webhook: isolated scope
 -- }
 -- }
 -- }
--- ============================================================
 
 -- RAID_LIVE: [raidId] = {raidId, mapId, spawnName, rank, label}
 RAID_LIVE = {}
@@ -8685,11 +8491,9 @@ function GetRaidMapNum(mapId)
 end
 end -- chat listener + grade cache
 
--- ============================================================
 -- GRADE CACHE & PARSER
 -- Sumber grade: TipsFloatingPanel (primer) + chat history (backup)
 -- Structure: TipsFloatingPanel > PopupFrame > PopupBg > ContentBg > TextLabel
--- ============================================================
 
 GRADE_LIST = {"E","D","C","B","A","S","SS","G","N","M","M+","M++","XM","ULT"}
 _runeGradeCache = {} -- {[mapNum]=grade} - diisi dari popup/chat
@@ -8705,7 +8509,6 @@ GRADE_RANK = {
 -- RAID_CONFIG_GRADE: Formula grade dari raidId
 -- RAID_NORMAL (930001-934999): (raidId - 930001) % 10 -> index ke grade
 -- ASC_TOWER  (935001+)       : raidId % 100 -> index ke grade (CONFIRMED sniffer)
---
 -- GRADE INDEX MAP (shared):
 --  1=E  2=D  3=C  4=B  5=A  6=S  7=SS  8=G  9=N  10=M  11=M+  12=M++  13=XM  14=ULT  15=GOD
 local _GRADE_IDX = {"E","D","C","B","A","S","SS","G","N","M","M+","M++","XM","ULT","GOD"}
@@ -8738,12 +8541,10 @@ function ParseChatLine(text)
  if type(text) ~= "string" or #text < 3 then return end
  text = text:gsub("<[^>]+>",""):gsub("[\r\n]+"," "):match("^%s*(.-)%s*$") or text
 
- -- ============================================================
  -- CONFIRMED dari sniffer: TipsPanel kirim 1 baris lengkap untuk keduanya:
  -- Normal : "The MaFissure appeared in 6,Orc Palace [B]"
  -- AT     : "The MaFissure appeared in Ascension Tower 4 - [Monarch] Grendal+1 [E]"
  -- Grade SELALU ada di bracket TERAKHIR dalam teks.
- -- ============================================================
  if text:find("MaFissure",1,true) and text:find("appeared",1,true) then
 
   -- Helper: ambil grade dari bracket TERAKHIR dalam teks
@@ -8875,7 +8676,7 @@ end
 --  PRIMER: TipsFloatingPanel detector (GHOST POLLING - 100% ANTI CRASH)
 task.spawn(function()
     local _lastTexts = {}
-    while PingWait(0.3) do
+    while task.wait(0.3) do
         pcall(function()
             local pg = LP.PlayerGui
             for _, panel in ipairs(pg:GetChildren()) do
@@ -8903,7 +8704,7 @@ task.spawn(function()
  local TCS = game:GetService("TextChatService")
  -- Tunggu TextChannels ready max 10 detik
  local _w = 0
- repeat PingWait(0.5); _w = _w + 0.5
+ repeat task.wait(0.5); _w = _w + 0.5
  until TCS:FindFirstChild("TextChannels") or _w >= 10
 
  local channels = TCS:FindFirstChild("TextChannels")
@@ -8932,7 +8733,7 @@ task.spawn(function()
  end
 
  for _, ch in ipairs(channels:GetChildren()) do watchChannel(ch) end
- channels.ChildAdded:Connect(function(ch) task.spawn(function() PingWait(0.1); watchChannel(ch) end) end)
+ channels.ChildAdded:Connect(function(ch) task.spawn(function() task.wait(0.1); watchChannel(ch) end) end)
 
  -- Scan history awal saat startup (silent, jangan trigger webhook)
  task.wait(5)
@@ -8985,7 +8786,7 @@ task.spawn(function()
  -- Watch yang baru muncul
  ec.ChildAdded:Connect(function(obj)
  task.spawn(function()
-  PingWait(4) -- tunggu teks penuh (sudah pindah ke history)
+  task.wait(4) -- tunggu teks penuh (sudah pindah ke history)
   checkBodyText(obj)
  end)
  end)
@@ -9002,10 +8803,8 @@ IsAnniversaryEntry=nil; _WH_resolveGrade=nil
 local _whFlushBuffer = nil -- forward declare agar FlushWebhookPending bisa akses
 do -- [FIX] webhook + raid logic wrapped to free top-level locals
 
--- ============================================================
 -- WEBHOOK SYSTEM - Bersih, akurat, executor-agnostic
 -- Kirim notif ke Discord/Telegram saat Raid atau Siege OPEN
--- ============================================================
 _WH = {}
 
 -- Helper: dapatkan request function (support semua executor)
@@ -9079,11 +8878,9 @@ local function _doSend(url, text)
 end
 
 -- Kirim notif Raid ke webhook
--- ============================================================
 -- WEBHOOK SYSTEM v2 - Pure TipsPanel
 -- Buffer teks langsung dari TipsPanel, kirim ke Discord/Telegram
 -- Tidak ada ketergantungan RAID_LIVE / ASC_LIVE apapun
--- ============================================================
 
 -- Buffer: teks mentah dari TipsPanel, diisi ParseChatLine
 -- { text = "The MaFissure appeared in ...", isAT = bool, time = tick() }
@@ -9150,7 +8947,7 @@ end
 -- tidak peduli apakah kontennya sama atau berbeda dengan event sebelumnya.
 -- Script tidak boleh jadi "pihak ke-3" yang memblokir notif server.
 task.spawn(function()
- while PingWait(_WH_SENT_TTL) do
+ while task.wait(_WH_SENT_TTL) do
   _whResetSentCache()
  end
 end)
@@ -9341,18 +9138,14 @@ SendWebhookRaid  = function(url) _whFlushBuffer(url) end
 _WH.SendSiege = function() end -- [v52] removed: SIEGE webhook disabled
 SendWebhookSiege = function() end -- [v52] removed: alias stub
 
--- [v_FIX] Deklarasi duplikat _whLastSent dihapus - sudah ada di atas (baris 7565)
 -- [WEBHOOK PURE] TriggerWebhookDebounce tidak dipakai lagi
 -- Webhook sekarang dikirim langsung dari ParseChatLine via _WH.AddLine
 TriggerWebhookDebounce = function() end -- no-op, compat
 SendWebhookNotif = TriggerWebhookDebounce -- alias untuk kompatibilitas
 
--- ============================================================
 -- [v58] ENTRY WAKEUP DEBOUNCE - Gerbang masuk terpusat
--- ============================================================
 -- Semua sumber notif (chat parser, workspace watcher, UpdateRaidInfo server)
 -- wajib memanggil TriggerEntryWakeup() dan TIDAK boleh langsung fire wakeup.
---
 -- Cara kerja:
 --   1. Notif masuk -> data langsung masuk RAID_LIVE (seperti biasa)
 --   2. TriggerEntryWakeup() dipanggil -> timer di-reset ke 3 detik
@@ -9361,7 +9154,6 @@ SendWebhookNotif = TriggerWebhookDebounce -- alias untuk kompatibilitas
 --   5. RAID dan ASC masing-masing cek filter mereka sendiri dan masuk jika cocok
 --   6. Karena keduanya dibangunkan dari titik yang SAMA setelah data stabil,
 --      tidak ada race condition - siapa yang resolve entry lebih dulu itulah yang masuk
---
 -- Keuntungan vs v57:
 --   - Tidak perlu _ascPending flag
 --   - Tidak ada pembedaan "ini notif ASC, jangan bangunkan RAID" yang rapuh
@@ -9406,14 +9198,12 @@ TriggerEntryWakeup = function()
             end
         end
 
-        -- ============================================================
         -- [v62 RINO/RINI FIX] "Si Pemanggil" memutuskan siapa yang dipanggil
         -- SEBELUM wakeup dikirim ke siapapun:
         --   Cek RAID_LIVE apakah ada Ascension Tower entry.
         --   Jika ada + ASC toggle ON  -> _eventOwner = "asc"  -> hanya ASC yang dibangunkan
         --   Jika tidak / ASC OFF      -> _eventOwner = "raid" -> hanya RAID yang dibangunkan
         -- Dengan ini tidak ada race: yang tidak dipanggil tidak pernah bangun sama sekali.
-        -- ============================================================
         local _hasAscEntry = false
         if ASC and ASC.running then
             for rid, ent in pairs(RAID_LIVE) do
@@ -9443,7 +9233,6 @@ TriggerEntryWakeup = function()
         end
     end)
 end
--- ============================================================
 FlushWebhookPending = function()
  -- Reset cooldown dan flush buffer yang ada
  _whLastSent = 0
@@ -9464,7 +9253,7 @@ _WH.SendCustomMessage = function(url, msg, onDone, onFail)
  end
  task.spawn(function()
   local ok, errMsg = _doSend(url, msg)
-  PingWait(0.3)
+  task.wait(0.3)
   if ok then
    if onDone then onDone() end
   else
@@ -9683,15 +9472,11 @@ function GetBestGrade(mapNum, isAscension)
 end
 
 
---
 -- Sumber 1 (UTAMA) - workspace.Maps.Map.RaidEnter:
 -- ChildAdded di RE1001/RE1002 -> RaidEnterX muncul = raid Map X buka
--- ChildRemoved di RE1001/RE1002 -> RaidEnterX hilang = raid Map X tutup
 -- INSTANT, tidak bisa miss/stale.
---
 -- Sumber 2 (raidId saja) - UpdateRaidInfo remote:
 -- Hanya untuk dapat raidId yang dibutuhkan CreateRaidTeam.
--- ============================================================
 
 _WH.raidConns = {}
 
@@ -9753,7 +9538,7 @@ local function _onRaidChildAdded(child, slotName)
  -- [v_FIX] Webhook langsung dari workspace watcher
  if not _whSilent and _webhookEnabled and _webhookUrl and _webhookUrl ~= "" then
   task.spawn(function()
-   PingWait(0.5)
+   task.wait(0.5)
    for _, ent in pairs(RAID_LIVE) do
     if ent.label and ent.label ~= "" and _WH and _WH.AddLine then
      -- [v36 FIX] Skip Anniversary Celebration
@@ -9805,7 +9590,7 @@ local function _watchRaidSlot(reFolder)
  _onRaidChildAdded(child, reFolder.Name)
  -- [v268] Scan RaidCoolingGui untuk dapat grade dari ValueText/TextLabel
  task.spawn(function()
- PingWait(1) -- tunggu descendants terisi
+ task.wait(1) -- tunggu descendants terisi
  pcall(function()
  -- Scan semua TextLabel di dalam child (RaidEnterX atau RaidCoolingGui)
  local function scanForGrade(obj)
@@ -10092,7 +9877,7 @@ task.spawn(function() ConnectRaidListeners() end)
 task.spawn(function()
  local lastRef = Remotes:FindFirstChild("UpdateRaidInfo")
  while ScreenGui.Parent do
- PingWait(3)
+ task.wait(3)
  local cur = Remotes:FindFirstChild("UpdateRaidInfo")
  if cur ~= lastRef then
  lastRef = cur
@@ -10164,9 +9949,7 @@ function RaidCounterUpdate()
  if RAID.suksesLbl then RAID.suksesLbl.Text = tostring(RAID.sukses) end
 end
 
--- ============================================================
 -- AUTO ASCENSION : LOGIC
--- ============================================================
 function StopAscension()
  ASC.running = false
  ASC.inMap   = false
@@ -10285,15 +10068,11 @@ function StartAscensionLoop()
  -- ResolveAscEntry: Pick Mode logic IDENTIK dengan AUTO RAID
  -- Semua mode locked kecuali Manual -> hanya masuk Tower terkecil
  -- Manual: PREFERRED MAP + PREFERRED RANK aktif, fallback ke terkecil jika tidak match
- -- ============================================================
  -- ResolveAscEntry: 100% IDENTIK dengan ResolveEntry (Auto Raid Normal)
  -- Satu-satunya perbedaan: pakai ASC.* dan ascList (mapNum) bukan RAID_ID_LIST (mapId)
  -- MapId masuk ke tower tetap 503xx — tidak diubah di sini
- -- ============================================================
  -- Return: entry (match), nil+"no_tower" (tidak ada tower), nil+"no_match" (ada tower tapi filter tidak cocok)
- -- ============================================================
  -- LIST ENTRY ASC: cari tower yang match list, fallback ke Pick Mode
- -- ============================================================
  local function ResolveAscEntryFromList()
   if not ASC.listEnabled then return nil end
   if #ASC.listEntries == 0 then return nil end
@@ -10431,9 +10210,7 @@ function StartAscensionLoop()
    return pickLowest(list)
   end
 
-  -- ============================================================
   -- MANUAL MODE — identik RAID: 3 tahap, fallback ke terkecil
-  -- ============================================================
   if pm == "manual" then
    ASC.manualMatchMode = "none"
    local valid_asc = {}
@@ -10486,9 +10263,7 @@ function StartAscensionLoop()
    return valid_asc[1]
   end
 
-  -- ============================================================
   -- BYRANK + BYMAP + hasPick: identik RAID
-  -- ============================================================
   if hasPick then
    local matched2 = {}
    for _, r in ipairs(ascList) do
@@ -10523,35 +10298,35 @@ function StartAscensionLoop()
     if MODE.current == "dungeon" or (DUNGEON and DUNGEON.interrupt) then
      ASC.inMap = false
      AscStatusUpdate("[||] Dungeon aktif - menunggu...", Color3.fromRGB(255,140,0))
-     while (MODE.current == "dungeon" or (DUNGEON and DUNGEON.interrupt)) and ASC.running do PingWait(0.5) end
+     while (MODE.current == "dungeon" or (DUNGEON and DUNGEON.interrupt)) and ASC.running do task.wait(0.5) end
      if not ASC.running then break end
      AscStatusUpdate("> Dungeon selesai - lanjut Ascension...", C.ACC3)
-     PingWait(0.1)
+     task.wait(0.1)
     end
 
     if ST2 and (ST2.running or ST2.inMap) then
      ASC.inMap = false
      AscStatusUpdate("[||] Tower aktif - Ascension pause...", Color3.fromRGB(255,140,0))
-     while ST2 and (ST2.running or ST2.inMap) and ASC.running do PingWait(0.5) end
+     while ST2 and (ST2.running or ST2.inMap) and ASC.running do task.wait(0.5) end
      if not ASC.running then break end
      AscStatusUpdate("> Tower selesai - lanjut Ascension...", C.ACC3)
-     PingWait(0.1)
+     task.wait(0.1)
     end
 
     if (SIEGE and (SIEGE.inMap or SIEGE.teleporting)) or _siegeInterrupt then
      ASC.inMap = false
      AscStatusUpdate("[||] Siege aktif - Ascension pause...", Color3.fromRGB(255,140,0))
-     while ((SIEGE and (SIEGE.inMap or SIEGE.teleporting)) or _siegeInterrupt) and ASC.running do PingWait(0.5) end
+     while ((SIEGE and (SIEGE.inMap or SIEGE.teleporting)) or _siegeInterrupt) and ASC.running do task.wait(0.5) end
      if not ASC.running then break end
      AscStatusUpdate("> Siege selesai - lanjut Ascension...", C.ACC3)
-     PingWait(0.1)
+     task.wait(0.1)
     end
 
     -- Blokir jika di dalam map RAID Normal atau Siege (bukan Ascension Tower sendiri)
     local curWm = workspace:GetAttribute("MapId") or 0
     if (curWm >= 50101 and curWm <= 50120) or (curWm >= 50201 and curWm <= 50205) or curWm == 50303 then
      AscStatusUpdate("[||] Sedang di dalam map lain - tunggu...", Color3.fromRGB(255,140,0))
-     PingWait(3); break
+     task.wait(3); break
     end
 
     -- [v48] Resolve entry berdasarkan Pick Mode
@@ -10571,7 +10346,7 @@ function StartAscensionLoop()
       end)
      end
      while ASC.running and not _fbDone do
-      PingWait(0.5)
+      task.wait(0.5)
       -- Cek apakah sekarang ada match (event baru bisa datang)
       local _recheck, _recheckReason = ResolveAscEntry()
       if _recheck then _fbDone = true; raidEntry = _recheck end
@@ -10650,7 +10425,7 @@ function StartAscensionLoop()
      end
      local _we = 0
      while not _woken and _we < 1 and ASC.running do
-      PingWait(0.1); _we = _we + 0.1
+      task.wait(0.1); _we = _we + 0.1
      end
      if _wConn then pcall(function() _wConn:Disconnect() end) end
      -- [v62 RINO/RINI FIX] Jika TriggerEntryWakeup memutuskan ini giliran RAID ("rini"),
@@ -10683,7 +10458,7 @@ function StartAscensionLoop()
       local _selfBusy = (_who == "asc")
       if not _busy or _selfBusy then break end
       AscStatusUpdate("[||] Tunggu "..(_who or "?").." selesai dulu...", Color3.fromRGB(255,140,0))
-      PingWait(0.5); _aWait = _aWait + 0.5
+      task.wait(0.5); _aWait = _aWait + 0.5
      end
      if not ASC.running then break end
     end
@@ -10696,7 +10471,7 @@ function StartAscensionLoop()
      while ASC.running and _lockWait < 15 do
       if TryClaimMapLock("asc") then break end
       AscStatusUpdate("[||] Tunggu slot masuk map bebas...", Color3.fromRGB(200,160,255))
-      PingWait(0.2); _lockWait = _lockWait + 0.2
+      task.wait(0.2); _lockWait = _lockWait + 0.2
      end
      if not ASC.running then ReleaseMapLock("asc"); break end
     end
@@ -10714,7 +10489,7 @@ function StartAscensionLoop()
     _ascInterrupt = true
     if MA.running then
         local _wma = 0
-        while MA.running and _ascInterrupt and _wma < 1 do PingWait(0.05); _wma = _wma + 0.05 end
+        while MA.running and _ascInterrupt and _wma < 1 do task.wait(0.05); _wma = _wma + 0.05 end
     end
 
     ASC.inMap = true
@@ -10723,7 +10498,6 @@ function StartAscensionLoop()
     _ascMatchedThisCycle = true   -- [v61 CYCLEFIX] ASC sudah match di siklus ini
     _raidFallbackActive  = false  -- [v61 CYCLEFIX] RAID tidak boleh fallback di siklus ini
     _ascPending = false -- [v57 FIX] inMap=true sudah cover, tidak perlu pending lagi
-    -- [v56 FIX] _ascDominatedThisEvent dihapus - RAID dan ASC sekarang independen
     -- [v52 FIX] Setelah inMap=true di-set, lock tidak diperlukan lagi (IsAnyMapActive sudah cover)
     ReleaseMapLock("asc")
 
@@ -10795,16 +10569,15 @@ function StartAscensionLoop()
      -- >>> MODE RUNE TOWER OVERRIDE <<<
      local targetTower = ASC.runeMapTarget
      AscStatusUpdate("Create Team...", C.ACC2)
-     PingGuard()
      if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(raidEntry.id) end) end
-     PingWait(0.2)
+     task.wait(0.2)
 
      AscStatusUpdate("Use Item (Tower "..targetTower..")...", Color3.fromRGB(255,200,60))
      local itemId = ASC_RUNE_IDS[targetTower]
      if itemId and RE.UseRaidItem then
       pcall(function() RE.UseRaidItem:FireServer(itemId) end)
      end
-     PingWait(0.3)
+     task.wait(0.3)
 
      local _runeTargetMapId = 50300 + targetTower
      if RE.StartChallengeRaidMap then
@@ -10814,7 +10587,7 @@ function StartAscensionLoop()
      ASC.serverMapId = nil
      local _wR = 0
      while ASC.serverMapId == nil and _wR < 10 and ASC.running do
-      PingWait(0.1); _wR = _wR + 0.1
+      task.wait(0.1); _wR = _wR + 0.1
      end
 
      -- Jika serverMapId nil setelah timeout: material habis atau server reject
@@ -10835,7 +10608,7 @@ function StartAscensionLoop()
        end
        local _wt = 0
        while not _woken and _wt < 30 and ASC.running do
-        PingWait(1); _wt = _wt + 1
+        task.wait(1); _wt = _wt + 1
         AscStatusUpdate("[!] Material Habis - Menunggu... ("..tostring(30-_wt).."s)", Color3.fromRGB(255,80,80))
        end
        if _wConn then pcall(function() _wConn:Disconnect() end) end
@@ -10843,13 +10616,12 @@ function StartAscensionLoop()
       else
        -- Mode lain: fallback masuk tower original
        AscStatusUpdate("[!] Item Kosong - Fallback ke Tower "..mn.."...", Color3.fromRGB(255,140,0))
-       PingGuard()
        if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(raidEntry.id) end) end
-       PingWait(0.2)
+       task.wait(0.2)
        if RE.StartChallengeRaidMap then pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = targetMapId}) end) end
        local _wFb = 0
        while ASC.serverMapId == nil and _wFb < 5 and ASC.running do
-        PingWait(0.05); _wFb = _wFb + 0.05
+        task.wait(0.05); _wFb = _wFb + 0.05
        end
       end
      end
@@ -10859,10 +10631,9 @@ function StartAscensionLoop()
      AscStatusUpdate("[~] Enter Tower "..mn_label.."...", Color3.fromRGB(100,200,255))
      -- Sama persis RAID: CreateRaidTeam(raidId)
      if RE.CreateRaidTeam then
-      PingGuard()
       pcall(function() RE.CreateRaidTeam:InvokeServer(raidEntry.id) end)
      end
-     PingWait(0.2)
+     task.wait(0.2)
      if not ASC.running then ASC.inMap = false; break end
 
      -- Sama persis RAID: StartChallengeRaidMap({mapId=targetMapId})
@@ -10879,7 +10650,7 @@ function StartAscensionLoop()
      ASC.serverMapId = nil
      local _w2 = 0
      while ASC.serverMapId == nil and _w2 < 5 and ASC.running and not _cfail do
-      PingWait(0.05); _w2 = _w2 + 0.05
+      task.wait(0.05); _w2 = _w2 + 0.05
      end
      if _cfConn then pcall(function() _cfConn:Disconnect() end) end
 
@@ -10892,7 +10663,7 @@ function StartAscensionLoop()
       _ascBusy = false
       _ascInterrupt = false  -- [FIX] reset jika gagal masuk
       AscStatusUpdate("[!] Server reject (ChallengeRaidsFail) - retry...", Color3.fromRGB(255,80,80))
-      PingWait(1); break
+      task.wait(1); break
      end
     end
 
@@ -10901,7 +10672,7 @@ function StartAscensionLoop()
     local _tpOk = false
     local _tpW  = 0
     while not _tpOk and _tpW < 10 and ASC.running do
-     PingWait(0.3); _tpW = _tpW + 0.3
+     task.wait(0.3); _tpW = _tpW + 0.3
      pcall(function()
       local wm = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or workspace:GetAttribute("CurrentMapId")
       if wm then
@@ -10920,7 +10691,7 @@ function StartAscensionLoop()
      _ascBusy = false
      _ascInterrupt = false  -- [FIX] reset pada gagal TP
      AscStatusUpdate("[!] Gagal masuk Tower - retry...", Color3.fromRGB(255,80,80))
-     PingWait(1); break
+     task.wait(1); break
     end
 
     -- Setup event listener boss/done
@@ -10938,11 +10709,11 @@ function StartAscensionLoop()
     -- STEP 4: Dalam map - equip hero
     if #HERO_GUIDS > 0 then
      task.spawn(function()
-      PingWait(0.5)
+      task.wait(0.5)
       if RE.EquipHeroWithData then
        for _, hGuid in ipairs(HERO_GUIDS) do
         pcall(function() RE.EquipHeroWithData:FireServer({ heroGuid = hGuid, userId = MY_USER_ID }) end)
-        PingWait(0.1)
+        task.wait(0.1)
        end
       end
       if RE.HeroStand then
@@ -10961,7 +10732,7 @@ function StartAscensionLoop()
     -- Tanpa ini: ASC stuck "Dalam Tower... Loading" selamanya karena state tidak pernah direset
     local _watchdogTh = task.spawn(function()
      while ASC.inMap and ASC.running do
-      PingWait(1)
+      task.wait(1)
       local ok, wm = pcall(function()
        return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or 0
       end)
@@ -10969,7 +10740,7 @@ function StartAscensionLoop()
        -- Jika player tidak di Ascension Tower range, berarti sudah keluar secara paksa
        if wm > 0 and (wm < 50301 or wm > 50326) then
         -- Jangan langsung reset jika masih di fase loading awal (beri waktu 3s)
-        PingWait(3)
+        task.wait(3)
         local ok2, wm2 = pcall(function()
          return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") or 0
         end)
@@ -11012,12 +10783,12 @@ function StartAscensionLoop()
      -- [FIX v50] Tunggu mapId ASC valid sebelum mulai scan boss
      -- Identik pola RAID: snapshot mapId + anchor posisi player diambil SETELAH mapId valid
      -- Tanpa ini: filter mapId di _tryAddBoss terlalu cepat return saat ChildAdded fire
-     PingWait(0.3) -- beri server 1 tick untuk update workspace.MapId
+     task.wait(0.3) -- beri server 1 tick untuk update workspace.MapId
      local _ascMapIdSnapshot = GetCurrentMapId()
      local _ascSnapWait = 0
      while (_ascMapIdSnapshot == nil or _ascMapIdSnapshot < 50301 or _ascMapIdSnapshot > 50326)
       and _ascSnapWait < 3 and ASC.running and not _ascDone do
-      PingWait(0.3); _ascSnapWait = _ascSnapWait + 0.3
+      task.wait(0.3); _ascSnapWait = _ascSnapWait + 0.3
       _ascMapIdSnapshot = GetCurrentMapId()
      end
      -- _ascMapIdFilterActive: hanya aktifkan filter mapId jika snapshot benar-benar valid
@@ -11034,7 +10805,7 @@ function StartAscensionLoop()
      local _earlyBoss = nil
      local _loadWait = 0
      while _loadWait < 5 and ASC.running and not _ascDone do
-      PingWait(0.5); _loadWait = _loadWait + 0.5
+      task.wait(0.5); _loadWait = _loadWait + 0.5
       if _loadWait >= 1 and not _earlyBoss then
        local _pp = GetPlayerPos()
        -- Sumber 1: GetRaidEnemies()
@@ -11193,7 +10964,7 @@ function StartAscensionLoop()
       end
       if not boss then
        AscStatusUpdate("Find Boss... ("..math.floor(waitBoss).."s/5s)", Color3.fromRGB(160,148,135))
-       PingWait(0.3); waitBoss = waitBoss + 0.3
+       task.wait(0.3); waitBoss = waitBoss + 0.3
       end
      end
      for _, c in ipairs(_bossEventConns) do pcall(function() c:Disconnect() end) end
@@ -11239,7 +11010,7 @@ function StartAscensionLoop()
       if not bossPos then
        local _waitPos = 0
        while not bossPos and _waitPos < 3 and ASC.running and not _ascDone do
-        PingWait(0.3); _waitPos = _waitPos + 0.3
+        task.wait(0.3); _waitPos = _waitPos + 0.3
         bossPos = GetSafeAscBossPos()
        end
       end
@@ -11249,14 +11020,14 @@ function StartAscensionLoop()
       for _ci = _bd, 1, -1 do
        if not ASC.running or _ascDone then break end
        AscStatusUpdate("[K] Boss: "..boss.model.Name.." - TP ".._ci.."s...", Color3.fromRGB(255,160,60))
-       PingWait(1)
+       task.wait(1)
       end
 
       -- Refresh bossPos setelah countdown
       bossPos = GetSafeAscBossPos()
       local _refreshWait = 0
       while not bossPos and _refreshWait < 3 and ASC.running and not _ascDone do
-       PingWait(0.3); _refreshWait = _refreshWait + 0.3
+       task.wait(0.3); _refreshWait = _refreshWait + 0.3
        bossPos = GetSafeAscBossPos()
       end
 
@@ -11299,11 +11070,11 @@ function StartAscensionLoop()
        end
 
        -- 4) UnEquip -> EquipBest
-       PingWait(0.3)
+       task.wait(0.3)
        if RE.UnEquipHero then pcall(function() RE.UnEquipHero:FireServer() end) end
-       PingWait(0.3)
+       task.wait(0.3)
        if RE.EquipBestHero then pcall(function() RE.EquipBestHero:FireServer() end) end
-       PingWait(0.3)
+       task.wait(0.3)
 
        -- 5) TP ulang hero setelah re-equip - offset dari boss
        pcall(function()
@@ -11372,14 +11143,14 @@ function StartAscensionLoop()
         if not hum or hum.Health <= 0 then break end
         local p = GetSafeAscBossPos()
         if not p then
-         PingWait(0.08)
+         task.wait(0.08)
          if not boss.model or not boss.model.Parent then break end
          local hum2 = boss.model:FindFirstChildOfClass("Humanoid")
          if not hum2 or hum2.Health <= 0 then break end
          continue
         end
         task.spawn(function() pcall(function() RaidFireDamage(bossGuid, p) end) end)
-        PingWait(0.08)
+        task.wait(0.08)
        end
 
        pcall(function() task.cancel(_tpTh) end)
@@ -11408,14 +11179,14 @@ function StartAscensionLoop()
       end
       if not boss and ASC.running then
        AscStatusUpdate("[FLa] Boss not found (30s) - Go Out...", Color3.fromRGB(255,150,50))
-       PingWait(3)
+       task.wait(3)
       end
      end
     else
      -- Auto Kill Boss OFF - tunggu event ChallengeRaidsSuccess max 5 menit
      local _wt = 0
      while ASC.running and not _ascDone and _wt < 300 do
-      PingWait(1); _wt = _wt + 1
+      task.wait(1); _wt = _wt + 1
       -- [v64 FIX] Guard keluar Tower: cek lebih komprehensif
       -- Jika player sudah tidak di Ascension Tower (50301-50326), berarti sudah keluar
       -- (bisa karena MA/RAID TP player keluar, atau server kick, atau kolisi event)
@@ -11447,7 +11218,7 @@ function StartAscensionLoop()
     -- Wait reward
     if _ascSuccess then
      AscStatusUpdate("[..] Wait 1s (Get reward)...", Color3.fromRGB(100,255,150))
-     PingWait(1)
+     task.wait(1)
     end
     if not ASC.running then break end
 
@@ -11464,7 +11235,7 @@ function StartAscensionLoop()
     if _exitRe then
      pcall(function() _exitRe:FireServer({ currentSlotIndex = 2, toMapId = 50001 }) end)
     end
-    PingWait(0.3)
+    task.wait(0.3)
     pcall(function() RE.LocalTp:FireServer({ mapId = 50001 }) end)
     -- Retry exit jika masih di Ascension Tower
     local _exitTry = 0
@@ -11476,9 +11247,9 @@ function StartAscensionLoop()
     end
     while _inAscArea() and _exitTry < 5 and ASC.running do
      _exitTry = _exitTry + 1
-     PingWait(1)
+     task.wait(1)
      if _exitRe then pcall(function() _exitRe:FireServer({ currentSlotIndex=2, toMapId=50001 }) end) end
-     PingWait(0.2)
+     task.wait(0.2)
      pcall(function() RE.LocalTp:FireServer({ mapId=50001 }) end)
     end
 
@@ -11491,7 +11262,7 @@ function StartAscensionLoop()
      if not ASC.running then break end
      AscStatusUpdate("[..] Cooldown "..cd.."s...", Color3.fromRGB(160,148,135))
      if ASC.dot then ASC.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
-     PingWait(1)
+     task.wait(1)
     end
 
     -- [v48] STEP 7: Standby loop setelah cooldown (sama dengan RAID)
@@ -11506,7 +11277,6 @@ function StartAscensionLoop()
       local _wm2 = workspace:GetAttribute("MapId") or 0
       if (_wm2 >= 50201 and _wm2 <= 50204) or _wm2 == 50303 then isBusy = true end
 
-      -- [v56 FIX] _ascDominatedThisEvent dihapus dari logika RAID
       -- ASC cooldown loop tidak perlu reset flag ini lagi
       -- RAID sekarang independen: jalan saat ASC.inMap = false, pause saat ASC.inMap = true
 
@@ -11568,7 +11338,7 @@ function StartAscensionLoop()
       end
       local _we2 = 0
       while not _woken2 and _we2 < 1 and ASC.running do
-       PingWait(0.1); _we2 = _we2 + 0.1
+       task.wait(0.1); _we2 = _we2 + 0.1
       end
       if _wConn2 then pcall(function() _wConn2:Disconnect() end) end
       _fw = _fw + 1
@@ -11594,7 +11364,6 @@ function StartAscensionLoop()
  end)
 end
 
--- ============================================================
 -- [v73 FIX] RaidCollectAll - scan lebih agresif:
 -- 1. Scan semua folder reward yang mungkin
 -- 2. Scan workspace root langsung (ada item yang tidak di-folder)
@@ -11608,13 +11377,12 @@ function RaidCollectAll()
  if guid and not collected_guids[guid] then
  collected_guids[guid] = true
  RAID.collected = RAID.collected + 1
- PingGuard()
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
  -- [v112-FIX] Nil guard ExtraReward
  if RE.ExtraReward then
   pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
  end
- PingWait(0.05)
+ task.wait(0.05)
  end
  end
  end
@@ -11632,19 +11400,18 @@ function RaidCollectAll()
  if guid and not collected_guids[guid] then
  collected_guids[guid] = true
  RAID.collected = RAID.collected + 1
- PingGuard()
  pcall(function() RE.CollectItem:InvokeServer(guid) end)
  -- [v112-FIX] Nil guard ExtraReward
  if RE.ExtraReward then
   pcall(function() RE.ExtraReward:FireServer({isSell=true, guid=guid}) end)
  end
- PingWait(0.05)
+ task.wait(0.05)
  end
  end
  end
 
  -- [v73] Round 2: tunggu 1.5 detik lalu scan ulang (item spawn delayed)
- PingWait(1.5)
+ task.wait(1.5)
  for _, folderName in ipairs(folders) do
  collectFolder(workspace:FindFirstChild(folderName))
  end
@@ -11734,7 +11501,6 @@ end
 RaidFireDamage = function(g, p)
  if RE.Click then
  task.spawn(function()
- PingGuard()
  pcall(function() RE.Click:InvokeServer({enemyGuid=g, enemyPos=p}) end)
  end)
  end
@@ -11752,7 +11518,7 @@ RaidFireDamage = function(g, p)
  userId = MY_USER_ID,
  enemyGuid = g,
  }) end)
- PingWait(0.3)
+ task.wait(0.3)
  end
  elseif RE.HeroSkill then
  pcall(function() RE.HeroSkill:FireServer({
@@ -11762,11 +11528,9 @@ RaidFireDamage = function(g, p)
  end
 end
 
--- ============================================================
 -- GLOBAL RADAR RAID (100% GERCEP & BEBAS MANCING)
 -- Membaca langsung dari memori RaidsManager milik game.
 -- Mengabaikan jarak map, langsung deteksi semua Raid di seluruh server!
--- ============================================================
 local _lastRescanTime = 0
 local function ForceRescanRaidEnter()
     local now = tick()
@@ -11869,19 +11633,17 @@ end
 -- [NEW] Pasang radar global berjalan otomatis setiap 1.5 detik.
 -- UI daftar Raid akan selalu penuh ter-update meski kamu sedang AFK di Lobby!
 task.spawn(function()
-    while PingWait(1.5) do
+    while task.wait(1.5) do
         ForceRescanRaidEnter()
     end
 end)
 
 -- Main loop
 -- [v200] REWRITE: Flow final MA+AutoRaid
--- 
 -- Range mapId:
 -- Lobby : 50001-50018 (normal) | 50001-50028 (incl AT)
 -- Normal : 50101-50118 (area raid)
 -- Siege : 50201-50204 (BUKAN raid, skip total)
---
 -- NORMAL mode (Default/Easy/Hard/ByMap/ByRank/Manual):
 -- STEP1 : Workspace watcher RaidEnter -> RAID_LIVE (instant)
 -- STEP2 : CreateRaidTeam(raidId) ->
@@ -11892,14 +11654,11 @@ end)
 -- STEP4 : Diam 5s -> cari boss -> TP player+hero -> serang (ClickEnemy+HeroUseSkill 1-3)
 -- STEP5 : Boss mati -> collect -> hide reward -> TP ke MR.lastMapId
 -- STEP6 : _raidInterrupt=false -> MA resume -> cooldown 10s
---
 -- RUNE MAP mode:
 -- STEP2 : CreateRaidTeam(raidId) -> UseRaidItem(10265-10282) ->
 -- tunggu LocalPlayerTeleportSuccess (server handle TP)
 -- STEP4-6: sama seperti Normal
--- 
 local function IsRaidLiveInGame()
- -- Cukup cek RAID_ID_LIST ada entry (workspace ChildRemoved handle expire)
  -- Entry _tempEntry (belum ada raidId asli) tetap dianggap valid
  -- karena workspace sudah konfirmasi raid ada
  return #RAID_ID_LIST > 0
@@ -11984,11 +11743,9 @@ function StartRaidLoop()
  -- Selalu baca RAID.runeEnabled / runeGrades / runeMapTarget live
  -- sehingga kalau user ganti setting di tengah, iterasi berikutnya langsung ikut
 
--- ============================================================
 -- [RAID LIST ENTRY] ResolveEntryFromList
 -- Resolver independen: bypass manual mode, scan entry dari bawah ke atas.
 -- Return: raidEntry yang match, atau nil jika tidak ada yg match (caller fallback ke Easy)
--- ============================================================
 local function ResolveEntryFromList()
     if not RAID.listEnabled then return nil end
     if #RAID.listEntries == 0 then return nil end
@@ -12601,7 +12358,6 @@ local function ResolveEntry()
                         local targetMap = RAID.runeMapTarget
                         RaidStatusUpdate("Create Team...", C.ACC2)
                         if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
-                        PingGuard()
                         if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
                         task.wait(0.2)
                         
@@ -12634,7 +12390,6 @@ local function ResolveEntry()
                         if RAID.serverMapId == nil and RAID.running then
                             RaidStatusUpdate("[!] Material Kosong - Fallback...", Color3.fromRGB(255,140,0))
                             local _fbTargetMapId = raidEntry.mapId + 100
-                            PingGuard()
                             if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
                             task.wait(0.2)
                             if RE.StartChallengeRaidMap then pcall(function() RE.StartChallengeRaidMap:FireServer({mapId = _fbTargetMapId}) end) end
@@ -12647,7 +12402,6 @@ local function ResolveEntry()
                         RaidStatusUpdate("Enter Map " .. (targetMapId-50100) .. "...", C.ACC3)
 
                         if not RAID.fromMapId then RAID.fromMapId = RAID.raidMapId end
-                        PingGuard()
                         if RE.CreateRaidTeam then pcall(function() RE.CreateRaidTeam:InvokeServer(RAID.raidId) end) end
                         task.wait(0.2)
                         if not RAID.running then break end
@@ -12744,9 +12498,7 @@ local function ResolveEntry()
  end)
  end
 
- -- 
  -- STEP 4: Di dalam raid - cari boss, TP, serang
- --
  -- [FIX v260] Jika sebelumnya Siege baru saja selesai, tunggu workspace bersih dulu.
  -- Cek aktif sampai 5 detik: jika masih ada enemy Siege di workspace, tunggu terus.
  -- Tanpa ini scan boss bisa menemukan sisa enemy Siege dan salah TP ke sana.
@@ -13088,7 +12840,6 @@ local function ResolveEntry()
  end
  if not RAID.running then break end
 
- -- 
  if _raidSuccess then
   RaidStatusUpdate("[..] Wait 1s (Get reward)...", Color3.fromRGB(100,255,150))
   task.wait(1)
@@ -13096,7 +12847,6 @@ local function ResolveEntry()
  if not RAID.running then break end
 
  -- STEP 5: Collect + Exit raid
- -- 
  task.spawn(function() pcall(RaidCollectAll) end)
  RaidStatusUpdate("[FLa] Go Out raid...", Color3.fromRGB(100,200,255))
 
@@ -13155,9 +12905,7 @@ local function ResolveEntry()
  RAID.fromMapId = nil
  RAID.inMap = false
 
- -- 
  -- STEP 6: Resume MA -> cooldown
- -- 
  _raidInterrupt = false
  MODE:Release("raid") -- [FIX v257] MA HARUS resume saat player di luar raid
  -- [FIX v256] Cooldown 12s: server butuh ~12s sebelum bisa masuk Raid lagi
@@ -13259,23 +13007,16 @@ local function ResolveEntry()
  end)
 end
 
--- 
 
--- ============================================================
 -- do (webhook + raid logic)
 
--- ============================================================
 
--- ============================================================
 -- PANEL : AUTOMATION - Auto Raid UI [v259 REWRITE]
--- ============================================================
 do
  local p = NewPanel("autoraid")
  SectionHeader(p,"Automation",0)
 
- -- 
  -- DROPDOWN: AUTO RAID [v262 REWRITE]
- -- 
  local raidOpen = false
 
  local raidHeader = Btn(p, C.SURFACE, UDim2.new(1,0,0,42))
@@ -14202,9 +13943,7 @@ do
  ApplyPickModeLock()
  task.defer(ResizeRaidBody)
 
- -- ============================================================
  -- [RAID LIST ENTRY] UI Section (LayoutOrder 18+)
- -- ============================================================
  do
   -- Header label
   local listHdr = Label(raidInner, "RAID LIST ENTRY", 10, C.TXT3, Enum.Font.GothamBold)
@@ -14395,9 +14134,7 @@ do
 end -- end Auto Raid do block
 
 
--- ============================================================
 -- PANEL : AUTOMATION - Auto Ascension [v46 NEW]
--- ============================================================
 do
  local p = Panels["autoraid"] -- reuse panel yg sudah dibuat oleh Auto Raid (JANGAN NewPanel lagi!)
 
@@ -14426,7 +14163,7 @@ do
 
  local function ResizeAscBody()
   task.spawn(function()
-   PingWait(0)
+   task.wait(0)
    ascLayout:ApplyLayout()
    local h = ascLayout.AbsoluteContentSize.Y + 16
    ascInner.Size = UDim2.new(1,0,0,h)
@@ -14505,9 +14242,7 @@ do
   end
  end
 
- -- ============================================================
  -- ROW 4: PREFERRED RANK (always visible, mirip Auto Raid)
- -- ============================================================
  local GRADE_COLORS_ASC = {
   ["E"]=Color3.fromRGB(150,150,150),["D"]=Color3.fromRGB(100,200,100),
   ["C"]=Color3.fromRGB(80,200,120), ["B"]=Color3.fromRGB(100,140,255),
@@ -14604,9 +14339,7 @@ do
   _activeDDClose=function() popup:Destroy(); DDLayer.Visible=false end
  end)
 
- -- ============================================================
  -- ROW 5-6: PREFERRED RUNE (Item) - always visible
- -- ============================================================
  local ascRuneHdr = Label(ascInner,"PREFERRED RUNE (Item)",10,C.TXT3,Enum.Font.GothamBold)
  ascRuneHdr.LayoutOrder = 6; ascRuneHdr.Size = UDim2.new(1,0,0,14)
  local ascRuneCard = Frame(ascInner,C.SURFACE,UDim2.new(1,0,0,40))
@@ -14704,9 +14437,7 @@ do
 
 
 
- -- ============================================================
  -- ROW 8: PREFERRED MAP (Tower tujuan masuk)
- -- ============================================================
  local ascPrefMapCard = Frame(ascInner,C.SURFACE,UDim2.new(1,0,0,40))
  ascPrefMapCard.LayoutOrder = 8; Corner(ascPrefMapCard,10); Stroke(ascPrefMapCard,C.BORD,1.5,0.3); Padding(ascPrefMapCard,6,6,10,10)
  local ascPrefMapRow = Frame(ascPrefMapCard,C.BLACK,UDim2.new(1,0,1,0)); ascPrefMapRow.BackgroundTransparency=1
@@ -14818,9 +14549,7 @@ do
 
 
 
- -- ============================================================
  -- ROW 10: AUTO BOSS KILL TOGGLE
- -- ============================================================
  local ascBossRow = Frame(ascInner,C.SURFACE,UDim2.new(1,0,0,44))
  ascBossRow.LayoutOrder=10; Corner(ascBossRow,10); Stroke(ascBossRow,C.BORD,1.5,0.3)
  local ascBossL = Label(ascBossRow,"AUTO KILL BOSS",13,C.TXT,Enum.Font.GothamBold)
@@ -14847,9 +14576,7 @@ do
   }):Play()
  end
 
- -- ============================================================
  -- ROW 11: TELEPORT DELAY SLIDER (1-10s)
- -- ============================================================
  local ascTpCard = Frame(ascInner,C.SURFACE,UDim2.new(1,0,0,54))
  ascTpCard.LayoutOrder=11; Corner(ascTpCard,10); Stroke(ascTpCard,C.BORD,1.5,0.3); Padding(ascTpCard,6,6,10,10)
  New("UIListLayout",{Parent=ascTpCard,SortOrder=Enum.SortOrder.LayoutOrder,Padding=UDim.new(0,4)})
@@ -14901,9 +14628,7 @@ do
   end
  end)
 
- -- ============================================================
  -- ROW 11b: LIST ENTRY ASC
- -- ============================================================
  do
   -- Header label
   local ascListHdr = Label(ascInner,"LIST ENTRY",10,C.TXT3,Enum.Font.GothamBold)
@@ -15053,9 +14778,7 @@ do
   end)
  end -- end LIST ENTRY ASC do block
 
- -- ============================================================
  -- ROW 12: PICK MODE (sama persis dengan AUTO RAID)
- -- ============================================================
  local APM_OPTS  = {"Default","By Rank","By Map","Hard","Easy","Manual"}
  local APM_KEYS  = {"default","byrank","bymap","hard","easy","manual"}
  local APM_COLORS= {
@@ -15152,9 +14875,7 @@ do
   task.defer(ResizeAscBody)
  end
 
- -- ============================================================
  --  APPLY ASC PICK MODE LOCK (sama persis dengan AUTO RAID)
- -- ============================================================
  local _ascPrefLocked  = false
  local _ascRankLocked  = false
  local _ascRuneLocked  = false
@@ -15222,8 +14943,6 @@ do
 end -- end Auto Ascension do block
 
 
--- ============================================================
--- ============================================================
 -- AUTO SIEGE - v100 [REWRITE: Clean Flow]
 -- Flow:
 --   1. Toggle ON → tunggu UpdateCityRaidInfo dari server (SIEGE.live diisi scanner)
@@ -15236,7 +14955,6 @@ end -- end Auto Ascension do block
 --   7. Serang semua musuh di workspace.Enemys, pantau terus apakah
 --      Map201-Map205 masih ada. Jika hilang → stop serang
 --   8. QuitCityRaidMap → cleanup → count → tunggu notif berikutnya
--- ============================================================
 
 local SIEGE_DATA = {
     [3]  = {name="Map 3  - Shadow Castle",       cityRaidId=1000001, tpMapId=50201, baseMapId=50003, mapFolder="Map201"},
@@ -15461,7 +15179,7 @@ local function SiegeAttackLoop(onStatus, d)
             end
         end
 
-        PingWait(0.08)
+        task.wait(0.08)
     end
 
     cleanup()
@@ -15524,7 +15242,7 @@ StartSiegeLoop = function()
                         end
                     end
                     if targetMap then break end
-                    PingWait(0.5); guard = guard + 0.5
+                    task.wait(0.5); guard = guard + 0.5
                 end
                 pcall(function() _waitConn:Disconnect() end)
                 if not SIEGE.running then break end
@@ -15541,7 +15259,7 @@ StartSiegeLoop = function()
                 if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
                 local _wg = 0
                 while ((RAID and RAID.inMap) or (ASC and ASC.inMap)) and SIEGE.running and _wg < 600 do
-                    PingWait(0.5); _wg = _wg + 0.5
+                    task.wait(0.5); _wg = _wg + 0.5
                 end
                 if not SIEGE.running then break end
             end
@@ -15550,7 +15268,7 @@ StartSiegeLoop = function()
             _siegeInterrupt = true
             if not MODE:WaitAndRequest("siege", 15) then
                 _siegeInterrupt = false
-                PingWait(1)
+                task.wait(1)
                 continue
             end
 
@@ -15559,11 +15277,7 @@ StartSiegeLoop = function()
             -- Hapus dari live agar tidak diproses ulang
             SIEGE.live[d.cityRaidId] = nil
 
-            -- ════════════════════════════════════════
             -- ENTRY SEQUENCE (pola exact SIEGE_COMPARE.lua yang terbukti berhasil)
-            -- Tidak ada LocalTp ke basemap dulu, tidak ada PingWait multiplier
-            -- Murni task.wait polos sama persis seperti manual test yang sukses
-            -- ════════════════════════════════════════
             local _RE = Remotes
 
             SiegeStatus("[>>] Fire EnterCityRaidMap("..d.cityRaidId..")...", Color3.fromRGB(180,120,255))
@@ -15646,9 +15360,7 @@ StartSiegeLoop = function()
 
             SIEGE.teleporting = false
 
-            -- ════════════════════════════════════════
             -- PHASE 5: Attack loop
-            -- ════════════════════════════════════════
             SIEGE.inMap = true
             SiegeStatus("[S] "..d.name.." - ATTACK!", Color3.fromRGB(80,220,80))
             if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(80,220,80) end
@@ -15657,14 +15369,12 @@ StartSiegeLoop = function()
                 SiegeStatus("[S] "..msg, Color3.fromRGB(80,220,80))
             end, d)
 
-            -- ════════════════════════════════════════
             -- PHASE 6: Exit map (CONFIRMED) → cleanup → count
             -- [v63 FIX] Race condition fix: dulu MODE:Release("siege") dipanggil
             -- SEBELUM QuitCityRaidMap di-fire, jadi fitur lain (RAID/ASC/MA) bisa
             -- mulai entry sequence-nya sendiri saat player masih FISIK di dalam
             -- Siege map -> tabrakan remote -> UI Siege (timer/quit/map name/count)
             -- jadi cacat. Sekarang: konfirmasi keluar dulu, baru lepas slot.
-            -- ════════════════════════════════════════
             if result == "timeout" then
                 -- Server kemungkinan down/stuck - JANGAN tunggu konfirmasi balik.
                 -- Paksa keluar via LocalTp ke baseMapId, kasih jeda, lalu LANJUT
@@ -15712,7 +15422,7 @@ StartSiegeLoop = function()
                 if SIEGE.dot then SIEGE.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
             end
 
-            PingWait(1)
+            task.wait(1)
 
         end -- while SIEGE.running
 
@@ -15729,9 +15439,7 @@ StartSiegeLoop = function()
 end
 
 
--- ============================================================
 -- PANEL : AUTO SIEGE (UI)
--- ============================================================
 do
     local p = Panels["autoraid"]
     if not p then return end
@@ -15905,7 +15613,6 @@ end
 
 
 
--- ============================================================
 -- AUTO DUNGEON - Tower Defense (Map 5 -> MapId 50303)
 -- Source: TowerManager client script (decompiled)
 -- Event server: ChangeTowerState {towerState, endTimestamp}
@@ -15913,7 +15620,6 @@ end
 -- Masuk : StartLocalPlayerTeleport {mapId=50303} + LocalPlayerTeleportSuccess
 -- Keluar : StartLocalPlayerTeleport {mapId=50005}
 -- Prioritas tertinggi di Automation (di atas MA, Raid, Siege)
--- ============================================================
 
 DUNGEON = {
  running = false,
@@ -15973,7 +15679,6 @@ local function IsInDungeonMap()
  end)
  if ok2 and hasMap then return true, nil end
  
- -- [REMOVED] Enemy check fallback - causes false-positive when player is outside dungeon with enemies nearby
  -- Old buggy code: if #workspace:FindFirstChild("Enemys"):GetChildren() > 3 then return true end
  
  -- Only trust DUNGEON.inMap flag if already set by successful entry
@@ -16013,7 +15718,7 @@ local function ConnectDungeonListener()
  -- Sambil itu, poll workspace.Map.MessageBoard setiap 2s sebagai fallback state detector
  task.spawn(function()
  while ScreenGui and ScreenGui.Parent do
- PingWait(2)
+ task.wait(2)
  pcall(function()
  -- Deteksi PreparatoryPhase via TowerUnlock effect di workspace
  local mf = workspace:FindFirstChild("Map")
@@ -16054,13 +15759,11 @@ end
 
 -- Attack loop dalam dungeon
 local function DungeonAttackLoop(onStatus)
-    -- ============================================================
     -- Identik dengan logika Mass Attack:
     -- - GetEnemies() scan semua folder (sama persis MA)
     -- - FireAllDamage + FireHeroRemotes (sama persis MA)
     -- - Berhenti jika keluar dari MapId 50303 (server TP keluar)
     -- - Berhenti jika 5 menit musuh tidak update di workspace
-    -- ============================================================
     local _deadG_D      = {}    -- dead list lokal dungeon
     local noUpdateT     = 0    -- timer musuh tidak berkurang di workspace
     local NO_UPDATE_LIMIT = 300 -- 5 menit (300 detik)
@@ -16100,7 +15803,7 @@ local function DungeonAttackLoop(onStatus)
         end
         if #GetEnemies() > 0 then break end
         if onStatus then onStatus("[~] Tunggu musuh dungeon... (" .. math.floor(FASE1_MAX - wt) .. "s)") end
-        PingWait(0.4); wt = wt + 0.4
+        task.wait(0.4); wt = wt + 0.4
     end
 
     -- -- FASE 2: Attack loop (identik Mass Attack) -----------------
@@ -16177,7 +15880,7 @@ local function DungeonAttackLoop(onStatus)
             end
         end
 
-        PingWait(0.08)
+        task.wait(0.08)
     end
 
     cleanup()
@@ -16209,12 +15912,11 @@ local function DungeonTpOut()
  if startTpRe then
  pcall(function() startTpRe:FireServer({mapId = DUNGEON_LOBBY_ID}) end)
  end
- PingWait(0.3)
+ task.wait(0.3)
  -- Konfirmasi
  local ltpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
  if ltpSucc then
  task.spawn(function()
- PingGuard()
  pcall(function() ltpSucc:InvokeServer() end)
  end)
  end
@@ -16237,7 +15939,7 @@ local function DungeonTpIn()
  -- Sebelumnya task.wait(2) flat -> status stuck karena MapId belum update
  local _lobbyWait = 0
  while _lobbyWait < 5 and DUNGEON.running do
-  PingWait(0.3); _lobbyWait = _lobbyWait + 0.3
+  task.wait(0.3); _lobbyWait = _lobbyWait + 0.3
   local _cm = pcall(function() return workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId") end)
   local _curId = workspace:GetAttribute("MapId") or workspace:GetAttribute("mapId")
   if type(_curId) == "number" and _curId == DUNGEON_LOBBY_ID then break end
@@ -16246,7 +15948,7 @@ local function DungeonTpIn()
  if not DUNGEON.running then return end -- Abort jika toggle dimatikan saat jeda
 
  DungeonStatus("[>>] Lobby OK - Masuk Dungeon 50303...", Color3.fromRGB(120,180,255))
- PingWait(0.3) -- buffer kecil sebelum fire request masuk
+ task.wait(0.3) -- buffer kecil sebelum fire request masuk
 
  -- Remote 1: LocalPlayerTeleport (first call)
  local ltpRe = Remotes:FindFirstChild("LocalPlayerTeleport")
@@ -16254,14 +15956,14 @@ local function DungeonTpIn()
  pcall(function() ltpRe:FireServer({mapId = DUNGEON_MAP_ID}) end)
  end
  
- PingWait(0.1) -- Small delay between calls
+ task.wait(0.1) -- Small delay between calls
  
  -- Remote 2: StartLocalPlayerTeleport (second call)
  if startTpRe then
  pcall(function() startTpRe:FireServer({mapId = DUNGEON_MAP_ID}) end)
  end
  
- PingWait(0.1)
+ task.wait(0.1)
  
  -- Remote 3: EquipHeroWithData (prepare heroes for dungeon)
  local equipHeroRe = Remotes:FindFirstChild("EquipHeroWithData")
@@ -16269,13 +15971,12 @@ local function DungeonTpIn()
  pcall(function() equipHeroRe:FireServer() end)
  end
  
- PingWait(0.2)
+ task.wait(0.2)
  
  -- Remote 4: LocalPlayerTeleportSuccess (confirm arrival)
  local ltpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
  if ltpSucc then
  task.spawn(function()
- PingGuard()
  pcall(function() ltpSucc:InvokeServer() end)
  end)
  end
@@ -16296,10 +15997,8 @@ StartDungeonLoop = function()
  while DUNGEON.running do
  repeat
 
- -- 
  -- STEP 1: Cek cooldown sejak entry terakhir
  -- Cooldown 60 menit - tapi timing SYNC dengan server (os.time)
- -- 
  local now = os.time()
  local elapsed = now - DUNGEON.lastEntryTime
  local cooldownLeft = DUNGEON_COOLDOWN - elapsed
@@ -16323,23 +16022,21 @@ StartDungeonLoop = function()
  local _ss = _rem % 60
  DungeonStatus(string.format("[..] Cooldown %02d:%02d | Dungeon state=%d", _mm, _ss, DUNGEON.towerState), Color3.fromRGB(255,200,60))
  local conn = _dungeonWakeup.Event:Connect(function() end)
- PingWait(1); conn:Disconnect()
+ task.wait(1); conn:Disconnect()
  _wt = _wt + 1
  end
  if not DUNGEON.running then break end
  end
 
- -- 
  -- STEP 2: Tunggu state PreparatoryPhase (dungeon OPEN)
  -- Window hanya 30 detik! Harus masuk segera.
- -- 
  if DUNGEON.towerState ~= 2 then
  DungeonStatus("[..] Waiting Dungeon OPEN (PreparatoryPhase)...", Color3.fromRGB(255,200,60))
  if DUNGEON.dot then DUNGEON.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
  local _wt2 = 0
  while DUNGEON.running and DUNGEON.towerState ~= 2 do
  local conn = _dungeonWakeup.Event:Connect(function() end)
- PingWait(1); conn:Disconnect()
+ task.wait(1); conn:Disconnect()
  _wt2 = _wt2 + 1
  if _wt2 % 10 == 0 then
  -- Periodic check setiap 10 detik
@@ -16348,10 +16045,8 @@ StartDungeonLoop = function()
  if not DUNGEON.running then break end
  end
 
- -- 
  -- STEP 3: PRIORITAS - Interrupt MA + Raid + Siege
  -- [v252] Dungeon priority max -> ForceSet override semua
- -- 
  MODE:ForceSet("dungeon") -- override apapun yang sedang jalan
  -- [GUARD v50] Tunggu fitur lain selesai max 10s sebelum force interrupt
  do
@@ -16360,7 +16055,7 @@ StartDungeonLoop = function()
    local _busy, _who = IsAnyMapActive()
    if not _busy or _who == "dungeon" then break end
    DungeonStatus("[||] Tunggu "..(_who or "?").." selesai...", Color3.fromRGB(255,200,60))
-   PingWait(0.5); _dGuard = _dGuard + 0.5
+   task.wait(0.5); _dGuard = _dGuard + 0.5
   end
  end
  DUNGEON.interrupt = true -- sync flag lama
@@ -16368,16 +16063,14 @@ StartDungeonLoop = function()
  _raidInterrupt = true
 
  -- Tunggu sebentar agar MA/Raid/Siege pause (mereka cek MODE.current)
- PingWait(0.5)
+ task.wait(0.5)
  if not DUNGEON.running then
  DUNGEON.interrupt = false; _siegeInterrupt = false; _raidInterrupt = false
  MODE:Release("dungeon")
  break
  end
 
- -- 
  -- STEP 4: Cek apakah sudah di dalam dungeon
- -- 
  local alreadyIn, _ = IsInDungeonMap()
  if not alreadyIn then
  DungeonStatus("[>>] ENTER dungeon...", Color3.fromRGB(180,120,255))
@@ -16390,7 +16083,7 @@ StartDungeonLoop = function()
  local _entered = false
  local _entWait = 0
  while not _entered and _entWait < 25 and DUNGEON.running do
- PingWait(0.3); _entWait = _entWait + 0.3
+ task.wait(0.3); _entWait = _entWait + 0.3
  local inD, _ = IsInDungeonMap()
  if inD then _entered = true; break end
  -- Update status agar tidak terlihat stuck
@@ -16406,7 +16099,7 @@ StartDungeonLoop = function()
  _siegeInterrupt = false
  _raidInterrupt = false
  MODE:Release("dungeon") -- [v252]
- PingWait(3); break
+ task.wait(3); break
  end
  else
  -- Already in dungeon, skip TP
@@ -16422,12 +16115,10 @@ StartDungeonLoop = function()
  _siegeInterrupt = false
  _raidInterrupt = false
  MODE:Release("dungeon")
- PingWait(3); break
+ task.wait(3); break
  end
 
- -- 
  -- STEP 5: Attack loop
- -- 
  DUNGEON.inMap = true
  DUNGEON.lastEntryTime = os.time()
  DUNGEON.count = DUNGEON.count + 1
@@ -16437,17 +16128,15 @@ StartDungeonLoop = function()
  local result = DungeonAttackLoop(function(msg)
  DungeonStatus(msg, Color3.fromRGB(80,220,80))
  end)
- -- 
  -- STEP 6: Keluar dungeon
  -- Kalau low_damage atau timeout: TP manual ke Map 5
  -- Kalau exited_by_server: server sudah handle
- -- 
  DUNGEON.inMap = false
 
  if result == "low_damage" or result == "timeout" or result == "no_enemy_timeout" then
   DungeonStatus("[TP] Go to Map 5...", Color3.fromRGB(255,140,0))
   DungeonTpOut()
-  PingWait(1.5)
+  task.wait(1.5)
  end
 
  -- Auto hide reward popup
@@ -16468,7 +16157,7 @@ StartDungeonLoop = function()
  DungeonStatus(string.format("[OK] Dungeon #%d DONE (%s) - Cooldown %dm", DUNGEON.count, result, _mm), Color3.fromRGB(100,255,150))
  if DUNGEON.dot then DUNGEON.dot.BackgroundColor3 = Color3.fromRGB(255,200,60) end
 
- PingWait(2)
+ task.wait(2)
 
  until true
  end -- while DUNGEON.running
@@ -16485,7 +16174,6 @@ StartDungeonLoop = function()
 end
 
 --  Tambahkan DUNGEON.interrupt ke WaitRaidDone agar MA juga pause saat dungeon aktif 
--- [v252] WaitRaidDone override dihapus - versi v252 sudah handle dungeon check via MODE dispatcher
 
 
 
@@ -16577,7 +16265,7 @@ do
  local STATE_NAMES = {[1]="Wait",[2]="OPEN!",[3]="Battle"}
  local STATE_COLS = {[1]=Color3.fromRGB(180,180,180),[2]=Color3.fromRGB(80,220,80),[3]=Color3.fromRGB(255,140,0)}
  while ScreenGui and ScreenGui.Parent do
- PingWait(1)
+ task.wait(1)
  pcall(function()
  _dungeonCountLbl.Text = "SUCCES ENTER: " .. (DUNGEON.count or 0) .. "x"
  local st = DUNGEON.towerState or 1
@@ -16590,13 +16278,11 @@ do
  task.defer(ResizeDungeonBody)
 end
 
--- ============================================================
 -- AUTO SINGLE TOWER MAP 2 (MapId 50301)
 -- Remote: StartLocalPlayerTeleport:FireServer({mapId=50301})
 -- Keluar : StartLocalPlayerTeleport:FireServer({mapId=50002})
 -- Logic: masuk map -> Mass Attack max 10 menit -> keluar -> delay 2s -> ulang
 -- Dropdown: "Non Stop" (tanpa batas wave) atau Wave 1-10 (hitung reset enemy di Workspace.Enemy)
--- ============================================================
 
 ST2 = {
     running        = false,
@@ -16638,7 +16324,6 @@ task.spawn(function()
     end)
 end)
 
--- 
 
 local function ST2IsInMap()
     -- Sumber 1: cek workspace MapId via attribute (berbagai nama)
@@ -16681,46 +16366,42 @@ local function ST2TpIn()
         -- [FIX STUCK] Urutan remote: lobby dulu -> konfirmasi -> TP ke tower
         -- Step 1: StartLocalPlayerTeleport mapId 50002 (masuk lobby dulu)
         if reStart then reStart:FireServer({mapId = 50002}) end
-        PingWait(0.5)
+        task.wait(0.5)
 
         -- Step 2: GetNewSingleTowerData (invoke) - ambil data tower baru
-        PingGuard()
         if reGet then pcall(function() reGet:InvokeServer() end) end
-        PingWait(0.4)
+        task.wait(0.4)
 
         -- Step 3: EquipHeroWithData - pastikan hero terpasang
         if reEquip then pcall(function() reEquip:FireServer() end) end
-        PingWait(0.4)
+        task.wait(0.4)
 
         -- Step 4: LocalPlayerTeleportSuccess (konfirmasi di lobby)
-        PingGuard()
         if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
-        PingWait(0.5)
+        task.wait(0.5)
 
         -- Step 5: StartLocalPlayerTeleport mapId 50301 + hostId (TP ke Tower Map 2)
         if reStart then reStart:FireServer({mapId = 50301, hostId = LP.UserId}) end
-        PingWait(0.5)
+        task.wait(0.5)
 
         -- Step 6: [FIX STUCK] LocalPlayerTeleport tambahan agar game akui masuk tower
         if reLocal then pcall(function() reLocal:FireServer({mapId = 50301, hostId = LP.UserId}) end) end
-        PingWait(0.3)
+        task.wait(0.3)
 
         -- Step 7: EquipHeroWithData (setelah TP ke 50301)
         if reEquip then pcall(function() reEquip:FireServer() end) end
-        PingWait(0.4)
+        task.wait(0.4)
 
         -- Step 8: LocalPlayerTeleportSuccess (konfirmasi masuk 50301)
-        PingGuard()
         if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
-        PingWait(0.3)
+        task.wait(0.3)
 
         -- Step 9: [FIX STUCK] Ulangi StartLocalPlayerTeleport ke 50301 sekali lagi
         -- Sebagian user butuh 2x fire untuk benar-benar masuk ke dalam tower
         if not ST2IsInMap() then
-            PingWait(0.5)
+            task.wait(0.5)
             if reStart then reStart:FireServer({mapId = 50301, hostId = LP.UserId}) end
-            PingWait(0.4)
-            PingGuard()
+            task.wait(0.4)
             if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
         end
     end)
@@ -16732,11 +16413,10 @@ local function ST2TpOut()
         local re = Remotes:FindFirstChild("StartLocalPlayerTeleport")
         if re then re:FireServer({mapId = 50002}) end
     end)
-    PingWait(0.3)
+    task.wait(0.3)
     pcall(function()
         local re2 = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
         if re2 then
-            PingGuard()
             task.spawn(function() pcall(function() re2:InvokeServer() end) end)
         end
     end)
@@ -16747,7 +16427,7 @@ end
 local function ST2ConfirmIn(maxWait)
     local t = 0
     while t < maxWait do
-        PingWait(0.3); t = t + 0.3
+        task.wait(0.3); t = t + 0.3
         if ST2IsInMap() then return true end
     end
     return false
@@ -16756,7 +16436,7 @@ end
 local function ST2ConfirmOut(maxWait)
     local t = 0
     while t < maxWait do
-        PingWait(0.3); t = t + 0.3
+        task.wait(0.3); t = t + 0.3
         if not ST2IsInMap() then return true end
     end
     return false
@@ -16791,7 +16471,7 @@ function StartST2Loop()
                 if not ST2.enabled then
                     ST2Status("[||] Toggle OFF - STOP masuk map.", Color3.fromRGB(180,60,60))
                     while ST2.running and not ST2.enabled do
-                        PingWait(0.3)
+                        task.wait(0.3)
                     end
                     if not ST2.running then return end
                 end
@@ -16801,7 +16481,7 @@ function StartST2Loop()
                 if not ST2.attackEnabled then
                     ST2Status("[||] Attack OFF - standby...", Color3.fromRGB(180,100,60))
                     while ST2.running and not ST2.attackEnabled do
-                        PingWait(0.5)
+                        task.wait(0.5)
                     end
                     if not ST2.running then return end
                 end
@@ -16810,7 +16490,7 @@ function StartST2Loop()
                 ST2Status("[..] Delay 2s Before Enter Single Tower...", Color3.fromRGB(160,148,135))
                 for _i = 1, 20 do
                     if not ST2.running then return end
-                    PingWait(0.1)
+                    task.wait(0.1)
                 end
                 if not ST2.running then return end
 
@@ -16822,7 +16502,7 @@ function StartST2Loop()
                   local _selfBusy = (_who == "st2")
                   if not _busy or _selfBusy then break end
                   ST2Status("[||] Tunggu "..(_who or "?").." selesai...", Color3.fromRGB(255,140,0))
-                  PingWait(0.5); _t2Wait = _t2Wait + 0.5
+                  task.wait(0.5); _t2Wait = _t2Wait + 0.5
                  end
                  if not ST2.running then return end
                 end
@@ -16834,7 +16514,6 @@ function StartST2Loop()
                 -- -- STEP 1b: Konfirmasi masuk map --
                 pcall(function()
                     local reTpSucc = Remotes:FindFirstChild("LocalPlayerTeleportSuccess")
-                    PingGuard()
                     if reTpSucc then pcall(function() reTpSucc:InvokeServer() end) end
                 end)
 
@@ -16842,12 +16521,12 @@ function StartST2Loop()
                 local entered = ST2ConfirmIn(15)
                 if not entered then
                     ST2Status("[!] Failure Enter - retry...", Color3.fromRGB(255,100,60))
-                    PingWait(3)
+                    task.wait(3)
                     break -- Kembali ke awal loop
                 end
 
                 ST2Status("[OK] ENTER", Color3.fromRGB(80,220,80))
-                PingWait(1)
+                task.wait(1)
                 if not ST2.running then return end
 
                 -- -- STEP 2: Cek toggle Attack ------------------------------------
@@ -16863,7 +16542,7 @@ function StartST2Loop()
                     pcall(function() RE.LocalTp:FireServer({ mapId=50001 }) end)
                     ST2.inMap = false
                     ReleaseMapLock("st2")
-                    PingWait(2)
+                    task.wait(2)
                     break -- kembali ke atas loop, tunggu sampai Attack ON
                 end
 
@@ -16890,7 +16569,7 @@ function StartST2Loop()
                         end
                     end)
                     ST2Status("[~] HERO_GUIDS: "..#HERO_GUIDS.." found", Color3.fromRGB(255,200,60))
-                    PingWait(0.3)
+                    task.wait(0.3)
                 end
 
                 -- Inisialisasi Data Map
@@ -16952,7 +16631,7 @@ function StartST2Loop()
                 while ST2.running and ST2.inMap and ST2.attacking do
                     if not ST2.attackEnabled then
                         ST2Status("[||] PAUSE Attack...", Color3.fromRGB(255,140,0))
-                        while ST2.running and not ST2.attackEnabled do PingWait(0.3) end
+                        while ST2.running and not ST2.attackEnabled do task.wait(0.3) end
                         if not ST2.running then return end
                     end
 
@@ -16995,7 +16674,7 @@ function StartST2Loop()
                         end
                         ST2Status("[S] "..#targets.." enemy | Wave "..wavesDone.."/"..targetWaves, Color3.fromRGB(80,220,80))
                     end
-                    PingWait(0.3)
+                    task.wait(0.3)
                 end -- end attack loop
 
                 if not ST2.running then return end
@@ -17010,7 +16689,7 @@ function StartST2Loop()
                 ST2Status("[..] Delay 2s...", Color3.fromRGB(160,148,135))
                 for _i = 1, 20 do
                     if not ST2.running then return end
-                    PingWait(0.1)
+                    task.wait(0.1)
                 end
                 if not ST2.running then return end 
                 until true
@@ -17025,9 +16704,7 @@ function StartST2Loop()
     end) -- end task.spawn
 end
 
--- ============================================================
 -- PANEL : AUTO SINGLE TOWER MAP 2 (UI)
--- ============================================================
 do
     local p = Panels["autoraid"]
     if not p then return end
@@ -17207,7 +16884,7 @@ do
     task.spawn(function()
         local last = -1
         while true do
-            PingWait(1)
+            task.wait(1)
             if ST2 and ST2.count ~= last then
                 last = ST2.count
                 cntLbl.Text = "ENTER: "..ST2.count.."x"
@@ -17220,13 +16897,11 @@ do
 end
 
 
--- ============================================================
 -- PANEL : JOIN TO TOWER PLAYER (UI) - mapId 50301
 -- SCAN = ambil semua player dari Players service (global workspace)
 -- JOIN = LocalPlayerTeleport:FireServer({mapId=50301, hostId=UserId})
 -- Tidak ada cara mengetahui siapa yg ada di Tower Map 2 dari client,
 -- jadi semua player di server ditampilkan -> user pilih sendiri -> JOIN.
--- ============================================================
 do
     local p = Panels["autoraid"]
     if p then
@@ -17236,6 +16911,9 @@ do
     local JTP_selIdx     = nil  -- index row yang dipilih
     local JTP_joining    = false
     local JTP_MAPID      = 50301
+
+    -- SlotIndex untuk LocalPlayerTeleportSuccess (diketik manual oleh user)
+    local JTP_slotIndex  = 1  -- default 1 (bisa berubah per server)
 
     -- -- Header collapsible ------------------------------------------------
     local jtpOpen = false
@@ -17263,7 +16941,7 @@ do
 
     local function ResizeJTPBody()
         task.spawn(function()
-            PingWait(0)
+            task.wait(0)
             jtpLayout:ApplyLayout()
             local h = jtpLayout.AbsoluteContentSize.Y + 16
             jtpInner.Size = UDim2.new(1,0,0,h)
@@ -17310,10 +16988,96 @@ do
         Color3.fromRGB(100,230,150), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
     scanLbl.Size = UDim2.new(1,0,1,0)
 
+    -- -- GET SLOT INDEX button (untuk akun UTAMA yg sudah di dalam Tower) --
+    -- Klik -> scan RaidsManager module untuk cari slotIndex tower aktif (mapId 50301+)
+    local getSlotBtn = Btn(jtpInner, Color3.fromRGB(45,35,10), UDim2.new(1,0,0,34))
+    getSlotBtn.LayoutOrder = 3; Corner(getSlotBtn,10)
+    Stroke(getSlotBtn, Color3.fromRGB(220,170,40), 1.5, 0.15)
+    local getSlotLbl = Label(getSlotBtn,"[GET SLOT INDEX]",12,
+        Color3.fromRGB(255,210,80), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+    getSlotLbl.Size = UDim2.new(1,0,1,0)
+
+    getSlotBtn.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            local found = nil
+
+            -- Cara 1: Pasang listener sementara di EnterRaidsUpdateInfo
+            -- lalu trigger GetNewSingleTowerData agar server kirim event update
+            pcall(function()
+                local reEnter = Remotes:FindFirstChild("EnterRaidsUpdateInfo")
+                local reGet   = Remotes:FindFirstChild("GetNewSingleTowerData")
+                if reEnter and reGet then
+                    local conn
+                    local gotIt = false
+                    conn = reEnter.OnClientEvent:Connect(function(data)
+                        if gotIt then return end
+                        if type(data) == "table" and data.slotIndex ~= nil then
+                            gotIt = true
+                            found = data.slotIndex
+                            pcall(function() conn:Disconnect() end)
+                        end
+                    end)
+                    -- Invoke GetNewSingleTowerData agar server fire EnterRaidsUpdateInfo
+                    pcall(function() reGet:InvokeServer() end)
+                    -- Tunggu max 2 detik
+                    local t = 0
+                    while not gotIt and t < 2 do
+                        task.wait(0.1)
+                        t = t + 0.1
+                    end
+                    pcall(function() conn:Disconnect() end)
+                end
+            end)
+
+            -- Cara 2: Scan RaidsManager module - cari entry Tower (mapId 50301+)
+            if not found then
+                pcall(function()
+                    local RM = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.RaidsManager)
+                    if type(RM) ~= "table" then return end
+                    for _, val in pairs(RM) do
+                        if type(val) == "table" then
+                            for _, info in pairs(val) do
+                                if type(info) == "table" then
+                                    local mid = info.mapId
+                                    -- Tower Map 2 = 50301+
+                                    if mid and mid >= 50301 then
+                                        if info.slotIndex ~= nil then
+                                            found = info.slotIndex
+                                            break
+                                        end
+                                    end
+                                end
+                                if found then break end
+                            end
+                        end
+                        if found then break end
+                    end
+                end)
+            end
+
+            -- Cara 3: workspace / LocalPlayer attribute
+            if not found then
+                pcall(function()
+                    local v = LP:GetAttribute("SlotIndex") or LP:GetAttribute("slotIndex")
+                        or workspace:GetAttribute("SlotIndex") or workspace:GetAttribute("slotIndex")
+                    if v and type(v) == "number" then found = v end
+                end)
+            end
+
+            if found then
+                UpdateSlotBox(found)
+                JTPStat("[OK] SlotIndex ditemukan: "..tostring(found), Color3.fromRGB(100,230,150))
+                pcall(function() SystemNotify("[JTP] SlotIndex: "..tostring(found), 4) end)
+            else
+                JTPStat("[!] Tidak bisa auto-detect. Ketik SlotIndex manual dari akun UTAMA.", Color3.fromRGB(220,170,40))
+            end
+        end)
+    end)
+
     -- -- Player list box --------------------------------------------------?
     -- Scrollable frame agar list panjang tetap rapi
     local listOuter = Frame(jtpInner, C.BG3, UDim2.new(1,0,0,0))
-    listOuter.LayoutOrder = 3; listOuter.AutomaticSize = Enum.AutomaticSize.Y
+    listOuter.LayoutOrder = 4; listOuter.AutomaticSize = Enum.AutomaticSize.Y
     listOuter.Visible = false; Corner(listOuter,10)
     Stroke(listOuter, C.BORD, 1.5, 0.5)
     New("UIPadding",{Parent=listOuter,
@@ -17331,9 +17095,63 @@ do
 
     local playerRows = {}  -- frame per row
 
+    -- -- SlotIndex INPUT MANUAL ------------------------------------------
+    -- Untuk akun ALT: ketik langsung slotIndex dari akun UTAMA
+    -- Nilai bebas (bisa 1, 2, 50201, dst tergantung server)
+    local slotCard = Frame(jtpInner, C.BG3, UDim2.new(1,0,0,40))
+    slotCard.LayoutOrder = 5; Corner(slotCard,10)
+    Stroke(slotCard, Color3.fromRGB(220,170,40), 1.5, 0.3)
+    New("UIPadding",{Parent=slotCard,PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8)})
+
+    -- Label "SlotIndex :" di kiri
+    local slotLabel = Label(slotCard,"SlotIndex :",12,Color3.fromRGB(220,170,40),Enum.Font.GothamBold)
+    slotLabel.Size = UDim2.new(0,82,1,0); slotLabel.Position = UDim2.new(0,0,0,0)
+    slotLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- TextBox input — user ketik nilai bebas
+    local slotBox = New("TextBox",{
+        Parent          = slotCard,
+        BackgroundColor3= Color3.fromRGB(30,25,5),
+        Size            = UDim2.new(1,-90,0,28),
+        Position        = UDim2.new(0,86,0.5,-14),
+        Text            = tostring(JTP_slotIndex),
+        PlaceholderText = "ketik slotIndex...",
+        Font            = Enum.Font.GothamBold,
+        TextSize        = 13,
+        TextColor3      = Color3.fromRGB(255,255,180),
+        PlaceholderColor3 = Color3.fromRGB(120,100,40),
+        ClearTextOnFocus  = false,
+    })
+    Corner(slotBox, 8)
+    Stroke(slotBox, Color3.fromRGB(180,130,30), 1.5, 0.2)
+    New("UIPadding",{Parent=slotBox,PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8)})
+
+    -- Validasi input: hanya angka, update JTP_slotIndex saat FocusLost
+    slotBox.FocusLost:Connect(function()
+        local raw = slotBox.Text:match("^%s*(%d+)%s*$")
+        if raw then
+            local val = tonumber(raw)
+            if val and val > 0 then
+                JTP_slotIndex = val
+                slotBox.Text = tostring(val)
+                JTPStat("[v] SlotIndex diset ke "..tostring(val), Color3.fromRGB(220,170,40))
+            else
+                slotBox.Text = tostring(JTP_slotIndex)  -- revert jika invalid
+            end
+        else
+            slotBox.Text = tostring(JTP_slotIndex)  -- revert jika bukan angka
+        end
+    end)
+
+    -- Juga update real-time saat GET SLOT INDEX auto-detect berhasil
+    local function UpdateSlotBox(val)
+        JTP_slotIndex = val
+        pcall(function() slotBox.Text = tostring(val) end)
+    end
+
     -- -- JOIN button ------------------------------------------------------?
     local joinBtn = Btn(jtpInner, Color3.fromRGB(15,35,110), UDim2.new(1,0,0,40))
-    joinBtn.LayoutOrder = 4; Corner(joinBtn,10)
+    joinBtn.LayoutOrder = 6; Corner(joinBtn,10)
     Stroke(joinBtn, Color3.fromRGB(55,105,255), 2, 0.05)
     local joinLbl = Label(joinBtn,"[JOIN]to Tower Map 2",15,
         Color3.fromRGB(148,195,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
@@ -17430,7 +17248,7 @@ do
     -- -- BACK TO MAP 2 button ---------------------------------------------
     -- Remote: StartLocalPlayerTeleport:FireServer({mapId=50002})
     local backBtn = Btn(jtpInner, Color3.fromRGB(60,20,20), UDim2.new(1,0,0,36))
-    backBtn.LayoutOrder = 5; Corner(backBtn,10)
+    backBtn.LayoutOrder = 7; Corner(backBtn,10)
     Stroke(backBtn, Color3.fromRGB(220,80,80), 1.5, 0.1)
     local backLbl = Label(backBtn,"[BACK]  BACK TO MAP 2",13,
         Color3.fromRGB(255,140,140), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
@@ -17482,7 +17300,7 @@ do
         JTP_joining = true
         joinLbl.Text = "JOINING..."
         joinLbl.TextColor3 = C.YEL
-        JTPStat("[JOIN] Menuju room "..entry.name.." (hostId="..entry.userId..")...", C.YEL)
+        JTPStat("[JOIN] Menuju room "..entry.name.." (hostId="..entry.userId..", slot="..tostring(JTP_slotIndex)..")...", C.YEL)
 
         task.spawn(function()
             local ok, err = pcall(function()
@@ -17494,28 +17312,43 @@ do
 
                 if not reLocalTp then error("Remote LocalPlayerTeleport tidak ditemukan!") end
 
-                -- == Step 1: LocalPlayerTeleport (sesuai SimpleSpy capture) ==
-                -- args[1] = { mapId = 50301, hostId = UserId_target }
-                reLocalTp:FireServer({mapId = JTP_MAPID, hostId = entry.userId})
-                PingWait(0.35)
-
-                -- == Step 2: StartLocalPlayerTeleport ==
-                if reStartTp then
-                    reStartTp:FireServer({mapId = JTP_MAPID, hostId = entry.userId})
-                end
-                PingWait(0.4)
-
-                -- == Step 3: EquipHeroWithData ==
+                -- [FIX v62] Urutan sesuai SPY capture saat manual join tower:
+                -- EquipHero -> LocalTp#1 -> StartLocalTp -> LocalTp#2
+                
+                -- == Step 1: EquipHeroWithData ==
                 if reEquip then
                     pcall(function() reEquip:FireServer() end)
                 end
-                PingWait(0.3)
+                task.wait(0.3)
 
-                -- == Step 4: LocalPlayerTeleportSuccess ==
-                if reTpSucc then
-                    PingGuard()
-                    pcall(function() reTpSucc:InvokeServer() end)
+                -- == Step 2: LocalPlayerTeleport (FIRST CALL) ==
+                -- args = { mapId = 50301, hostId = UserId_target }
+                reLocalTp:FireServer({mapId = 50301, hostId = entry.userId})
+                task.wait(0.35)
+
+                -- == Step 3: StartLocalPlayerTeleport ==
+                if reStartTp then
+                    reStartTp:FireServer({mapId = 50301, hostId = entry.userId})
                 end
+                task.wait(0.4)
+
+                -- == Step 4: LocalPlayerTeleport (SECOND CALL - PENTING!) ==
+                -- [FIX v62] LocalPlayerTeleport dipanggil 2x - ini yang hilang di script lama!
+                reLocalTp:FireServer({mapId = 50301, hostId = entry.userId})
+                task.wait(0.3)
+
+                -- == Step 5: LocalPlayerTeleportSuccess ==
+                -- [FIX v63] slotIndex = JTP_slotIndex (dipilih manual / auto-get dari akun UTAMA)
+                -- mapId = 50301 (Tower Map 2)
+                if reTpSucc then
+                    pcall(function()
+                        reTpSucc:InvokeServer({
+                            slotIndex = JTP_slotIndex,
+                            mapId     = 50301
+                        })
+                    end)
+                end
+                task.wait(0.2)
             end)
 
             JTP_joining = false
@@ -17537,12 +17370,10 @@ do
     end -- if p
 end -- do JTP
 
--- ============================================================
 -- PANEL : JOIN TO RAID PLAYER (UI)
 -- SCAN  = ambil semua player di server
 -- JOIN  = StartLocalPlayerTeleport {hostId, mapId}
 --         mapId auto-detect dari RAID_LIVE (ASC=503xx, Normal=501xx)
--- ============================================================
 do
     local p = Panels["autoraid"]
     if p then
@@ -17579,7 +17410,7 @@ do
     -- -- Resize helper ------------------------------------------------------
     local function ResizeJTRBody()
         task.spawn(function()
-            PingWait(0)
+            task.wait(0)
             jtrLayout:ApplyLayout()
             local h = jtrLayout.AbsoluteContentSize.Y + 16
             jtrInner.Size = UDim2.new(1,0,0,h)
@@ -17866,17 +17697,15 @@ do
 
                 -- Step 1: StartLocalPlayerTeleport (hostId + mapId only)
                 JTRStat("[1/3] Teleport ke raid "..entry.name.."...", C.YEL)
-                PingGuard()
                 reStartTp:FireServer({hostId = entry.userId, mapId = mapId})
-                PingWait(0.5)
+                task.wait(0.5)
 
                 -- Step 2: EquipHeroWithData
                 if reEquip then pcall(function() reEquip:FireServer() end) end
-                PingWait(0.3)
+                task.wait(0.3)
 
                 -- Step 3: LocalPlayerTeleportSuccess
                 if reTpSucc then
-                    PingGuard()
                     pcall(function() reTpSucc:InvokeServer() end)
                 end
             end)
@@ -17903,13 +17732,12 @@ end -- do JTR
 
 -- Pasang listener dungeon segera setelah GUI load (scan state walau toggle OFF)
 task.spawn(function()
- PingWait(6) -- buffer setelah ConnectUpdateCityRaidListener
+ task.wait(6) -- buffer setelah ConnectUpdateCityRaidListener
  ConnectDungeonListener()
 end)
 
 
 -- PANEL : CLAIM REWARD
--- ============================================================
 do
  local p = NewPanel("claim")
  SectionHeader(p,"AUTO CLAIM REWARD",0)
@@ -17988,7 +17816,7 @@ do
  fn(sub, SetStatus)
  btn.BackgroundColor3 = C.GRN
  btnLbl.Text = "v"
- PingWait(2)
+ task.wait(2)
  btn.BackgroundColor3 = C.ACC
  btnLbl.Text = "CLAIM"
  end)
@@ -18014,7 +17842,6 @@ do
 
  for id = 1, 200 do
  local ok, res = pcall(function()
- PingGuard()
  return RE:InvokeServer({id = tostring(id)})
  end)
  tried = tried + 1
@@ -18037,7 +17864,7 @@ do
  -- Sebelum claim pertama: scan terus tanpa stop
  end
 
- PingWait(0.05)
+ task.wait(0.05)
  end
 
  if claimed > 0 then
@@ -18057,7 +17884,7 @@ do
  status("[..] Claiming season task reward...", C.YEL)
  local ok, res = pcall(function() return RE:FireServer() end)
  Log("[C] SeasonTask -> ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.RED)
- PingWait(0.5)
+ task.wait(0.5)
  status("[OK] Season Task Reward diklaim", C.GRN)
  sub.Text = "Last: CLAIM SUCCES"
  sub.TextColor3 = C.GRN
@@ -18070,7 +17897,7 @@ do
  status("[..] Claiming season pass reward...", C.YEL)
  local ok, res = pcall(function() return RE:FireServer() end)
  Log("[T] SeasonPass -> ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.RED)
- PingWait(0.5)
+ task.wait(0.5)
  status("[OK] Season Pass Reward DONE", C.GRN)
  sub.Text = "LAST: DONE"
  sub.TextColor3 = C.GRN
@@ -18086,7 +17913,7 @@ do
  status("[..] Claiming season reward...", C.YEL)
  local ok, res = pcall(function() return RE:FireServer() end)
  Log("[W] SeasonReward -> ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.RED)
- PingWait(0.5)
+ task.wait(0.5)
  status("[OK] Season Reward DONE", C.GRN)
  sub.Text = "LAST: DONE"
  sub.TextColor3 = C.GRN
@@ -18102,7 +17929,7 @@ do
  local ok, res = pcall(function() return RE:FireServer(day) end)
  Log("[D] Day "..day.." -> ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.DIM)
  if ok then claimed = claimed + 1 end
- PingWait(0.3)
+ task.wait(0.3)
  end
  status("[OK] 7 Day Login DONE - "..claimed.."/7 CLAIM", C.GRN)
  sub.Text = "LAST: "..claimed.."/7 DAY CLAIM"
@@ -18116,7 +17943,7 @@ do
  status("[..] Claiming daily task reward...", C.YEL)
  local ok, res = pcall(function() return RE:FireServer() end)
  Log("[D] DailyTask -> ok="..tostring(ok).." res="..tostring(res), ok and C.GRN or C.RED)
- PingWait(0.5)
+ task.wait(0.5)
  if ok then
  status("[OK] Daily Task Reward DONE", C.GRN)
  sub.Text = "LAST: DONE"
@@ -18144,7 +17971,6 @@ do
  SetStatus("[G] Online Reward SCAN...", C.YEL)
  local fail, ever = 0, false
  for id = 1, 200 do
- PingGuard()
  local ok, res = pcall(function() return RE1:InvokeServer({id = tostring(id)}) end)
  if ok and res == true then
  fail = 0; ever = true
@@ -18153,7 +17979,7 @@ do
  fail = fail + 1
  if fail >= 15 then break end
  end
- PingWait(0.05)
+ task.wait(0.05)
  end
  end
 
@@ -18162,7 +17988,7 @@ do
  if RE2 then
  SetStatus("[C] Season Task...", C.YEL)
  pcall(function() RE2:FireServer() end)
- PingWait(0.3)
+ task.wait(0.3)
  end
 
  -- Season Pass
@@ -18170,7 +17996,7 @@ do
  if RE3 then
  SetStatus("[T] Season Pass...", C.YEL)
  pcall(function() RE3:FireServer() end)
- PingWait(0.3)
+ task.wait(0.3)
  end
 
  -- 7 Day Login
@@ -18179,7 +18005,7 @@ do
  SetStatus("[D] 7 Day Login...", C.YEL)
  for day = 1, 7 do
  pcall(function() RE4:FireServer(day) end)
- PingWait(0.2)
+ task.wait(0.2)
  end
  end
 
@@ -18188,22 +18014,20 @@ do
  if RE6 then
  SetStatus("[D] Daily Task Reward...", C.YEL)
  pcall(function() RE6:FireServer() end)
- PingWait(0.3)
+ task.wait(0.3)
  end
 
  SetStatus("[OK] Claim All DONE!", C.GRN)
  allBtn.BackgroundColor3 = C.GRN
  allLbl.Text = "CLAIM ALL DONE"
- PingWait(1)
+ task.wait(1)
  allBtn.BackgroundColor3 = C.ACC
  allLbl.Text = "CLAIM ALL"
  end)
  end)
 end
 
--- ============================================================
 -- ANNIVERSARY CELEBRATION - State
--- ============================================================
 ANNIV = {
     running        = false,
     thread         = nil,
@@ -18221,9 +18045,7 @@ local function AnnivStatus(msg, color)
     end
 end
 
--- ============================================================
 -- PANEL : ANNIVERSARY CELEBRATION (UI)
--- ============================================================
 do
     local p = Panels["autoraid"]
     if not p then return end
@@ -18377,24 +18199,22 @@ do
                     if quitRe then
                         pcall(function() quitRe:FireServer({ currentSlotIndex = 2, toMapId = LOBBY_ID }) end)
                     end
-                    PingWait(0.3)
+                    task.wait(0.3)
                     pcall(function() RE.LocalTp:FireServer({ mapId = LOBBY_ID }) end)
                     -- Retry sampai benar-benar di lobby (maks 5x)
                     local exitTry = 0
                     while not IsInLobby() and exitTry < 5 and ANNIV.running do
                         exitTry = exitTry + 1
-                        PingWait(1)
+                        task.wait(1)
                         if quitRe then
                             pcall(function() quitRe:FireServer({ currentSlotIndex = 2, toMapId = LOBBY_ID }) end)
                         end
-                        PingWait(0.2)
+                        task.wait(0.2)
                         pcall(function() RE.LocalTp:FireServer({ mapId = LOBBY_ID }) end)
                     end
                 end
 
-                -- ════════════════════════════════════════════════
                 -- MAIN LOOP
-                -- ════════════════════════════════════════════════
                 local failCount = 0
                 local FAIL_LIMIT = 3
 
@@ -18405,7 +18225,6 @@ do
                     -- Step 1: GetActivityRaidRewardCount (pre-check)
                     AnnivStatus("[1/9] Checking reward count...", Color3.fromRGB(240,165,0))
                     local ok1, err1 = pcall(function()
-                        PingGuard()
                         Remotes.GetActivityRaidRewardCount:InvokeServer(RAID_ID)
                     end)
                     if not ok1 or not ANNIV.running then
@@ -18414,12 +18233,11 @@ do
                         if _setAnnivRunToggle then _setAnnivRunToggle(false) end
                         break
                     end
-                    PingWait(0.5)
+                    task.wait(0.5)
 
                     -- Step 2: CreateRaidTeam
                     AnnivStatus("[2/9] Creating raid team...", Color3.fromRGB(240,165,0))
                     local ok2, err2 = pcall(function()
-                        PingGuard()
                         Remotes.CreateRaidTeam:InvokeServer(RAID_ID)
                     end)
                     if not ok2 or not ANNIV.running then
@@ -18428,20 +18246,18 @@ do
                         if _setAnnivRunToggle then _setAnnivRunToggle(false) end
                         break
                     end
-                    PingWait(0.5)
+                    task.wait(0.5)
 
                     -- Step 3: GetActivityRaidRewardCount (post-create)
                     AnnivStatus("[3/9] Re-checking reward count...", Color3.fromRGB(240,165,0))
                     pcall(function()
-                        PingGuard()
                         Remotes.GetActivityRaidRewardCount:InvokeServer(RAID_ID)
                     end)
-                    PingWait(0.5)
+                    task.wait(0.5)
 
                     -- Step 4: UseItem - pakai tiket masuk
                     AnnivStatus("[4/9] Using entry ticket (itemId "..ITEM_ID..")...", Color3.fromRGB(240,165,0))
                     local ok4, err4 = pcall(function()
-                        PingGuard()
                         Remotes.UseItem:InvokeServer({ useCount = 1, itemId = ITEM_ID })
                     end)
                     if not ok4 or not ANNIV.running then
@@ -18450,15 +18266,14 @@ do
                         if _setAnnivRunToggle then _setAnnivRunToggle(false) end
                         break
                     end
-                    PingWait(0.5)
+                    task.wait(0.5)
 
                     -- Step 5: GetActivityRaidRewardCount (post-use)
                     AnnivStatus("[5/9] Re-checking after ticket use...", Color3.fromRGB(240,165,0))
                     pcall(function()
-                        PingGuard()
                         Remotes.GetActivityRaidRewardCount:InvokeServer(RAID_ID)
                     end)
-                    PingWait(0.5)
+                    task.wait(0.5)
 
                     -- Step 6: StartChallengeRaidMap
                     AnnivStatus("[6/9] Starting challenge raid map...", Color3.fromRGB(240,165,0))
@@ -18471,7 +18286,7 @@ do
                         if _setAnnivRunToggle then _setAnnivRunToggle(false) end
                         break
                     end
-                    PingWait(0.5)
+                    task.wait(0.5)
 
                     -- Step 7: StartLocalPlayerTeleport masuk anniversary
                     AnnivStatus("[7/9] Teleporting to anniversary map...", Color3.fromRGB(240,165,0))
@@ -18489,17 +18304,16 @@ do
                         if _setAnnivRunToggle then _setAnnivRunToggle(false) end
                         break
                     end
-                    PingWait(1)
+                    task.wait(1)
 
                     -- Step 8: EquipHeroWithData
                     AnnivStatus("[8/9] Equipping hero...", Color3.fromRGB(240,165,0))
                     pcall(function() Remotes.EquipHeroWithData:FireServer() end)
-                    PingWait(0.5)
+                    task.wait(0.5)
 
                     -- Step 9: LocalPlayerTeleportSuccess
                     AnnivStatus("[9/9] Confirming teleport success...", Color3.fromRGB(240,165,0))
                     local ok9, err9 = pcall(function()
-                        PingGuard()
                         Remotes.LocalPlayerTeleportSuccess:InvokeServer()
                     end)
                     if not ok9 or not ANNIV.running then
@@ -18514,7 +18328,7 @@ do
                     AnnivStatus("[..] Validasi masuk map...", Color3.fromRGB(240,165,0))
                     local checkT = 0
                     while checkT < 4 and not IsInAnnivMap() do
-                        PingWait(0.5); checkT = checkT + 0.5
+                        task.wait(0.5); checkT = checkT + 0.5
                     end
 
                     if not IsInAnnivMap() then
@@ -18532,13 +18346,13 @@ do
                             break
                         end
                         -- Cooldown sebelum retry
-                        PingWait(2)
+                        task.wait(2)
                         -- Kembali ke atas while loop (coba entry lagi)
                     else
                         -- Berhasil masuk - reset fail counter
                         failCount = 0
                         AnnivStatus("[OK] Berhasil masuk Anniversary Map! Jeda 2s...", Color3.fromRGB(46,204,64))
-                        PingWait(2)
+                        task.wait(2)
 
                         -- ── PHASE 2: TP KE MUSUH ─────────────────────────────
                         AnnivStatus("[TP] Teleport ke RaidsEnemys.4035...", Color3.fromRGB(240,165,0))
@@ -18546,19 +18360,19 @@ do
                         for i = 1, 5 do
                             if TpToAnnivEnemy() then tpOk = true; break end
                             AnnivStatus("[TP] Tunggu RaidsEnemys.4035... ("..i.."/5)", Color3.fromRGB(240,165,0))
-                            PingWait(1)
+                            task.wait(1)
                         end
                         if not tpOk or not ANNIV.running then
                             AnnivStatus("[X] RaidsEnemys.4035 tidak ditemukan, exit...", Color3.fromRGB(200,50,50))
                             ExitToLobby()
-                            PingWait(2)
+                            task.wait(2)
                         else
                             -- ── PHASE 3: UNEQUIP + EQUIP BEST ────────────────
                             AnnivStatus("[EQUIP] UnequipAll & AutoEquipBest...", Color3.fromRGB(240,165,0))
                             pcall(function() Remotes.UnequipAllHero:FireServer() end)
-                            PingWait(0.4)
+                            task.wait(0.4)
                             pcall(function() Remotes.AutoEquipBestHero:FireServer() end)
-                            PingWait(0.6)
+                            task.wait(0.6)
 
                             -- ── PHASE 4: ATTACK LOOP ──────────────────────────
                             -- Target: semua musuh dalam radius 50 studs dari posisi Player
@@ -18570,7 +18384,7 @@ do
                             local spawnWait = 0
                             while spawnWait < 8 and #GetAnnivEnemies() == 0 and ANNIV.running do
                                 AnnivStatus("[ATK] Tunggu musuh spawn... ("..math.floor(8-spawnWait).."s)", Color3.fromRGB(240,165,0))
-                                PingWait(0.5); spawnWait = spawnWait + 0.5
+                                task.wait(0.5); spawnWait = spawnWait + 0.5
                             end
 
                             -- Rekam posisi Player tepat setelah TP sebagai titik acuan radius
@@ -18632,14 +18446,14 @@ do
                                 end
 
                                 AnnivStatus("[ATK] Serang... ("..#inRange.." musuh <= "..ATTACK_RADIUS.."studs)", Color3.fromRGB(240,165,0))
-                                PingWait(0.08)
+                                task.wait(0.08)
                             end
 
                             if not ANNIV.running then break end
 
                             -- ── PHASE 4b: PLAYER + HERO DIAM 1 DETIK ─────────
                             AnnivStatus("[..] Diam 1s setelah attack...", Color3.fromRGB(100,200,100))
-                            PingWait(1)
+                            task.wait(1)
 
                             -- ── PHASE 5: EXIT KE LOBBY ───────────────────────
                             AnnivStatus("[EXIT] Keluar ke lobby...", Color3.fromRGB(240,165,0))
@@ -18648,7 +18462,7 @@ do
                             -- Tunggu konfirmasi sudah di lobby (maks 6 detik)
                             local lobbyWait = 0
                             while not IsInLobby() and lobbyWait < 6 and ANNIV.running do
-                                PingWait(0.5); lobbyWait = lobbyWait + 0.5
+                                task.wait(0.5); lobbyWait = lobbyWait + 0.5
                             end
 
                             if IsInLobby() then
@@ -18658,7 +18472,7 @@ do
                             end
 
                             -- ── PHASE 6: COOLDOWN 2s SEBELUM LOOP ULANG ──────
-                            PingWait(2)
+                            task.wait(2)
                             if ANNIV.running then
                                 AnnivStatus("[LOOP] Mulai ulang Anniversary...", Color3.fromRGB(240,165,0))
                             end
@@ -18700,11 +18514,10 @@ do
                 end
                 while ANNIV.spinEnabled do
                     pcall(function()
-                        PingGuard()
                         spinRE:InvokeServer(1)
                     end)
                     AnnivStatus("[>>] Spinning Gems...", Color3.fromRGB(240,165,0))
-                    PingWait(1)
+                    task.wait(1)
                 end
                 AnnivStatus("[||] Spin Gems OFF.", Color3.fromRGB(100,100,100))
             end)
@@ -18745,10 +18558,9 @@ do
             for i, arg in ipairs(CLAIM_ARGS) do
                 AnnivStatus("[..] Claiming Gem ("..i.."/"..#CLAIM_ARGS..") arg="..arg.."...", Color3.fromRGB(240,165,0))
                 pcall(function()
-                    PingGuard()
                     spinTicket:InvokeServer(arg)
                 end)
-                PingWait(0.5)
+                task.wait(0.5)
             end
             AnnivStatus("[OK] ALL CLAIM DONE!", Color3.fromRGB(46,204,64))
             claimBtn.Active = true
@@ -18758,18 +18570,12 @@ do
     task.defer(ResizeAnnivBody)
 end
 
--- ============================================================
 -- WEBHOOK SENDER
--- ============================================================
--- ============================================================
 -- PANEL : SETTINGS
--- ============================================================
 do
  local p = NewPanel("settings")
 
- -- ============================================================
  -- GIFT CODE CLAIMER
- -- ============================================================
  SectionHeader(p, "Gift Code Claimer", 0)
 
  local gcCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
@@ -18791,7 +18597,7 @@ do
 
  local gcBtn = Btn(gcBtnRow, C.ACC, UDim2.new(1,0,1,0))
  Corner(gcBtn, 8); Stroke(gcBtn, C.ACC2, 1.5, 0.3)
- local gcBtnLbl = Label(gcBtn, "CLAIM GIFT CODE (1-150)", 12, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+ local gcBtnLbl = Label(gcBtn, "CLAIM GIFT CODE", 12, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
  gcBtnLbl.Size = UDim2.new(1,0,1,0)
 
  local _gcRunning = false
@@ -18807,7 +18613,7 @@ do
   if not gcRemote then
    gcStatusLbl.Text = "[!] Remote GiftCodeReceived tidak ditemukan"
    gcStatusLbl.TextColor3 = Color3.fromRGB(220,80,80)
-   gcBtnLbl.Text = "CLAIM GIFT CODE (1-150)"
+   gcBtnLbl.Text = "CLAIM GIFT CODE"
    gcBtn.BackgroundColor3 = C.ACC
    _gcRunning = false
    return
@@ -18819,7 +18625,6 @@ do
    for i = 1, 150 do
     if not _gcRunning then break end
     local ok, _ = pcall(function()
-     PingGuard()
      gcRemote:InvokeServer(i)
     end)
     if ok then
@@ -18829,11 +18634,11 @@ do
     end
     gcStatusLbl.Text = "Claiming... "..i.."/150  (ok:"..claimed.." gagal:"..failed..")"
     gcStatusLbl.TextColor3 = C.TXT3
-    PingWait(0.15)
+    task.wait(0.15)
    end
    gcStatusLbl.Text = "Selesai. Berhasil: "..claimed.."  Gagal: "..failed
    gcStatusLbl.TextColor3 = Color3.fromRGB(100,220,100)
-   gcBtnLbl.Text = "CLAIM GIFT CODE (1-150)"
+   gcBtnLbl.Text = "CLAIM GIFT CODE"
    gcBtn.BackgroundColor3 = C.ACC
    _gcRunning = false
   end)
@@ -18841,212 +18646,50 @@ do
 
 
 
- -- ============================================================
- -- SERVER INFO SECTION
- -- ============================================================
- SectionHeader(p, "Server Info", 1)
-
- -- Card utama server info
- local siCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
- siCard.LayoutOrder = 2
- siCard.AutomaticSize = Enum.AutomaticSize.Y
- Corner(siCard, 10); Stroke(siCard, C.BORD, 1.5, 0.88)
- Padding(siCard, 10, 10, 12, 10)
- New("UIListLayout", {Parent=siCard, SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,6)})
-
- -- Helper buat baris info (label + value + copy btn opsional)
- local function InfoRow(order, labelTxt, valueTxt, valColor, showCopy)
-  local row = Frame(siCard, C.CARD or C.BG3, UDim2.new(1,0,0,44))
-  row.LayoutOrder = order; Corner(row, 8); Stroke(row, C.BORD, 1.2, 0.7)
-
-  -- Label kecil atas
-  local topLbl = Label(row, labelTxt, 9, C.TXT3, Enum.Font.GothamBold)
-  topLbl.Size = UDim2.new(1,-66,0,13); topLbl.Position = UDim2.new(0,12,0,6)
-
-  -- Value label bawah
-  local valLbl = Label(row, valueTxt or "-", 10, valColor or C.TXT2, Enum.Font.GothamBold)
-  valLbl.Size = UDim2.new(1,-66,0,16); valLbl.Position = UDim2.new(0,12,0,22)
-  valLbl.TextTruncate = Enum.TextTruncate.AtEnd
-
-  -- Copy button (hanya jika showCopy = true)
-  if showCopy then
-   local copyBtn = Btn(row, C.BORD, UDim2.new(0,46,0,22))
-   copyBtn.AnchorPoint = Vector2.new(1,0.5); copyBtn.Position = UDim2.new(1,-8,0.5,0)
-   Corner(copyBtn, 6)
-   local copyLbl = Label(copyBtn, "copy", 9, C.TXT2, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
-   copyLbl.Size = UDim2.new(1,0,1,0)
-   copyBtn.MouseButton1Click:Connect(function()
-    pcall(function() setclipboard(valLbl.Text) end)
-    copyLbl.Text = "OK"; copyLbl.TextColor3 = C.ACC
-    PingWait(1.2)
-    copyLbl.Text = "copy"; copyLbl.TextColor3 = C.TXT2
-   end)
-  end
-
-  return valLbl
- end
-
- -- Data server
- local function GetServerId()
-  return GetCachedServerId()
- end
-
- local siServerLbl = InfoRow(1, "SERVER ID", GetServerId(), C.ACC, true)
- local siJobLbl    = InfoRow(2, "JOB ID", game.JobId ~= "" and game.JobId or "N/A", Color3.fromRGB(255,200,60), true)
- 
-    -- [PING GUARD] Status label jaringan
-    local siNetStatusLbl = InfoRow(4, "NET STATUS", "...", Color3.fromRGB(60,220,130), false)
-    -- [FIX] Sambungkan ke _pingStatusLbl global agar PingGuard() bisa update label ini
-    _pingStatusLbl = siNetStatusLbl
-    do
-        local _netConn
-        _netConn = game:GetService("RunService").Heartbeat:Connect(function()
-            if not siNetStatusLbl or not siNetStatusLbl.Parent then
-                pcall(function() _netConn:Disconnect() end); return
-            end
-            -- [FIX] Jika PingGuard sedang menampilkan pesan buruk, jangan timpa
-            -- (PingGuard akan reset sendiri setelah selesai)
-            local ms = GetPing()
-            local status, col
-            if ms <= 80 then
-                status = "GOOD ("..ms.."ms) - 1x speed"
-                col = Color3.fromRGB(60, 220, 130)
-            elseif ms <= 150 then
-                status = "MEDIUM ("..ms.."ms) - 1.5x delay"
-                col = Color3.fromRGB(255, 200, 60)
-            elseif ms <= 300 then
-                status = "BAD ("..ms.."ms) - 2.5x delay"
-                col = Color3.fromRGB(255, 130, 40)
-            else
-                status = "WORST ("..ms.."ms) - 4x delay — semua fitur ditahan"
-                col = Color3.fromRGB(255, 60, 60)
-            end
-            siNetStatusLbl.Text = status
-            siNetStatusLbl.TextColor3 = col
-        end)
-    end
-
-    local siPingLbl   = InfoRow(3, "PING (ms)", "...", Color3.fromRGB(60,220,130), false)
-
- -- Realtime ping update
- do
-  local function PingColor(ms)
-   if ms <= 60 then return Color3.fromRGB(60,220,130)
-   elseif ms <= 120 then return Color3.fromRGB(255,200,60)
-   else return Color3.fromRGB(255,80,80) end
-  end
-  local _pingConn
-  _pingConn = game:GetService("RunService").Heartbeat:Connect(function()
-   if not siPingLbl or not siPingLbl.Parent then
-    pcall(function() _pingConn:Disconnect() end); return
-   end
-   local ok, ping = pcall(function()
-    return math.floor(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
-   end)
-   if ok and ping and ping > 0 then
-    siPingLbl.Text = tostring(ping).." ms"
-    siPingLbl.TextColor3 = PingColor(ping)
-   end
-  end)
- end
-
- -- ============================================================
- -- JOIN SERVER BY ID
- -- ============================================================
- SectionHeader(p, "Join Server by ID", 10)
-
- local joinCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,0))
- joinCard.LayoutOrder = 11
- joinCard.AutomaticSize = Enum.AutomaticSize.Y
- Corner(joinCard, 10); Stroke(joinCard, C.BORD, 1.5, 0.88)
- Padding(joinCard, 10, 10, 12, 10)
- New("UIListLayout", {Parent=joinCard, SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,8)})
-
- -- Sub label
- local joinSub = Label(joinCard, "Masukkan Server ID / Job ID lalu tekan JOIN", 9.5, C.TXT3, Enum.Font.GothamBold)
- joinSub.Size = UDim2.new(1,0,0,13); joinSub.LayoutOrder = 0
-
- -- TextBox input
- local joinBox = New("TextBox", {
-  Parent              = joinCard,
-  Size                = UDim2.new(1,0,0,30),
-  BackgroundColor3    = C.BG3 or C.CARD or Color3.fromRGB(14,15,25),
-  BorderSizePixel     = 0,
-  TextSize            = 11,
-  Font                = Enum.Font.GothamBold,
-  TextColor3          = C.TXT2,
-  PlaceholderColor3   = C.DIM,
-  PlaceholderText     = "Example: 3ce78053-7a0e-4641-acf4-98f312675b38",
-  Text                = "",
-  TextXAlignment      = Enum.TextXAlignment.Left,
-  ClearTextOnFocus    = false,
-  LayoutOrder         = 1,
- })
- Corner(joinBox, 7); Stroke(joinBox, C.BORD, 1.5, 0.7)
- New("UIPadding", {Parent=joinBox, PaddingLeft=UDim.new(0,8), PaddingRight=UDim.new(0,8)})
-
- -- Tombol JOIN
- local joinBtn = Btn(joinCard, C.ACC or Color3.fromRGB(80,140,255), UDim2.new(1,0,0,32))
- joinBtn.LayoutOrder = 2; Corner(joinBtn, 8)
- New("UIStroke", {Parent=joinBtn, Color=C.ACC2 or Color3.fromRGB(50,90,200), Thickness=1.2, Transparency=0.4})
- local joinBtnLbl = Label(joinBtn, "JOIN SERVER", 12, Color3.fromRGB(255,255,255), Enum.Font.GothamBold, Enum.TextXAlignment.Center)
- joinBtnLbl.Size = UDim2.new(1,0,1,0)
-
- -- Status label
- local joinStatus = Label(joinCard, "", 9.5, C.TXT3, Enum.Font.GothamBold)
- joinStatus.Size = UDim2.new(1,0,0,13); joinStatus.LayoutOrder = 3
-
- -- Join logic
- joinBtn.MouseButton1Click:Connect(function()
-  local raw = joinBox.Text:match("^%s*(.-)%s*$") -- trim
-  if raw == "" then
-   joinStatus.TextColor3 = Color3.fromRGB(255,80,80)
-   joinStatus.Text = "[!] Server ID tidak boleh kosong!"
-   return
-  end
-
-  -- Strip prefix "wp" jika ada (Roblox butuh pure JobId UUID)
-  local jobId = raw:match("^wp(.+)$") or raw
-
-  -- Validasi format UUID sederhana
-  if not jobId:match("^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") then
-   joinStatus.TextColor3 = Color3.fromRGB(255,80,80)
-   joinStatus.Text = "[!] Format ID tidak valid! Cek kembali."
-   return
-  end
-
-  joinStatus.TextColor3 = Color3.fromRGB(255,200,60)
-  joinStatus.Text = "Connecting ke server..."
-  joinBtnLbl.Text = "JOINING..."
-
-  task.spawn(function()
-   local ok, err = pcall(function()
-    local TS = game:GetService("TeleportService")
-    TS:TeleportToPlaceInstance(game.PlaceId, jobId, game:GetService("Players").LocalPlayer)
-   end)
-   if not ok then
-    joinStatus.TextColor3 = Color3.fromRGB(255,80,80)
-    joinStatus.Text = "[ERR] Gagal join: "..(tostring(err):sub(1,60))
-    joinBtnLbl.Text = "JOIN SERVER"
-   end
-  end)
- end)
-
  -- Webhook section dipindah ke tab Webhook
+
+ -- ── SERVER TOOLS ─────────────────────────────────────────
+ SectionHeader(p, "Server Tools", 20)
+
+ local function MakeServerBtn(order, title, sub, btnLabel, callback)
+  local card = Frame(p, C.SURFACE, UDim2.new(1,0,0,54))
+  card.LayoutOrder = order
+  Corner(card, 10); Stroke(card, C.BORD, 1.5, 0.88); Padding(card, 8, 8, 12, 8)
+
+  local titLbl = Label(card, title, 12, C.TXT, Enum.Font.GothamBold)
+  titLbl.Size = UDim2.new(0.7,0,0,18); titLbl.Position = UDim2.new(0,0,0,6)
+
+  local subLbl = Label(card, sub, 9.5, C.TXT3, Enum.Font.GothamBold)
+  subLbl.Size = UDim2.new(0.85,0,0,14); subLbl.Position = UDim2.new(0,0,0,28)
+
+  local btn = Btn(card, C.ACC, UDim2.new(0,76,0,32))
+  btn.Position = UDim2.new(1,-82,0.5,-16); Corner(btn, 10); Stroke(btn, C.ACC2, 1.5, 0.2)
+  local btnLbl = Label(btn, btnLabel, 11, C.BLACK, Enum.Font.GothamBold, Enum.TextXAlignment.Center)
+  btnLbl.Size = UDim2.new(1,0,1,0)
+
+  btn.MouseButton1Click:Connect(function()
+   btnLbl.Text = "..."
+   task.wait(0.4)
+   callback()
+   task.wait(0.6)
+   btnLbl.Text = btnLabel
+  end)
+ end
+
+ MakeServerBtn(21, "REJOIN SERVER",  "Masuk ulang ke server ID yang sama",   "REJOIN",  RejoinServer)
+ MakeServerBtn(22, "SERVER HOP",     "Join server lain secara random / acak", "HOP",     ServerHop)
+ MakeServerBtn(23, "SMALL SERVER",   "Join server dengan player paling sedikit (Ascending)", "JOIN",  SmallServer)
+
 end
 
--- ============================================================
 -- PANEL : WEBHOOK
--- ============================================================
 do
  local p = NewPanel("webhook")
 
  SectionHeader(p,"Raid Notif/Webhook",10)
 
  -- Info card
- -- info card dihapus (V142)
 
- -- [v52] Mode Notifikasi dropdown removed (SIEGE webhook disabled)
  -- URL input
  local urlCard = Frame(p, C.SURFACE, UDim2.new(1,0,0,58))
  urlCard.LayoutOrder=3; Corner(urlCard,9); Stroke(urlCard,C.BORD, 1.5,0.88); Padding(urlCard,8,8,10,10)
@@ -19177,7 +18820,7 @@ do
  if _done then return end; _done = true
  task.spawn(function()
  testLbl.Text="[OK] Sent!"; testLbl.TextColor3=Color3.fromRGB(100,255,100)
- PingWait(2.5)
+ task.wait(2.5)
  testLbl.Text=" Test Webhook"; testLbl.TextColor3=C.TXT
  end)
  end,
@@ -19185,7 +18828,7 @@ do
  if _done then return end; _done = true
  task.spawn(function()
  testLbl.Text=""..err; testLbl.TextColor3=Color3.fromRGB(255,80,60)
- PingWait(2.5)
+ task.wait(2.5)
  testLbl.Text=" Test Webhook"; testLbl.TextColor3=C.TXT
  end)
  end
@@ -19208,14 +18851,14 @@ do
  function()
  task.spawn(function()
  verLbl.Text="[OK] Link Valid!"; verLbl.TextColor3=Color3.fromRGB(100,255,100)
- PingWait(1)
+ task.wait(1)
  verLbl.Text="[] Verify Link"; verLbl.TextColor3=C.TXT
  end)
  end,
  function(err)
  task.spawn(function()
  verLbl.Text=""..err; verLbl.TextColor3=Color3.fromRGB(255,80,60)
- PingWait(1)
+ task.wait(1)
  verLbl.Text="[] Verify Link"; verLbl.TextColor3=C.TXT
  end)
  end
@@ -19263,26 +18906,22 @@ do
  end
  _whLastSent = tick()
  if _snDone then return end; _snDone = true
- PingWait(0.5)
+ task.wait(0.5)
  sendNowLbl.Text="[OK] Sent!"; sendNowLbl.TextColor3=Color3.fromRGB(100,255,100)
- PingWait(2.5)
+ task.wait(2.5)
  sendNowLbl.Text=" Send Notify Now"; sendNowLbl.TextColor3=C.TXT
  end)
  end)
 end
 
 
--- ============================================================
 -- INIT
--- ============================================================
 -- Pre-populate semua Ornament Quirk dengan nama lengkap
 -- Urutan: common (atas) -> rare (bawah)
 -- Format: {machineIdx, quirkId, "nama"}
 do
  local ORN_KNOWN = {
- -- 
  -- [1] HEADDRESS - machineId=400001
- -- 
  {1, 410001, "Glowing Blue Eyes"},
  {1, 410002, "Fox Ears"},
  {1, 410003, "Blossom Crown of the Abyss"},
@@ -19294,9 +18933,7 @@ do
  {1, 410009, "Bloodforged Casque"},
  {1, 410010, "Jester's Madness Cap"}, -- [*] RAREST
 
- -- 
  -- [2] ORNAMENT MACHINE - machineId=400002
- -- 
  {2, 410011, "Fox Brush"},
  {2, 410012, "Whale's Tail"},
  {2, 410013, "Dragon's Tail"},
@@ -19308,9 +18945,7 @@ do
  {2, 410019, "Prism Wings"},
  {2, 410020, "Omenwing of the Void"}, -- [*] RAREST
 
- -- 
  -- [3] WEALTH BLESSING - machineId=400003
- -- 
  {3, 410021, "Single Glow Bless"},
  {3, 410022, "Double Stack Bless"},
  {3, 410023, "Slant Bless"},
@@ -19322,9 +18957,7 @@ do
  {3, 410029, "Supreme Crown Gold"},
  {3, 410030, "Imperial Crown Full Bag"}, -- [*] RAREST
 
- -- 
  -- [4] SHADOWHUNTER BLESSING - machineId=400004
- -- 
  {4, 410031, "Shadowfelin Gaze"},
  {4, 410032, "Techowl Capture"},
  {4, 410033, "Beastglow Frame"},
@@ -19335,9 +18968,7 @@ do
  {4, 410038, "Galaxyvortex Lightning"},
  {4, 410039, "Demonhand Lightning"}, -- [*] RAREST
 
- -- 
  -- [5] PRIMORDIAL BLESSING - machineId=400005
- -- 
  {5, 410040, "Dawn's Spark"},
  {5, 410041, "Blade's Guide"},
  {5, 410042, "Edge's Glow"},
@@ -19348,9 +18979,7 @@ do
  {5, 410047, "Gold Star's Whisper"},
  {5, 410048, "Stardust's Fury"}, -- [*] RAREST
 
- -- 
  -- [6] MONARCH POWER - machineId=400006
- -- 
  {6, 410049, "Flames Power"},
  {6, 410050, "Giant Power"},
  {6, 410051, "Beast Power"},
@@ -19366,9 +18995,7 @@ do
  end
 end
 
--- ============================================================
 -- AUTO ROLL LOGIC - HERO
--- ============================================================
 do
  local LOOPS_HR = {}
 
@@ -19401,14 +19028,14 @@ do
  -- Cek GUID tersedia
  if not (_HR_RPT and _HR_RPT.guid and _HR_RPT.guid ~= "") then
  setSlot("[..] Klik 1x di Mesin Reroll dulu", Color3.fromRGB(255,150,50))
- PingWait(1); break
+ task.wait(1); break
  end
  -- Cek target dipilih - wajib ada sebelum roll
  local hasTarget = false
  for _ in pairs(targets) do hasTarget = true; break end
  if not hasTarget then
  setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- PingWait(1); break
+ task.wait(1); break
  end
 
  attempt = attempt + 1
@@ -19426,21 +19053,21 @@ do
  -- mencegah server crash "attempt to index nil with drawHeroid"
  if not _HR_RPT or not _HR_RPT.guid or _HR_RPT.guid == "" then
  setSlot("[!] HERO NOT FOUND - WAITING", Color3.fromRGB(255,150,50))
- PingWait(1); break
+ task.wait(1); break
  end
  if not drawId[si] or type(drawId[si]) ~= "number" then
  setSlot("[!] invalid"..si, Color3.fromRGB(255,100,60))
- PingWait(1); break
+ task.wait(1); break
  end
  if not RE.RandomHeroQuirk then
  setSlot("[!] Remote RandomHeroQuirk nil", Color3.fromRGB(255,80,80))
- PingWait(2); break
+ task.wait(2); break
  end
  -- x100 path
  if _HR_RPT.x100 then
   if not RE.AutoHeroQuirk then
    setSlot("[!] Remote AutoRandomHeroQuirk nil", Color3.fromRGB(255,80,80))
-   PingWait(2); break
+   task.wait(2); break
   end
   local stopIds = {}
   for _, q in ipairs(list) do
@@ -19448,12 +19075,11 @@ do
   end
   if #stopIds == 0 then
    setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
-   PingWait(1); break
+   task.wait(1); break
   end
   setSlot("[x100] Rolling #"..attempt.."..", Color3.fromRGB(100,200,255))
   _ourCall = true
   local ok100, res100 = pcall(function()
-   PingGuard()
    return RE.AutoHeroQuirk:InvokeServer({
     heroGuid = _HR_RPT.guid,
     drawId = drawId[si],
@@ -19463,7 +19089,7 @@ do
   _ourCall = false
   if not ok100 then
    setSlot("[!] x100 Error - retry", Color3.fromRGB(255,100,60))
-   PingWait(1); break
+   task.wait(1); break
   end
   -- [FIX] Parse result x100: scan DEEP (flat+nested+array) agar tidak kelewatan
   local gotId100, rawId100 = nil, nil
@@ -19511,13 +19137,12 @@ do
    local gn = (gotId100 and QUIRK_MAP[gotId100]) or (rawId100 and "ID:"..tostring(rawId100)) or "?"
    setSlot("[x100] #"..attempt.." Last: "..gn, Color3.fromRGB(80,180,255))
   end
-  PingWait(0.05); break
+  task.wait(0.05); break
  end
 
  -- Normal 1x path
  _ourCall = true
  local ok, res = pcall(function()
-  PingGuard()
   return RE.RandomHeroQuirk:InvokeServer({
    heroGuid = _HR_RPT.guid,
    drawId = drawId[si],
@@ -19525,7 +19150,7 @@ do
  end)
  _ourCall = false
  if not ok then
-  PingWait(1); break
+  task.wait(1); break
  end
 
  -- [FIX v38] Tangkap hasil quirk - scan luas tanpa filter QUIRK_MAP
@@ -19586,7 +19211,7 @@ do
  -- [FIX DEBUG] Tampilkan raw ID jika tidak dikenal di QUIRK_MAP
  if not hit and _rawId and not QUIRK_MAP[_rawId] then
  setSlot("[DBG] UnknownID:"..tostring(_rawId).." #"..attempt, Color3.fromRGB(200,150,255))
- PingWait(0.3); break
+ task.wait(0.3); break
  end
 
  if hit then
@@ -19599,7 +19224,7 @@ do
  return
  end
 
- PingWait(0.05)
+ task.wait(0.05)
  until true
  end
  end)
@@ -19626,10 +19251,10 @@ do
  -- Polling sampai GUID tersedia, lalu langsung mulai
  task.spawn(function()
  while not (_HR_RPT and _HR_RPT.guid and _HR_RPT.guid ~= "") do
- PingWait(0.5)
+ task.wait(0.5)
  end
  -- [FIX RACE] Jeda 1.5s agar server selesai proses manual click user
- PingWait(1.5)
+ task.wait(1.5)
  -- Pastikan toggle masih ON sebelum mulai
  if _HR_RPT and _HR_RPT.running then
  _HR_RPT.Refresh()
@@ -19642,9 +19267,7 @@ do
  end
 end
 
--- ============================================================
 -- AUTO ROLL LOGIC - WEAPON
--- ============================================================
 do
  local LOOPS_WR = {}
 
@@ -19676,14 +19299,14 @@ do
  repeat
  if not (_WR_RPT and _WR_RPT.guid and _WR_RPT.guid ~= "") then
  setSlot("[..] Click 1x on Reroll Machine", Color3.fromRGB(255,150,50))
- PingWait(1); break
+ task.wait(1); break
  end
  local hasTarget = false
  for _ in pairs(targets) do hasTarget = true; break end
  -- Wajib ada target sebelum roll
  if not hasTarget then
  setSlot("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- PingWait(1); break
+ task.wait(1); break
  end
 
  attempt = attempt + 1
@@ -19699,14 +19322,13 @@ do
 
  _ourCall = true
  local ok, res = pcall(function()
- PingGuard()
  return RE.RandomWeaponQuirk:InvokeServer({
  guid = _WR_RPT.guid,
  drawId = drawId[si],
  })
  end)
  _ourCall = false
- if not ok then PingWait(0.5); break end
+ if not ok then task.wait(0.5); break end
 
  -- [FIX v38] Tangkap hasil quirk weapon - scan luas tanpa filter W_QUIRK_MAP
  local gotId = nil
@@ -19753,7 +19375,7 @@ do
  -- [FIX DEBUG] Tampilkan raw ID jika tidak dikenal di W_QUIRK_MAP
  if not hit and _rawId and not W_QUIRK_MAP[_rawId] then
  setSlot("[DBG] UnknownID:"..tostring(_rawId).." #"..attempt, Color3.fromRGB(200,150,255))
- PingWait(0.3); break
+ task.wait(0.3); break
  end
 
  if hit then
@@ -19765,7 +19387,7 @@ do
  return
  end
 
- PingWait(0.05)
+ task.wait(0.05)
  until true
  end
  end)
@@ -19791,10 +19413,10 @@ do
  end
  task.spawn(function()
  while not (_WR_RPT and _WR_RPT.guid and _WR_RPT.guid ~= "") do
- PingWait(0.5)
+ task.wait(0.5)
  end
  -- [FIX RACE] Jeda 1.5s agar server selesai proses manual click user
- PingWait(1.5)
+ task.wait(1.5)
  if _WR_RPT and _WR_RPT.running then
  _WR_RPT.Refresh()
  for i = 1, 3 do StartWeaponSlot(i) end
@@ -19842,7 +19464,7 @@ do
  StartPetGearSlot(si)
  return
  end
- PingWait(0.5)
+ task.wait(0.5)
  end
  end)
  return
@@ -19855,14 +19477,14 @@ do
  -- Cek GUID
  if not (PGR.guids[si] and PGR.guids[si] ~= "") then
  setStatus("[..] Click 1x on Reroll Machine", Color3.fromRGB(180,220,255))
- PingWait(1); break
+ task.wait(1); break
  end
  -- Cek target - wajib ada sebelum roll
  local hasTarget = false
  for _ in pairs(PGR.targets[si]) do hasTarget = true; break end
  if not hasTarget then
  setStatus("[!] SELECT TARGET PLEASE!", Color3.fromRGB(255,100,60))
- PingWait(1); break
+ task.wait(1); break
  end
 
  attempt = attempt + 1
@@ -19873,7 +19495,6 @@ do
 
                         _ourCall = true
                         local ok, res = pcall(function()
-                            PingGuard()
                             return RE.RandomHeroEquipGrade:InvokeServer({
                                 guid   = PGR.guids[si],
                                 drawId = PG_DRAW_IDS[si],
@@ -19883,7 +19504,7 @@ do
 
  if not ok then
  setStatus("[!] Error - retry...", Color3.fromRGB(255,100,60))
- PingWait(0.5); break
+ task.wait(0.5); break
  end
 
  -- [v216] Parse gradeId rekursif - confirmed ada di res.data.grade
@@ -19933,7 +19554,7 @@ do
  PGR.lastLbls[si].Text = "Last: "..gradeName
  end
  end
- PingWait(0.05)
+ task.wait(0.05)
  until true
  end
  setStatus("[.] Idle", Color3.fromRGB(160,148,135))
@@ -19969,19 +19590,14 @@ do
  end
 end
 
--- ============================================================
--- ============================================================
 -- CAPTURE SYSTEM - TRIPLE METHOD (100% Reliable semua executor)
--- ============================================================
 do
--- ============================================================
 -- CAPTURE SYSTEM - __namecall hook + flag _ourCall
 -- Struktur identik dengan v42.lua yang terbukti bekerja benar:
 --   1. Bandingkan self dengan remote OBJECT (bukan string name)
 --   2. _old(self,...) dipanggil LANGSUNG - JANGAN dibungkus pcall
 --      karena pcall memutus __namecall context di Roblox/Delta
 --   3. _ourCall guard: saat script kita InvokeServer, bypass capture
--- ============================================================
 
 -- Helper: validasi GUID
 local function IsValidGUID(s)
@@ -20107,7 +19723,7 @@ local function SetupUniversalSpy()
         -- Fallback: polling PlayerManager setiap 2 detik
         task.spawn(function()
             while ScreenGui and ScreenGui.Parent do
-                PingWait(2)
+                task.wait(2)
                 pcall(function()
                     local _pm = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.PlayerManager)
                     if not _pm or not _pm.localPlayerData then return end
@@ -20154,15 +19770,11 @@ SwitchTab("main")
 RefreshStatus()
 if InitAllCaptureLayers then InitAllCaptureLayers() end
 
--- ============================================================
 -- PANEL : CONFIG
--- ============================================================
 do
  local p = NewPanel("config")
 
- -- ============================================================
  -- CONFIG FILE PATH
- -- ============================================================
  local CONFIG_FOLDER = "FLaConfigs"
 
  -- Helper folder
@@ -20185,9 +19797,7 @@ do
   return names
  end
 
- -- ============================================================
  -- JSON encode/decode minimal (untuk Luau tanpa loadstring)
- -- ============================================================
  local function jsonEncode(t, indent)
   indent = indent or 0
   local pad = string.rep(" ", indent)
@@ -20280,9 +19890,7 @@ do
   if ok then return val else return nil end
  end
 
- -- ============================================================
  -- COLLECT CONFIG STATE (snapshot semua state aktif saat ini)
- -- ============================================================
  local function CollectConfig()
   local cfg = {}
 
@@ -20476,7 +20084,6 @@ do
     if k == (_webhookMode or "both") then cfg.webhookModeIdx = i; break end
    end
   end)
-  -- cfg.potatoOn removed (Potato Mode dihapus)
 
   -- ── THEME ────────────────────────────────────────────────
   cfg.themeTransparency = _G.ThemeTransparency or 0
@@ -20485,9 +20092,7 @@ do
   return cfg
  end
 
- -- ============================================================
  -- SAVE CONFIG
- -- ============================================================
  local function SaveConfigAs(name)
   _ensureFolder()
   local ok, err = pcall(function()
@@ -20497,9 +20102,7 @@ do
   return ok, err
  end
 
- -- ============================================================
  -- APPLY CONFIG (restore semua state + visual)
- -- ============================================================
  local function ApplyConfig(cfg)
   if type(cfg) ~= "table" then return false end
 
@@ -20933,7 +20536,6 @@ do
    if _webhookModeSetIdx and cfg.webhookModeIdx then
     _webhookModeSetIdx(cfg.webhookModeIdx)
    end
-   -- Potato Mode removed
 
   end)
 
@@ -20974,9 +20576,7 @@ do
   return true
  end
 
- -- ============================================================
  -- LOAD / DELETE CONFIG (multi-file)
- -- ============================================================
  local function LoadConfigByName(name)
   local ok, result = pcall(function()
    local path = _cfgPath(name)
@@ -20998,11 +20598,8 @@ do
   return ok
  end
 
- -- ============================================================
  -- UI - PANEL CONFIG
- -- ============================================================
  -- UI - PANEL CONFIG (Multi-File Manager)
- -- ============================================================
 
  -- Header card
  local hdrCard = Frame(p, C.BG3, UDim2.new(1,0,0,56))
@@ -21090,9 +20687,7 @@ do
   return row, lbl
  end
 
- -- ════════════════════════════════════════════════════════
  -- MODE: SAVE
- -- ════════════════════════════════════════════════════════
  local function OpenSaveMode()
   ClearSub()
   subPanel.Visible = true
@@ -21177,9 +20772,7 @@ do
   subPanel.Size = UDim2.new(1,0,0,0)
  end
 
- -- ════════════════════════════════════════════════════════
  -- MODE: LOAD
- -- ════════════════════════════════════════════════════════
  local function OpenLoadMode()
   ClearSub()
   subPanel.Visible = true
@@ -21228,9 +20821,7 @@ do
   subPanel.Size = UDim2.new(1,0,0,0)
  end
 
- -- ════════════════════════════════════════════════════════
  -- MODE: DELETE
- -- ════════════════════════════════════════════════════════
  local function OpenDeleteMode()
   ClearSub()
   subPanel.Visible = true
@@ -21330,9 +20921,7 @@ do
 
 end -- end do PANEL CONFIG
 
--- ============================================================
 -- PANEL : THEME
--- ============================================================
 do
     local p = NewPanel("theme")
     SectionHeader(p, "Theme Selection", 1)
@@ -21373,7 +20962,6 @@ end
  RefreshStatus()
  InitAllCaptureLayers()
 
--- ============================================================
 
 -- SIEGE SCANNER v102 - Hook UpdateCityRaidInfo
 -- Tunggu notif dari server (UpdateCityRaidInfo):
@@ -21381,9 +20969,8 @@ end
 --   action=CloseCityRaid / LeaveCityRaid  = siege tutup  -> hapus dari SIEGE.live
 --   action=UpdateRank / AddRaidEnters     -> abaikan
 -- Entry remote selalu sesuai cityRaidId map yang terbuka (tidak bisa tabrakan)
--- ============================================================
 task.spawn(function()
-    PingWait(3)
+    task.wait(3)
     if not SIEGE then return end
     if not SIEGE.live then SIEGE.live = {} end
 
@@ -21397,7 +20984,7 @@ task.spawn(function()
 
     local _reCity = Remotes:FindFirstChild("UpdateCityRaidInfo")
     if not _reCity then
-        PingWait(5)
+        task.wait(5)
         _reCity = Remotes:FindFirstChild("UpdateCityRaidInfo")
     end
 
@@ -21428,9 +21015,7 @@ end)
 
 
 
--- ============================================================
 -- CLEANUP: Stop semua loop saat script di-close / ScreenGui destroy
--- ============================================================
 ScreenGui.AncestryChanged:Connect(function()
  if ScreenGui.Parent then return end -- hanya saat di-destroy
  -- Ascension Tower

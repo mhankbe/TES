@@ -16989,7 +16989,13 @@ do
     scanLbl.Size = UDim2.new(1,0,1,0)
 
     -- -- GET SLOT INDEX button (untuk akun UTAMA yg sudah di dalam Tower) --
-    -- Klik -> scan RaidsManager module untuk cari slotIndex tower aktif (mapId 50301+)
+    -- Helper: update JTP_slotIndex dan TextBox sekaligus
+    -- Didefinisikan di sini agar bisa dipakai oleh getSlotBtn handler di bawah
+    local slotBox  -- forward declaration (slotBox dibuat setelah getSlotBtn)
+    local function UpdateSlotBox(val)
+        JTP_slotIndex = val
+        pcall(function() slotBox.Text = tostring(val) end)
+    end
     local getSlotBtn = Btn(jtpInner, Color3.fromRGB(45,35,10), UDim2.new(1,0,0,34))
     getSlotBtn.LayoutOrder = 3; Corner(getSlotBtn,10)
     Stroke(getSlotBtn, Color3.fromRGB(220,170,40), 1.5, 0.15)
@@ -17001,61 +17007,21 @@ do
         task.spawn(function()
             local found = nil
 
-            -- Cara 1: Pasang listener sementara di EnterRaidsUpdateInfo
-            -- lalu trigger GetNewSingleTowerData agar server kirim event update
+            -- Cara UTAMA: require MapManager dan baca currentMapData.mapSlotInfo.slotIndex
+            -- Confirmed dari sniffer: MM.currentMapData.mapSlotInfo.slotIndex = 50204
             pcall(function()
-                local reEnter = Remotes:FindFirstChild("EnterRaidsUpdateInfo")
-                local reGet   = Remotes:FindFirstChild("GetNewSingleTowerData")
-                if reEnter and reGet then
-                    local conn
-                    local gotIt = false
-                    conn = reEnter.OnClientEvent:Connect(function(data)
-                        if gotIt then return end
-                        if type(data) == "table" and data.slotIndex ~= nil then
-                            gotIt = true
-                            found = data.slotIndex
-                            pcall(function() conn:Disconnect() end)
-                        end
-                    end)
-                    -- Invoke GetNewSingleTowerData agar server fire EnterRaidsUpdateInfo
-                    pcall(function() reGet:InvokeServer() end)
-                    -- Tunggu max 2 detik
-                    local t = 0
-                    while not gotIt and t < 2 do
-                        task.wait(0.1)
-                        t = t + 0.1
-                    end
-                    pcall(function() conn:Disconnect() end)
+                local MM = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.MapManager)
+                if type(MM) ~= "table" then return end
+                local cmd = MM.currentMapData
+                if type(cmd) ~= "table" then return end
+                local msi = cmd.mapSlotInfo
+                if type(msi) ~= "table" then return end
+                if msi.slotIndex ~= nil then
+                    found = msi.slotIndex
                 end
             end)
 
-            -- Cara 2: Scan RaidsManager module - cari entry Tower (mapId 50301+)
-            if not found then
-                pcall(function()
-                    local RM = require(game:GetService("ReplicatedStorage").Scripts.Client.Manager.RaidsManager)
-                    if type(RM) ~= "table" then return end
-                    for _, val in pairs(RM) do
-                        if type(val) == "table" then
-                            for _, info in pairs(val) do
-                                if type(info) == "table" then
-                                    local mid = info.mapId
-                                    -- Tower Map 2 = 50301+
-                                    if mid and mid >= 50301 then
-                                        if info.slotIndex ~= nil then
-                                            found = info.slotIndex
-                                            break
-                                        end
-                                    end
-                                end
-                                if found then break end
-                            end
-                        end
-                        if found then break end
-                    end
-                end)
-            end
-
-            -- Cara 3: workspace / LocalPlayer attribute
+            -- Fallback: workspace / LocalPlayer attribute
             if not found then
                 pcall(function()
                     local v = LP:GetAttribute("SlotIndex") or LP:GetAttribute("slotIndex")
@@ -17066,10 +17032,10 @@ do
 
             if found then
                 UpdateSlotBox(found)
-                JTPStat("[OK] SlotIndex ditemukan: "..tostring(found), Color3.fromRGB(100,230,150))
-                pcall(function() SystemNotify("[JTP] SlotIndex: "..tostring(found), 4) end)
+                JTPStat("[OK] SlotIndex: " .. tostring(found), Color3.fromRGB(100,230,150))
+                pcall(function() SystemNotify("[JTP] SlotIndex: " .. tostring(found), 4) end)
             else
-                JTPStat("[!] Tidak bisa auto-detect. Ketik SlotIndex manual dari akun UTAMA.", Color3.fromRGB(220,170,40))
+                JTPStat("[!] Tidak bisa auto-detect. Ketik SlotIndex manual.", Color3.fromRGB(220,170,40))
             end
         end)
     end)
@@ -17109,7 +17075,7 @@ do
     slotLabel.TextXAlignment = Enum.TextXAlignment.Left
 
     -- TextBox input — user ketik nilai bebas
-    local slotBox = New("TextBox",{
+    slotBox = New("TextBox",{
         Parent          = slotCard,
         BackgroundColor3= Color3.fromRGB(30,25,5),
         Size            = UDim2.new(1,-90,0,28),
@@ -17142,12 +17108,6 @@ do
             slotBox.Text = tostring(JTP_slotIndex)  -- revert jika bukan angka
         end
     end)
-
-    -- Juga update real-time saat GET SLOT INDEX auto-detect berhasil
-    local function UpdateSlotBox(val)
-        JTP_slotIndex = val
-        pcall(function() slotBox.Text = tostring(val) end)
-    end
 
     -- -- JOIN button ------------------------------------------------------?
     local joinBtn = Btn(jtpInner, Color3.fromRGB(15,35,110), UDim2.new(1,0,0,40))

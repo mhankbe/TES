@@ -316,7 +316,6 @@ do
     -- Toggle utama AUTO SELL HERO EQUIP
     -- Source asli baris ~3971-3978
     local _sellToggleElement = MainTab:Toggle({
-        Flag     = "mainSellHero",
         Title    = "AUTO SELL HERO EQUIP",
         Desc     = "Auto sell all items (except Locked & Supreme)",
         Value    = false,
@@ -936,7 +935,6 @@ do
     HideTab:Section({ Title = "Hide Reroll Chat", Icon = "message-square-off" })
 
     local _hrcrToggle = HideTab:Toggle({
-        Flag     = "hideRerollChat",
         Title    = "HIDE REROLL CHAT",
         Desc     = "Sembunyikan baris chat 'just reroll a...' tanpa menghilangkan chat box",
         Value    = false,
@@ -954,7 +952,6 @@ do
     HideTab:Section({ Title = "Hide All UI", Icon = "layout-dashboard" })
 
     local _hauiToggle = HideTab:Toggle({
-        Flag     = "hideAllUI",
         Title    = "HIDE ALL UI",
         Desc     = "Sembunyikan semua panel game. Toggle OFF restore penuh.",
         Value    = false,
@@ -972,7 +969,6 @@ do
     HideTab:Section({ Title = "Hide All Animation", Icon = "zap-off" })
 
     local _hanimToggle = HideTab:Toggle({
-        Flag     = "hideAllAnim",
         Title    = "HIDE ALL ANIMATION",
         Desc     = "Matikan animasi, efek, partikel. Restore penuh saat OFF.",
         Value    = false,
@@ -990,7 +986,6 @@ do
     HideTab:Section({ Title = "Auto Hide Reward", Icon = "gift" })
 
     local _hrewToggle = HideTab:Toggle({
-        Flag     = "hideReward",
         Title    = "AUTO HIDE REWARD",
         Desc     = "Sembunyikan popup reward otomatis.",
         Value    = false,
@@ -1238,7 +1233,6 @@ do
     MainTab:Section({ Title = "Auto Collect Gold & Item", Icon = "coins" })
 
     local _collectToggleElement = MainTab:Toggle({
-        Flag     = "mainCollect",
         Title    = "AUTO COLLECT GOLD & ITEM",
         Desc     = "TP & collect semua gold/item ke player",
         Value    = false,
@@ -1547,7 +1541,6 @@ do
     -- Input Min Level
     -- Pengganti dgMinInput TextBox dari source asli baris ~4858-4868
     _dgMinInputElement = MainTab:Input({
-        Flag        = "mainGemMin",
         Title       = "Min Level",
         Desc        = "Level minimum gem yang akan di-decompose (1-150)",
         Placeholder = "Contoh: 1",
@@ -1564,7 +1557,6 @@ do
     -- Input Max Level
     -- Pengganti dgMaxInput TextBox dari source asli baris ~4870-4880
     _dgMaxInputElement = MainTab:Input({
-        Flag        = "mainGemMax",
         Title       = "Max Level",
         Desc        = "Level maksimum gem yang akan di-decompose (1-150)",
         Placeholder = "Contoh: 5",
@@ -1585,7 +1577,6 @@ do
     -- Toggle utama AUTO DECOMPOSE GEMS
     -- Source asli baris ~4826-4830 (dgPill.MouseButton1Click)
     _dgToggleElement = MainTab:Toggle({
-        Flag     = "mainDecompGem",
         Title    = "AUTO DECOMPOSE GEMS",
         Desc     = "Scan GemsPanel & decompose gem sesuai range level",
         Value    = false,
@@ -1687,7 +1678,6 @@ do
     --   - Value = nil  -> placeholder "--" (WindUI default untuk kosong)
     --   - Callback menerima ap.Value langsung = string nama item (bukan table)
     local _mDropElement = MainTab:Dropdown({
-        Flag     = "mainMergeItem",
         Title    = "Select Item",
         Desc     = "Pilih potion yang akan di-merge",
         Values   = _mDropValues,
@@ -1709,7 +1699,6 @@ do
     -- Input COUNT 1-5 (pengganti MakeSlider(1,5) dari source asli baris ~8691-8707)
     -- WindUI tidak memiliki Slider -> pakai Input number
     local _mCountInput = MainTab:Input({
-        Flag        = "mainMergeCount",
         Title       = "Count (1-5)",
         Desc        = "Jumlah merge per siklus (1-5)",
         Placeholder = "Contoh: 1",
@@ -1724,7 +1713,6 @@ do
 
     -- Toggle ON/OFF (pengganti ToggleRow dari source asli baris ~8708-8741)
     local _mergeToggleElement = MainTab:Toggle({
-        Flag     = "mainMergeToggle",
         Title    = "AUTO MERGE POTION",
         Desc     = "ON = START merge potion",
         Value    = false,
@@ -1857,7 +1845,6 @@ do
     --   - Value = nil  -> placeholder "--" (WindUI default untuk kosong)
     --   - Callback menerima ap.Value langsung = string nama item (bukan table)
     local _uDropElement = MainTab:Dropdown({
-        Flag     = "mainUseItem",
         Title    = "Select Item",
         Desc     = "Pilih potion yang akan digunakan",
         Values   = _uDropValues,
@@ -1879,7 +1866,6 @@ do
     -- Input COUNT 1-100 (pengganti MakeSlider(1,100) dari source asli baris ~8817-8830)
     -- WindUI tidak memiliki Slider -> pakai Input number
     local _uCountInput = MainTab:Input({
-        Flag        = "mainUseCount",
         Title       = "Use Count (1-100)",
         Desc        = "Jumlah potion yang digunakan per siklus (1-100)",
         Placeholder = "Contoh: 1",
@@ -1894,7 +1880,6 @@ do
 
     -- Toggle ON/OFF (pengganti ToggleRow dari source asli baris ~8831-8863)
     local _useToggleElement = MainTab:Toggle({
-        Flag     = "mainUseToggle",
         Title    = "AUTO USE POTION",
         Desc     = "ON = start use potion",
         Value    = false,
@@ -2838,7 +2823,6 @@ do
     FarmTab:Section({ Title = " RANDOM ATTACK", Icon = "sword" })
 
     local _raToggleElement = FarmTab:Toggle({
-        Flag     = "farmRA",
         Title    = "RANDOM ATTACK",
         Desc     = "Auto attack musuh random sampai mati, lalu ganti target",
         Value    = false,
@@ -2878,7 +2862,6 @@ do
     -- Mode dropdown: By ID / By Name
     local _listMode = "id"
     FarmTab:Dropdown({
-        Flag     = "farmTAMode",
         Title    = "Mode Select",
         Desc     = "By ID = target individu | By Name = round-robin senama",
         Values   = {"By ID", "By Name"},
@@ -2899,8 +2882,6 @@ do
     local _enemyDataByName   = {}
 
     _enemyDropElement = FarmTab:Dropdown({
-        -- Flag tidak dipasang: list ini di-rebuild dinamis tiap REFRESH ENEMIES,
-        -- nilai yang disimpan tidak bermakna lintas sesi (GUID enemy berubah).
         Title    = "Pilih Enemy",
         Desc     = "Klik REFRESH ENEMIES untuk load daftar musuh",
         Values   = {},
@@ -3017,7 +2998,6 @@ do
     end
 
     _taToggleElement = FarmTab:Toggle({
-        Flag     = "farmTA",
         Title    = "TARGET ATTACK",
         Desc     = "ON = mulai serang target terpilih | OFF = stop",
         Value    = false,
@@ -3745,7 +3725,6 @@ do
     local _killOptVals  = {5, 10, 15, 20, 0}
     local _killOptNames = {"5", "10", "15", "20", "Kill All"}
     local killDD = MassAttackTab:Dropdown({
-        Flag    = "maKillDD",
         Title   = "Target Kill",
         Desc    = "Jumlah kill sebelum pindah map",
         Multi   = false,
@@ -3791,7 +3770,6 @@ do
     local mapDD  -- forward ref untuk :Select() di dalam callback
 
     local _, mapDD = MassAttackTab:Dropdown({
-        Flag     = "maMapDD",
         Title    = "Rotation Map",
         Desc     = "Pilih map untuk dirotasi (kosong = map sekarang)",
         Multi    = true,
@@ -3872,7 +3850,6 @@ do
     local _delayOptVals  = {1, 3, 5, 7, 10}
     local _delayOptNames = {"1", "3", "5", "7", "10"}
     local delayDD = MassAttackTab:Dropdown({
-        Flag    = "maDelayDD",
         Title   = "Delay Pindah Map",
         Desc    = "Detik tunggu sebelum pindah ke map berikutnya",
         Multi   = false,
@@ -3904,7 +3881,6 @@ do
     MassAttackTab:Section({ Title = "Control" })
 
     local maToggle = MassAttackTab:Toggle({
-        Flag     = "maToggle",
         Title    = "Mass Attack",
         Desc     = "Serang semua musuh di map sekaligus",
         Default  = false,
@@ -3936,7 +3912,6 @@ do
     for _, sk in ipairs(_skillKeys) do
         local key = sk.n
         local el = MassAttackTab:Toggle({
-            Flag     = "maSkill_"..key,
             Title    = "Auto Skill "..key,
             Desc     = sk.desc,
             Default  = false,
@@ -7996,7 +7971,6 @@ end
 
 --  Enable Auto Raid Toggle 
 local raidEnableToggle = raidSection:Toggle({
-    Flag     = "raidEnable",
     Title    = "Enable Auto Raid",
     Desc     = "Aktifkan/matikan loop Auto Raid",
     Default  = false,
@@ -8019,7 +7993,6 @@ local curPM = 1
 RAID.pickMode = PM_KEYS[curPM]
 
 local raidPickModeDD = raidSection:Dropdown({
-    Flag     = "raidPickMode",
     Title    = "Pick Mode",
     Desc     = "Pilih strategi pemilihan raid",
     Multi    = false,
@@ -8057,7 +8030,6 @@ for i = 1, 20 do if RAID.preferMaps[i] then table.insert(_mapInitVal, "Map "..i)
 if #_mapInitVal == 0 then _mapInitVal = {"-- NOT SELECTED --"} end
 
 local raidPrefMapDD = raidSection:Dropdown({
-    Flag     = "raidPrefMaps",
     Title    = "Preferred Maps",
     Desc     = "Pilih map yang ingin dimasuki (kosong = semua)",
     Multi    = true,
@@ -8105,7 +8077,6 @@ for _, g in ipairs(GRADE_LIST) do table.insert(_rankOptNames, g) end
 if #_rankInitVal == 0 then _rankInitVal = {"-- NOT SELECTED --"} end
 
 local raidRankDD = raidSection:Dropdown({
-    Flag     = "raidRank",
     Title    = "Preferred Rank",
     Desc     = "Filter rank raid yang ingin dimasuki",
     Multi    = true,
@@ -8156,7 +8127,6 @@ if RAID.runeMapTarget >= 1 and RAID.runeMapTarget <= 20 then
 end
 
 local raidRuneDD = raidSection:Dropdown({
-    Flag     = "raidRune",
     Title    = "Auto Item (Rune Map)",
     Desc     = "Pilih map target item rune (opsional)",
     Multi    = false,
@@ -8192,7 +8162,6 @@ end
 -- updownDir default nil = NOT SELECTED
 
 local raidUDToggle = raidSection:Toggle({
-    Flag     = "raidUD",
     Title    = "UP/DOWN Rank",
     Desc     = "Fire UseRaidItem setelah masuk raid untuk naik/turun rank",
     Default  = RAID.updownEnabled or false,
@@ -8206,7 +8175,6 @@ _raidUpdownToggleVis = function(on)
 end
 
 local raidUDDirDD = raidSection:Dropdown({
-    Flag     = "raidUDDir",
     Title    = "UP/DOWN Direction",
     Desc     = "Arah rank yang diinginkan",
     Multi    = false,
@@ -8233,7 +8201,6 @@ for i = 6, #GRADE_LIST do table.insert(_targetGrades, GRADE_LIST[i]) end
 table.insert(_targetGrades, 1, "-- NOT SELECTED --")
 
 local raidUDGradeDD = raidSection:Dropdown({
-    Flag     = "raidUDGrade",
     Title    = "UP/DOWN Target Grade",
     Desc     = "Grade target lobi untuk UP/DOWN Rank",
     Multi    = false,
@@ -8251,7 +8218,6 @@ end
 
 --  AUTO KILL BOSS 
 local raidBossToggle = raidSection:Toggle({
-    Flag     = "raidBoss",
     Title    = "AUTO KILL BOSS",
     Desc     = "Teleport ke boss dan auto attack sampai mati",
     Default  = RAID.autoKillBoss or false,
@@ -8266,7 +8232,6 @@ end
 
 --  TELEPORT DELAY SLIDER 
 local raidBossDelaySlider = raidSection:Slider({
-    Flag     = "raidBossDelay",
     Title    = "Teleport Delay (s)",
     Desc     = "Delay sebelum teleport ke boss (1-10 detik)",
     Value    = { Min = 1, Max = 10, Default = RAID.bossDelay or 3 },
@@ -8284,7 +8249,6 @@ end
 local raidListSection = raidSection:Section({ Title = "Raid List Entry", Icon = "list", Opened = false, Box = true })
 
 local raidListToggle = raidListSection:Toggle({
-    Flag     = "raidListEnabled",
     Title    = "List Entry",
     Desc     = "Aktifkan sistem antrian entry map+rank",
     Default  = RAID.listEnabled or false,
@@ -8485,7 +8449,6 @@ end
 
 --  ENABLE AUTO ASCENSION TOGGLE 
 local ascEnableToggle = ascSection:Toggle({
-    Flag     = "ascEnable",
     Title    = "Enable Auto Ascension",
     Desc     = "Aktifkan/matikan loop Auto Raid Ascension",
     Default  = false,
@@ -8527,7 +8490,6 @@ local curAPM = 5 -- default: "easy" (sama seperti 1.lua)
 ASC.pickMode = APM_KEYS[curAPM]
 
 local ascPickModeDD = ascSection:Dropdown({
-    Flag     = "ascPickMode",
     Title    = "Pick Mode",
     Desc     = APM_TO_DESC[ASC.pickMode],
     Multi    = false,
@@ -8577,7 +8539,6 @@ for i = 1, 26 do if ASC.preferMaps[i] then table.insert(_ascMapInitVal, "Tower "
 if #_ascMapInitVal == 0 then _ascMapInitVal = {"-- NOT SELECTED --"} end
 
 local ascPrefMapDD = ascSection:Dropdown({
-    Flag     = "ascPrefMap",
     Title    = "Preferred Map",
     Desc     = "Pilih Tower yang ingin dimasuki (kosong = semua)",
     Multi    = true,
@@ -8623,7 +8584,6 @@ for _, g in ipairs(GRADE_LIST) do table.insert(_ascRankOptNames, g) end
 if #_ascRankInitVal == 0 then _ascRankInitVal = {"-- NOT SELECTED --"} end
 
 local ascRankDD = ascSection:Dropdown({
-    Flag     = "ascRank",
     Title    = "Preferred Rank",
     Desc     = "Filter rank Tower yang ingin dimasuki",
     Multi    = true,
@@ -8669,7 +8629,6 @@ if ASC.runeMapTarget >= 1 and ASC.runeMapTarget <= 26 then
 end
 
 local ascRuneDD = ascSection:Dropdown({
-    Flag     = "ascRune",
     Title    = "Auto Item (Rune Tower)",
     Desc     = "Pilih Tower target item rune (opsional)",
     Multi    = false,
@@ -8694,7 +8653,6 @@ AscSyncRuneState()
 
 --  AUTO KILL BOSS 
 local ascBossToggle = ascSection:Toggle({
-    Flag     = "ascBoss",
     Title    = "AUTO KILL BOSS",
     Desc     = "Teleport ke boss dan auto attack sampai mati",
     Default  = ASC.autoKillBoss or false,
@@ -8709,7 +8667,6 @@ end
 
 --  TELEPORT DELAY SLIDER 
 local ascBossDelaySlider = ascSection:Slider({
-    Flag     = "ascBossDelay",
     Title    = "Teleport Delay (s)",
     Desc     = "Delay sebelum teleport ke boss (1-10 detik)",
     Value    = { Min = 1, Max = 10, Default = ASC.bossDelay or 3 },
@@ -8727,7 +8684,6 @@ end
 local ascListSection = ascSection:Section({ Title = "Ascension List Entry", Icon = "list", Opened = false, Box = true })
 
 local ascListToggle = ascListSection:Toggle({
-    Flag     = "ascListEnabled",
     Title    = "List Entry",
     Desc     = "Aktifkan sistem antrian entry Tower+rank",
     Default  = ASC.listEnabled or false,
@@ -9549,23 +9505,6 @@ local siegeExcludeDD = siegeSection:Dropdown({
     end,
 })
 
--- Expose setter visual-only untuk restore dropdown exclude map Siege saat Load Config
--- ApplyConfig restore SIEGE.excludeMaps datanya, lalu panggil ini untuk sync tampilan DD
-_visSiegeExcludeDD = function()
-    if not siegeExcludeDD then return end
-    pcall(function()
-        -- Bangun tabel selected: { [label] = true } untuk setiap map yang di-exclude
-        local sel = {}
-        for _, mn in ipairs(SIEGE_MAP_NUMS) do
-            if SIEGE.excludeMaps and SIEGE.excludeMaps[mn] then
-                local lbl = MAP_NAMES_SIEGE[mn]
-                if lbl then sel[lbl] = true end
-            end
-        end
-        siegeExcludeDD:Set(sel)
-    end)
-end
-
 end -- end do: AUTO SIEGE UI
 
 
@@ -10343,65 +10282,6 @@ do
     })
 
 end -- do Anniversary Celebration
-
-
--- ============================================================================
--- STUB SETTERS — panel belum diconvert ke 2.lua
--- Dipanggil oleh ApplyConfig saat Load Config. Tanpa definisi ini script crash
--- karena memanggil nil. Stub ini mencegah crash dan menyimpan state di variabel
--- backing sehingga logika tetap konsisten ketika panel akhirnya diconvert nanti.
--- ============================================================================
-
--- ── Dungeon toggle stub ───────────────────────────────────────────────────────
--- Panel Dungeon (JTR punya tombol join, bukan toggle persistent ON/OFF)
--- Belum diconvert ke 2.lua — stub simpan state saja, tidak ada visual.
-if not _dungeonToggleState then _dungeonToggleState = false end
-_setDungeonToggle = _setDungeonToggle or function(v)
-    _dungeonToggleState = v == true
-end
-_visDungeon = _visDungeon or function(_v)
-    -- tidak ada toggle visual di JTR panel — no-op
-end
-
--- ── ST2 / Anniversary toggle stub ────────────────────────────────────────────
--- ST2 di 1.lua adalah panel terpisah yang belum diconvert ke 2.lua.
--- Di 2.lua ada ANNIV tapi strukturnya berbeda (tidak ada persistent toggle).
--- Stub ini simpan state ke ANNIV.running agar logika tetap tidak crash.
-if not ST2 then
-    ST2 = {
-        running       = false,
-        inMap         = false,
-        enabled       = false,
-        attackEnabled = false,
-        waveCount     = 0,
-        setAttackToggle = function(_v) end,
-    }
-end
-_setST2Toggle = _setST2Toggle or function(v)
-    ST2.enabled = v == true
-    ST2.running = v == true
-    if ANNIV then ANNIV.running = v == true end
-end
-_visST2 = _visST2 or function(_v)
-    -- tidak ada toggle visual ST2 di 2.lua — no-op
-end
-
--- ── Transparency slider stub ──────────────────────────────────────────────────
--- ThemeTab belum diimplementasi di 2.lua — stub simpan nilai saja.
-if not _G then _G = {} end
-_setTransSlider = _setTransSlider or function(v)
-    _G.ThemeTransparency = v
-end
-
--- ── Webhook mode dropdown stub ────────────────────────────────────────────────
--- WebhookTab di 2.lua belum punya dropdown mode (By ID / By Name).
--- Stub simpan index ke _webhookMode agar CollectConfig bisa baca kembali.
-local _WH_MODE_KEYS = {"both", "name", "id"}
-_webhookModeSetIdx = _webhookModeSetIdx or function(idx)
-    if _WH_MODE_KEYS[idx] then
-        _webhookMode = _WH_MODE_KEYS[idx]
-    end
-end
 
 
 -- ============================================================
@@ -14106,8 +13986,6 @@ do
                     local n = tonumber(k); if n then SIEGE.excludeMaps[n] = v end
                 end
             end
-            -- Sync visual dropdown exclude maps setelah data ter-restore
-            if _visSiegeExcludeDD then pcall(_visSiegeExcludeDD) end
             task.delay(0.9, function()
                 if _setSiegeToggle then _setSiegeToggle(cfg.siegeOn == true) end
                 if _visSiege       then _visSiege(cfg.siegeOn == true) end

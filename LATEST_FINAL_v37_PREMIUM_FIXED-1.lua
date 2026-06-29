@@ -3823,7 +3823,27 @@ do
     })
 
     _maUpdateMapDDLbl = function()
-        -- WindUI mengurus label dropdown sendiri; no-op
+        -- Sync visual dropdown map sesuai _maMapSelState saat ini
+        -- Dipakai oleh ApplyConfig setelah restore data mapSel
+        if not mapDD then return end
+        pcall(function()
+            local selVals = {}
+            local allOn = true
+            for i = 1, 20 do
+                if mapSelSet[i] then
+                    table.insert(selVals, "Map "..i)
+                else
+                    allOn = false
+                end
+            end
+            if allOn and #selVals == 20 then
+                table.insert(selVals, 1, "ALL MAP")
+                _prevHadAll = true
+            else
+                _prevHadAll = false
+            end
+            mapDD:Select(nil, selVals)
+        end)
     end
 
     --  DELAY PINDAH MAP dropdown (identik 1.lua baris ~6944) 
@@ -3887,9 +3907,11 @@ do
         {n="V", desc="Skill slot V"},
         {n="F", desc="Skill slot F"},
     }
+    -- Simpan elemen toggle per skill key agar bisa di-set saat restore Config
+    local _skillToggleEls = {}
     for _, sk in ipairs(_skillKeys) do
         local key = sk.n
-        MassAttackTab:Toggle({
+        local el = MassAttackTab:Toggle({
             Title    = "Auto Skill "..key,
             Desc     = sk.desc,
             Default  = false,
@@ -3897,6 +3919,15 @@ do
                 if on then SkOn(key) else SkOff(key) end
             end,
         })
+        _skillToggleEls[key] = el
+    end
+
+    -- Expose setter skill visual ke global (dibaca Config panel saat restore)
+    -- ApplyConfig memanggil SkOn/SkOff langsung untuk logika,
+    -- tapi visual toggle WindUI perlu di-sync secara terpisah
+    _setSkillToggleVis = function(key, v)
+        local el = _skillToggleEls[key]
+        if el then pcall(function() el:Set(v, false) end) end
     end
 
 end -- end do PANEL: MASS ATTACK
@@ -9430,6 +9461,10 @@ _setSiegeToggle = function(on)
     pcall(function() siegeEnableToggle:SetValue(on) end)
     if on then StartSiegeLoop() else StopSiege() end
 end
+-- Visual-only setter (tidak trigger logika, hanya sync UI)
+_visSiege = function(on)
+    pcall(function() siegeEnableToggle:SetValue(on, false) end)
+end
 
 -- Exclude Map Dropdown (multi-select style via Dropdown)
 local MAP_NAMES_SIEGE = {
@@ -10393,7 +10428,7 @@ do
         Box    = true,
     })
 
-    noClipSection:Toggle({
+    local _noClipToggleEl = noClipSection:Toggle({
         Title    = "No Clip",
         Desc     = "Tembus tembok & objek apapun selama aktif",
         Default  = false,
@@ -10446,6 +10481,15 @@ do
         end,
     })
 
+    -- Expose setter NoClip ke global (dibaca Config panel saat restore)
+    _setNoClipToggle = function(v)
+        _noClipState = v
+        if _noClipToggleEl then pcall(function() _noClipToggleEl:Set(v) end) end
+    end
+    _visNoClip = function(v)
+        if _noClipToggleEl then pcall(function() _noClipToggleEl:Set(v, false) end) end
+    end
+
     -- ── Section: Anti Idle ───────────────────────────────────────
     -- Logika: bukan sekedar Anti AFK (cegah kick), tapi ANTI IDLE —
     -- simulasi aktivitas nyata agar server tidak mendeteksi player diam:
@@ -10474,7 +10518,7 @@ do
         pcall(function() antiIdleStatusPara:SetDesc(msg) end)
     end
 
-    antiIdleSection:Toggle({
+    local _antiIdleToggleEl = antiIdleSection:Toggle({
         Title    = "Anti Idle",
         Desc     = "Simulasi aktivitas nyata agar server tidak deteksi player diam",
         Default  = false,
@@ -10601,6 +10645,21 @@ do
             end
         end,
     })
+
+    -- Expose setter Anti Idle ke global (dibaca Config panel saat restore)
+    _setAntiAfkToggle = function(v)
+        _antiIdleState = v
+        if _antiIdleToggleEl then pcall(function() _antiIdleToggleEl:Set(v) end) end
+    end
+    _visAntiAfk = function(v)
+        if _antiIdleToggleEl then pcall(function() _antiIdleToggleEl:Set(v, false) end) end
+    end
+
+    -- Expose setter WalkSpeed ke global (dibaca Config panel saat restore)
+    _setSpeedSlider = function(v)
+        pcall(function() SetSpeedValue(v) end)
+    end
+
 end -- do Player Tab
 
 
@@ -13351,3 +13410,1031 @@ do
     })
 
 end -- end do WEBHOOK TAB UI
+
+-- ============================================================================
+-- PANEL: CONFIG
+-- Diconvert dari 1.lua: PANEL CONFIG (baris 20199-21362)
+-- Ditulis ulang pakai WindUI native API (ConfigTab:Section/Paragraph/Button)
+-- Karena WindUI tidak punya TextBox native yang bisa di-embed bebas,
+-- UI sub-panel (save/load/delete) dibangun via Frame + Instance Roblox biasa
+-- yang di-parent ke dalam sebuah WindUI "host frame" via ConfigTab:Custom()
+-- atau diletakkan langsung di bawah ConfigTab's ScrollingFrame via Parent inject.
+-- ============================================================================
+do
+
+    -- ─── CONFIG FILE PATH ────────────────────────────────────────────────────
+    local CONFIG_FOLDER = "FLaConfigs"
+
+    -- Helper: pastikan folder ada (aman di semua executor via polyfill)
+    local function _ensureFolder()
+        local ok, exists = pcall(isfolder, CONFIG_FOLDER)
+        if not ok or not exists then
+            pcall(makefolder, CONFIG_FOLDER)
+        end
+    end
+
+    local function _cfgPath(name)
+        return CONFIG_FOLDER .. "/" .. name .. ".json"
+    end
+
+    local function ListConfigs()
+        _ensureFolder()
+        local ok, files = pcall(listfiles, CONFIG_FOLDER)
+        if not ok or type(files) ~= "table" then return {} end
+        local names = {}
+        for _, f in ipairs(files) do
+            local n = tostring(f):match("([^/\\]+)%.json$")
+            if n and n ~= "" then table.insert(names, n) end
+        end
+        table.sort(names)
+        return names
+    end
+
+    -- ─── JSON ENCODE / DECODE MINIMAL (Luau tanpa loadstring) ────────────────
+    local function jsonEncode(t, indent)
+        indent = indent or 0
+        local pad  = string.rep(" ", indent)
+        local padI = string.rep(" ", indent + 2)
+        if type(t) == "boolean" then return t and "true" or "false" end
+        if type(t) == "number"  then return tostring(t) end
+        if type(t) == "string"  then
+            local s = t:gsub("\\","\\\\"):gsub('"','\\"'):gsub("\n","\\n"):gsub("\r","\\r")
+            return '"' .. s .. '"'
+        end
+        if type(t) ~= "table" then return '"[unsupported]"' end
+        local isArr = true; local n = 0
+        for k in pairs(t) do n = n + 1; if type(k) ~= "number" then isArr = false; break end end
+        if isArr and n == 0 then return "[]" end
+        if isArr then
+            local parts = {}
+            for i = 1, #t do parts[i] = padI .. jsonEncode(t[i], indent + 2) end
+            return "[\n" .. table.concat(parts, ",\n") .. "\n" .. pad .. "]"
+        else
+            local parts = {}
+            for k, v in pairs(t) do
+                if type(k) == "string" or type(k) == "number" then
+                    table.insert(parts, padI .. '"' .. tostring(k) .. '": ' .. jsonEncode(v, indent + 2))
+                end
+            end
+            table.sort(parts)
+            return "{\n" .. table.concat(parts, ",\n") .. "\n" .. pad .. "}"
+        end
+    end
+
+    local function jsonDecodeVal(s, pos)
+        while pos <= #s and s:sub(pos, pos):match("%s") do pos = pos + 1 end
+        local c = s:sub(pos, pos)
+        if c == '"' then
+            local i = pos + 1; local res = {}
+            while i <= #s do
+                local ch = s:sub(i, i)
+                if ch == '"' then return table.concat(res), i + 1 end
+                if ch == '\\' then
+                    local nx = s:sub(i + 1, i + 1)
+                    if     nx == '"'  then table.insert(res, '"')
+                    elseif nx == '\\' then table.insert(res, '\\')
+                    elseif nx == 'n'  then table.insert(res, '\n')
+                    elseif nx == 'r'  then table.insert(res, '\r')
+                    else                   table.insert(res, nx) end
+                    i = i + 2
+                else
+                    table.insert(res, ch); i = i + 1
+                end
+            end
+            return "", pos
+        end
+        if c == '{' then
+            local obj = {}; pos = pos + 1
+            while pos <= #s do
+                while pos <= #s and s:sub(pos, pos):match("%s") do pos = pos + 1 end
+                if s:sub(pos, pos) == '}' then return obj, pos + 1 end
+                if s:sub(pos, pos) == ',' then pos = pos + 1 end
+                while pos <= #s and s:sub(pos, pos):match("%s") do pos = pos + 1 end
+                local key, p2 = jsonDecodeVal(s, pos); pos = p2
+                while pos <= #s and s:sub(pos, pos):match("[%s:]") do pos = pos + 1 end
+                local val, p3 = jsonDecodeVal(s, pos); pos = p3
+                obj[key] = val
+            end
+            return obj, pos
+        end
+        if c == '[' then
+            local arr = {}; pos = pos + 1
+            while pos <= #s do
+                while pos <= #s and s:sub(pos, pos):match("%s") do pos = pos + 1 end
+                if s:sub(pos, pos) == ']' then return arr, pos + 1 end
+                if s:sub(pos, pos) == ',' then pos = pos + 1 end
+                local val, p2 = jsonDecodeVal(s, pos); pos = p2
+                table.insert(arr, val)
+            end
+            return arr, pos
+        end
+        if s:sub(pos, pos + 3) == "true"  then return true,  pos + 4 end
+        if s:sub(pos, pos + 4) == "false" then return false, pos + 5 end
+        if s:sub(pos, pos + 3) == "null"  then return nil,   pos + 4 end
+        local num = s:match("^-?%d+%.?%d*[eE]?[+-]?%d*", pos)
+        if num then return tonumber(num), pos + #num end
+        return nil, pos + 1
+    end
+
+    local function jsonDecode(s)
+        local ok, val = pcall(function()
+            local v, _ = jsonDecodeVal(s, 1)
+            return v
+        end)
+        if ok then return val else return nil end
+    end
+
+    -- ─── COLLECT CONFIG STATE (snapshot semua state aktif saat ini) ──────────
+    local function CollectConfig()
+        local cfg = {}
+
+        -- ── MAIN TAB ──────────────────────────────────────────────────────
+        cfg.sellHeroOn        = _autoSellOnState or false
+        cfg.autoCollectOn     = _autoCollectState or false
+        cfg.sellWeaponOn      = _autoSellWeaponState or false
+        cfg.swSelectAll       = _swSelectAllRef and _swSelectAllRef() or true
+        cfg.swSelectedIds     = {}
+        cfg.swSelNames        = {}
+        if _swSelectedIdsGlobal then
+            for k, v in pairs(_swSelectedIdsGlobal) do if v then cfg.swSelectedIds[tostring(k)] = true end end
+        end
+        if _swSelNamesGlobal then
+            for k, v in pairs(_swSelNamesGlobal) do cfg.swSelNames[tostring(k)] = v end
+        end
+        cfg.decompGemOn       = _autoDecompGemState or false
+        cfg.gemMinLevel       = _gemMinLevelState or 1
+        cfg.gemMaxLevel       = _gemMaxLevelState or 1
+
+        -- ── HIDE TAB ──────────────────────────────────────────────────────
+        cfg.hideRerollChat    = _hideRerollChatState or false
+        cfg.hideAllUI         = _hideAllUIState or false
+        cfg.hideAllAnim       = _hideAllAnimState or false
+
+        -- ── FARM TAB ──────────────────────────────────────────────────────
+        cfg.randomAttackOn    = _raRunningState or false
+
+        -- ── ATTACK TAB ────────────────────────────────────────────────────
+        cfg.hideReward        = _hideRewardState or false
+        cfg.massAttackOn      = MA and MA.running or false
+        cfg.killDDIdx         = _killDDIdxState or 1
+        cfg.delayDDIdx        = _delayDDIdxState or 2
+        cfg.maMapSel          = {}
+        if _maMapSelState then
+            for k, v in pairs(_maMapSelState) do if v then cfg.maMapSel[tostring(k)] = true end end
+        end
+        cfg.skillZ = SKL and SKL.Z and SKL.Z.on or false
+        cfg.skillX = SKL and SKL.X and SKL.X.on or false
+        cfg.skillC = SKL and SKL.C and SKL.C.on or false
+        cfg.skillV = SKL and SKL.V and SKL.V.on or false
+        cfg.skillF = SKL and SKL.F and SKL.F.on or false
+
+        -- ── PLAYER TAB ────────────────────────────────────────────────────
+        cfg.noClipOn      = _noClipState or false
+        cfg.antiAfkOn     = _antiAfkState or false
+        cfg.walkSpeed     = _walkSpeedState or 16
+
+        -- ── AUTOMATION TAB ────────────────────────────────────────────────
+        cfg.raidOn        = _raidOn or false
+        cfg.raidPMIdx     = 1
+        cfg.raidPreferMaps  = {}
+        cfg.raidRuneGrades  = {}
+        cfg.raidRuneEnabled   = RAID and RAID.runeEnabled or false
+        cfg.raidUpdownEnabled = RAID and RAID.updownEnabled or false
+        cfg.raidUpdownDir     = RAID and RAID.updownDir or "up"
+        cfg.raidUpdownTargetGrade = RAID and RAID.updownTargetGrade or nil
+        cfg.raidRuneMapTarget = RAID and RAID.runeMapTarget or 0
+        cfg.raidListEnabled   = RAID and RAID.listEnabled or false
+        cfg.raidAutoKillBoss  = RAID and RAID.autoKillBoss or false
+        cfg.raidBossDelay     = RAID and RAID.bossDelay or 3
+        cfg.raidListEntries   = {}
+        if RAID and RAID.listEntries then
+            for i, ent in ipairs(RAID.listEntries) do
+                local saveMaps = {}; local saveRanks = {}
+                if ent.maps  then for mn, v in pairs(ent.maps)  do if v then saveMaps[tostring(mn)] = true end end end
+                if ent.ranks then for g,  v in pairs(ent.ranks) do if v then saveRanks[g] = true end end end
+                cfg.raidListEntries[i] = { maps = saveMaps, ranks = saveRanks }
+            end
+        end
+        if RAID and RAID.preferMaps then
+            for k, v in pairs(RAID.preferMaps) do if v then cfg.raidPreferMaps[tostring(k)] = true end end
+        end
+        if RAID and RAID.runeGrades then
+            for k, v in pairs(RAID.runeGrades) do if v then cfg.raidRuneGrades[tostring(k)] = true end end
+        end
+        pcall(function()
+            local PM_KEYS = {"default","byrank","bymap","hard","easy","manual"}
+            for i, k in ipairs(PM_KEYS) do if RAID and k == RAID.pickMode then cfg.raidPMIdx = i; break end end
+        end)
+
+        cfg.ascOn        = _ascOn or false
+        cfg.ascPMIdx     = 1
+        cfg.ascPreferMaps= {}
+        cfg.ascRuneGrades= {}
+        cfg.ascRuneEnabled    = ASC and ASC.runeEnabled or false
+        cfg.ascRuneMapTarget  = ASC and ASC.runeMapTarget or 0
+        cfg.ascPreferMapTarget= ASC and ASC.preferMapTarget or 0
+        cfg.ascAutoKillBoss   = ASC and ASC.autoKillBoss or false
+        cfg.ascBossDelay      = ASC and ASC.bossDelay or 3
+        if ASC and ASC.preferMaps then
+            for k, v in pairs(ASC.preferMaps) do if v then cfg.ascPreferMaps[tostring(k)] = true end end
+        end
+        if ASC and ASC.runeGrades then
+            for k, v in pairs(ASC.runeGrades) do if v then cfg.ascRuneGrades[tostring(k)] = true end end
+        end
+        pcall(function()
+            local APM_KEYS = {"default","byrank","bymap","hard","easy","manual"}
+            for i, k in ipairs(APM_KEYS) do if ASC and k == ASC.pickMode then cfg.ascPMIdx = i; break end end
+        end)
+        cfg.ascListEnabled = ASC and ASC.listEnabled or false
+        cfg.ascListEntries = {}
+        if ASC and ASC.listEntries then
+            for i, ent in ipairs(ASC.listEntries) do
+                local saveMaps = {}; local saveRanks = {}
+                for k, v in pairs(ent.maps)  do if v then saveMaps[tostring(k)] = true end end
+                for k, v in pairs(ent.ranks) do if v then saveRanks[tostring(k)] = true end end
+                cfg.ascListEntries[i] = { maps = saveMaps, ranks = saveRanks }
+            end
+        end
+
+        cfg.siegeOn      = _siegeToggleState or false
+        cfg.siegeExclude = {}
+        if SIEGE and SIEGE.excludeMaps then
+            for k, v in pairs(SIEGE.excludeMaps) do cfg.siegeExclude[tostring(k)] = v end
+        end
+
+        cfg.dungeonOn    = _dungeonToggleState or false
+
+        cfg.st2On        = ST2 and ST2.enabled or false
+        cfg.st2AttackOn  = ST2 and ST2.attackEnabled or false
+        cfg.st2WaveCount = ST2 and ST2.waveCount or 0
+
+        -- ── REROLL TAB ────────────────────────────────────────────────────
+        -- Hero Fastroll
+        cfg.heroRollOn   = _HR_RPT and _HR_RPT.running or false
+        cfg.heroX100On   = _HR_RPT and _HR_RPT.x100 or false
+        cfg.heroSlotTarget = {{},{},{}}
+        if _HR_RPT and _HR_RPT.slotTarget then
+            for si = 1, 3 do
+                for qid, v in pairs(_HR_RPT.slotTarget[si]) do
+                    if v then cfg.heroSlotTarget[si][tostring(qid)] = true end
+                end
+            end
+        end
+        -- Weapon Fastroll
+        cfg.weaponRollOn = _WR_RPT and _WR_RPT.running or false
+        cfg.weaponX100On = _WR_RPT and _WR_RPT.x100 or false
+        cfg.weaponSlotTarget = {{},{},{}}
+        if _WR_RPT and _WR_RPT.slotTarget then
+            for si = 1, 3 do
+                for qid, v in pairs(_WR_RPT.slotTarget[si]) do
+                    if v then cfg.weaponSlotTarget[si][tostring(qid)] = true end
+                end
+            end
+        end
+        -- PetGear
+        cfg.pgrOn      = {false, false, false}
+        cfg.pgr100On   = {false, false, false}
+        cfg.pgrTargets = {{},{},{}}
+        if PGR then
+            for i = 1, 3 do
+                cfg.pgrOn[i]  = PGR.enOnFlags[i] or false
+                cfg.pgr100On[i] = PGR100 and PGR100.enOnFlags[i] or false
+                for gid, v in pairs(PGR.targets[i]) do
+                    if v then cfg.pgrTargets[i][tostring(gid)] = true end
+                end
+            end
+        end
+        -- Halo
+        cfg.haloOn = {false, false, false}
+        if HALO then
+            for i = 1, 3 do cfg.haloOn[i] = HALO.enOnFlags[i] or false end
+        end
+        -- Ornament
+        cfg.ornOn      = {}
+        cfg.ornTargets = {}
+        if ORN then
+            local nm = #_ASH_ORN.MACHINES
+            for i = 1, nm do
+                cfg.ornOn[i]      = ORN.enOnFlags[i] or false
+                cfg.ornTargets[i] = {}
+                for qid, v in pairs(ORN.targets[i]) do
+                    if v then cfg.ornTargets[i][tostring(qid)] = true end
+                end
+            end
+        end
+        -- Merge & Use Potion
+        cfg.mergeOn = _mergeRunningState or false
+        cfg.useOn   = _useRunningState or false
+
+        -- ── SETTINGS / WEBHOOK TAB ────────────────────────────────────────
+        cfg.webhookEnabled  = _webhookEnabled or false
+        cfg.webhookUrl      = _webhookUrl or ""
+        cfg.webhookMode     = _webhookMode or "both"
+        cfg.webhookModeIdx  = 3
+        pcall(function()
+            local MODE_KEYS = {"raid","siege","both"}
+            for i, k in ipairs(MODE_KEYS) do
+                if k == (_webhookMode or "both") then cfg.webhookModeIdx = i; break end
+            end
+        end)
+
+        -- ── THEME ─────────────────────────────────────────────────────────
+        cfg.themeTransparency = _G.ThemeTransparency or 0
+        cfg.themeName         = _G.CurrentTheme or "Solo Leveling"
+
+        return cfg
+    end
+
+    -- ─── SAVE CONFIG ─────────────────────────────────────────────────────────
+    local function SaveConfigAs(name)
+        _ensureFolder()
+        local ok, err = pcall(function()
+            local cfg = CollectConfig()
+            writefile(_cfgPath(name), jsonEncode(cfg))
+        end)
+        return ok, err
+    end
+
+    -- ─── APPLY CONFIG (restore semua state + visual) ─────────────────────────
+    local function ApplyConfig(cfg)
+        if type(cfg) ~= "table" then return false end
+
+        -- ── MAIN TAB ──────────────────────────────────────────────────────
+        pcall(function()
+            if _setSellHeroToggle    then _setSellHeroToggle(cfg.sellHeroOn == true) end
+            if _setAutoCollectToggle then _setAutoCollectToggle(cfg.autoCollectOn == true) end
+            if _swRestoreFromConfig  then
+                local isAll = cfg.swSelectAll ~= false
+                _swRestoreFromConfig(isAll, cfg.swSelectedIds, cfg.swSelNames)
+            end
+            if _autoSellWeaponSet then _autoSellWeaponSet(cfg.sellWeaponOn == true) end
+            if _autoDecompGemSet  then _autoDecompGemSet(cfg.decompGemOn == true) end
+            if _setGemLevelRange and cfg.gemMinLevel and cfg.gemMaxLevel then
+                _setGemLevelRange(cfg.gemMinLevel, cfg.gemMaxLevel)
+            end
+        end)
+
+        -- ── HIDE TAB ──────────────────────────────────────────────────────
+        task.delay(0.3, function()
+            pcall(function()
+                if _setHideRerollChat then _setHideRerollChat(cfg.hideRerollChat == true) end
+                if _visHideRerollChat then _visHideRerollChat(cfg.hideRerollChat == true) end
+            end)
+            pcall(function()
+                if _setHideAllUI then _setHideAllUI(cfg.hideAllUI == true) end
+                if _visHideAllUI then _visHideAllUI(cfg.hideAllUI == true) end
+            end)
+            pcall(function()
+                if _setHideAllAnim then _setHideAllAnim(cfg.hideAllAnim == true) end
+                if _visHideAllAnim then _visHideAllAnim(cfg.hideAllAnim == true) end
+            end)
+        end)
+
+        -- ── FARM TAB ──────────────────────────────────────────────────────
+        pcall(function()
+            if _setRAToggle  then _setRAToggle(cfg.randomAttackOn == true) end
+            if _visRandomAtk then _visRandomAtk(cfg.randomAttackOn == true) end
+        end)
+
+        -- ── ATTACK TAB ────────────────────────────────────────────────────
+        pcall(function()
+            if _maMapSelState and cfg.maMapSel then
+                for k in pairs(_maMapSelState) do _maMapSelState[k] = nil end
+                if MR and MR.selected then for k in pairs(MR.selected) do MR.selected[k] = nil end end
+                for k, v in pairs(cfg.maMapSel) do
+                    local n = tonumber(k)
+                    if n then _maMapSelState[n] = true; if MR then MR.selected[n] = true end end
+                end
+                if _maMapItemRefs then
+                    local allOn = true
+                    for j = 1, 20 do if not _maMapSelState[j] then allOn = false; break end end
+                    if _maMapItemRefs[1] then
+                        _maMapItemRefs[1].chk.Text = allOn and "v" or ""
+                        _maMapItemRefs[1].lbl.TextColor3 = allOn and C.ACC2 or C.TXT
+                    end
+                    for j = 1, 20 do
+                        local ref = _maMapItemRefs[j + 1]
+                        if ref then
+                            local sel = _maMapSelState[j] == true
+                            ref.chk.Text = sel and "v" or ""
+                            ref.lbl.TextColor3 = sel and C.ACC2 or C.TXT
+                        end
+                    end
+                end
+                if _maUpdateMapDDLbl then pcall(_maUpdateMapDDLbl) end
+            end
+            task.delay(0.1, function()
+                pcall(function() if _setKillDDGlobal  and cfg.killDDIdx  then _setKillDDGlobal(cfg.killDDIdx)   end end)
+                pcall(function() if _setDelayDDGlobal and cfg.delayDDIdx then _setDelayDDGlobal(cfg.delayDDIdx) end end)
+            end)
+            for _, n in ipairs({"Z","X","C","V","F"}) do
+                local key = "skill" .. n
+                if cfg[key] == true and not SKL[n].on then
+                    SkOn(n)
+                else
+                    if cfg[key] == false and SKL[n].on then SkOff(n) end
+                end
+                -- Sync visual toggle WindUI
+                if _setSkillToggleVis then
+                    pcall(function() _setSkillToggleVis(n, cfg[key] == true) end)
+                end
+            end
+            task.delay(0.5, function()
+                if _setHideReward      then _setHideReward(cfg.hideReward == true) end
+                if _visHideRewardPanel then _visHideRewardPanel(cfg.hideReward == true) end
+                if _setMaToggleGlobal  then _setMaToggleGlobal(cfg.massAttackOn == true) end
+                if _visMassAtk         then _visMassAtk(cfg.massAttackOn == true) end
+            end)
+        end)
+
+        -- ── PLAYER TAB ────────────────────────────────────────────────────
+        pcall(function()
+            if _setNoClipToggle  then _setNoClipToggle(cfg.noClipOn == true) end
+            if _visNoClip        then _visNoClip(cfg.noClipOn == true) end
+            if _setAntiAfkToggle then _setAntiAfkToggle(cfg.antiAfkOn == true) end
+            if _visAntiAfk       then _visAntiAfk(cfg.antiAfkOn == true) end
+            if _setSpeedSlider and cfg.walkSpeed then _setSpeedSlider(cfg.walkSpeed) end
+        end)
+
+        -- ── AUTOMATION TAB ────────────────────────────────────────────────
+        pcall(function()
+            -- Restore RAID pick mode state langsung (tanpa trigger ApplyPickModeLock)
+            if cfg.raidPMIdx then
+                local PM_KEYS = {"default","byrank","bymap","hard","easy","manual"}
+                local ii = math.clamp(cfg.raidPMIdx, 1, #PM_KEYS)
+                RAID.pickMode = PM_KEYS[ii]
+                local PM_TO_DIFF = {default="easy",byrank="easy",bymap="easy",hard="hard",easy="easy",manual="easy"}
+                RAID.difficulty = PM_TO_DIFF[PM_KEYS[ii]] or "easy"
+                RAID.snapshotMapId = nil
+            end
+            -- Restore preferMaps & runeGrades DULU sebelum apply lock
+            if RAID.preferMaps and cfg.raidPreferMaps then
+                for k in pairs(RAID.preferMaps) do RAID.preferMaps[k] = nil end
+                for k, v in pairs(cfg.raidPreferMaps) do
+                    local n = tonumber(k); if n then RAID.preferMaps[n] = true end
+                end
+            end
+            if RAID.runeGrades and cfg.raidRuneGrades then
+                for k in pairs(RAID.runeGrades) do RAID.runeGrades[k] = nil end
+                for k, v in pairs(cfg.raidRuneGrades) do RAID.runeGrades[k] = true end
+            end
+            RAID.runeEnabled   = cfg.raidRuneEnabled   == true
+            RAID.updownEnabled = cfg.raidUpdownEnabled  == true
+            RAID.updownDir     = cfg.raidUpdownDir or "up"
+            RAID.runeMapTarget = cfg.raidRuneMapTarget or 0
+
+            task.delay(0.05, function()
+                pcall(function()
+                    if _raidUpdatePrefLabel then _raidUpdatePrefLabel() end
+                    if _raidUpdateRankLabel then _raidUpdateRankLabel() end
+                    if _setRaidPMIdx and cfg.raidPMIdx then _setRaidPMIdx(cfg.raidPMIdx) end
+                    -- Restore ulang data yg mungkin ter-clear oleh ApplyPickModeLock
+                    if RAID.preferMaps and cfg.raidPreferMaps then
+                        for k in pairs(RAID.preferMaps) do RAID.preferMaps[k] = nil end
+                        for k, v in pairs(cfg.raidPreferMaps) do
+                            local n = tonumber(k); if n then RAID.preferMaps[n] = true end
+                        end
+                    end
+                    if RAID.runeGrades and cfg.raidRuneGrades then
+                        for k in pairs(RAID.runeGrades) do RAID.runeGrades[k] = nil end
+                        for k, v in pairs(cfg.raidRuneGrades) do RAID.runeGrades[k] = true end
+                    end
+                    if _raidUpdatePrefLabel then _raidUpdatePrefLabel() end
+                    if _raidUpdateRankLabel then _raidUpdateRankLabel() end
+                end)
+                pcall(function()
+                    if _setRaidUpdownGrade   then _setRaidUpdownGrade(cfg.raidUpdownTargetGrade or nil) end
+                    if _raidUpdownToggleVis  then _raidUpdownToggleVis(cfg.raidUpdownEnabled == true) end
+                    if _raidUpdownDirVis     then _raidUpdownDirVis(cfg.raidUpdownDir or "up") end
+                    if _setRaidRuneMapTarget then _setRaidRuneMapTarget(cfg.raidRuneMapTarget or 0) end
+                    if _raidBossToggleVis    then _raidBossToggleVis(cfg.raidAutoKillBoss == true) end
+                    if _raidBossDelaySet     then _raidBossDelaySet(cfg.raidBossDelay or 3) end
+                    if _setRaidListEnabledVis then
+                        _setRaidListEnabledVis(cfg.raidListEnabled == true)
+                    else
+                        RAID.listEnabled = cfg.raidListEnabled == true
+                    end
+                    if RAID.listEntries and cfg.raidListEntries then
+                        for k in pairs(RAID.listEntries) do RAID.listEntries[k] = nil end
+                        for i, ent in ipairs(cfg.raidListEntries) do
+                            local maps = {}; local ranks = {}
+                            if type(ent.maps)  == "table" then
+                                for mk, mv in pairs(ent.maps)  do if mv then maps[tonumber(mk) or mk] = true end end
+                            end
+                            if type(ent.ranks) == "table" then
+                                for rk, rv in pairs(ent.ranks) do if rv then ranks[rk] = true end end
+                            end
+                            RAID.listEntries[i] = { maps = maps, ranks = ranks }
+                        end
+                        if _raidRebuildListRows then pcall(_raidRebuildListRows) end
+                    end
+                end)
+                task.delay(0.5, function()
+                    if _setRaidToggle then _setRaidToggle(cfg.raidOn == true) end
+                end)
+            end)
+        end)
+
+        pcall(function()
+            if _setAscPMIdx and cfg.ascPMIdx then _setAscPMIdx(cfg.ascPMIdx) end
+            if ASC.preferMaps and cfg.ascPreferMaps then
+                for k in pairs(ASC.preferMaps) do ASC.preferMaps[k] = nil end
+                for k, v in pairs(cfg.ascPreferMaps) do
+                    local n = tonumber(k); if n then ASC.preferMaps[n] = true end
+                end
+            end
+            if ASC.runeGrades and cfg.ascRuneGrades then
+                for k in pairs(ASC.runeGrades) do ASC.runeGrades[k] = nil end
+                for k, v in pairs(cfg.ascRuneGrades) do ASC.runeGrades[k] = true end
+            end
+            ASC.runeEnabled     = cfg.ascRuneEnabled     == true
+            ASC.runeMapTarget   = cfg.ascRuneMapTarget   or 0
+            ASC.preferMapTarget = cfg.ascPreferMapTarget or 0
+            if _ascBossToggleVis then
+                _ascBossToggleVis(cfg.ascAutoKillBoss == true)
+            else
+                ASC.autoKillBoss = cfg.ascAutoKillBoss == true
+            end
+            if _ascBossDelaySet then
+                _ascBossDelaySet(cfg.ascBossDelay or 3)
+            else
+                ASC.bossDelay = cfg.ascBossDelay or 3
+            end
+            if ASC.listEntries and cfg.ascListEntries then
+                for k in pairs(ASC.listEntries) do ASC.listEntries[k] = nil end
+                for i, ent in ipairs(cfg.ascListEntries) do
+                    local maps = {}; local ranks = {}
+                    if ent.maps  then for k, v in pairs(ent.maps)  do local n = tonumber(k); if n then maps[n] = true end end end
+                    if ent.ranks then for k, v in pairs(ent.ranks) do ranks[k] = true end end
+                    ASC.listEntries[i] = { maps = maps, ranks = ranks }
+                end
+            end
+            if _setAscListEnabledVis then
+                _setAscListEnabledVis(cfg.ascListEnabled == true)
+            else
+                ASC.listEnabled = cfg.ascListEnabled == true
+            end
+            if _ascRebuildListRows then _ascRebuildListRows() end
+            task.delay(0.7, function()
+                if _setAscToggle then _setAscToggle(cfg.ascOn == true) end
+            end)
+        end)
+
+        pcall(function()
+            if SIEGE.excludeMaps and cfg.siegeExclude then
+                for k, v in pairs(cfg.siegeExclude) do
+                    local n = tonumber(k); if n then SIEGE.excludeMaps[n] = v end
+                end
+            end
+            task.delay(0.9, function()
+                if _setSiegeToggle then _setSiegeToggle(cfg.siegeOn == true) end
+                if _visSiege       then _visSiege(cfg.siegeOn == true) end
+            end)
+        end)
+
+        pcall(function()
+            task.delay(1.1, function()
+                if _setDungeonToggle then _setDungeonToggle(cfg.dungeonOn == true) end
+                if _visDungeon       then _visDungeon(cfg.dungeonOn == true) end
+            end)
+        end)
+
+        pcall(function()
+            ST2.waveCount = cfg.st2WaveCount or 0
+            task.delay(1.3, function()
+                if _setST2Toggle then _setST2Toggle(cfg.st2On == true) end
+                if _visST2       then _visST2(cfg.st2On == true) end
+                if ST2.setAttackToggle and cfg.st2AttackOn ~= nil then
+                    ST2.setAttackToggle(cfg.st2AttackOn == true)
+                end
+            end)
+        end)
+
+        -- ── REROLL TAB ────────────────────────────────────────────────────
+        task.delay(0.3, function()
+            pcall(function()
+                if _HR_RPT and _HR_RPT.slotTarget and cfg.heroSlotTarget then
+                    for si = 1, 3 do
+                        for k in pairs(_HR_RPT.slotTarget[si]) do _HR_RPT.slotTarget[si][k] = nil end
+                        if type(cfg.heroSlotTarget[si]) == "table" then
+                            for qid, v in pairs(cfg.heroSlotTarget[si]) do
+                                if v then _HR_RPT.slotTarget[si][tonumber(qid) or qid] = true end
+                            end
+                        end
+                    end
+                end
+                if _setHeroX100Toggle then _setHeroX100Toggle(cfg.heroX100On == true) end
+                task.delay(0.2, function()
+                    if not cfg.heroX100On then
+                        if _setHeroRollToggle then _setHeroRollToggle(cfg.heroRollOn == true) end
+                    end
+                end)
+            end)
+            pcall(function()
+                if _WR_RPT and _WR_RPT.slotTarget and cfg.weaponSlotTarget then
+                    for si = 1, 3 do
+                        for k in pairs(_WR_RPT.slotTarget[si]) do _WR_RPT.slotTarget[si][k] = nil end
+                        if type(cfg.weaponSlotTarget[si]) == "table" then
+                            for qid, v in pairs(cfg.weaponSlotTarget[si]) do
+                                if v then _WR_RPT.slotTarget[si][tonumber(qid) or qid] = true end
+                            end
+                        end
+                    end
+                end
+                if _setWeaponX100Toggle then _setWeaponX100Toggle(cfg.weaponX100On == true) end
+                task.delay(0.2, function()
+                    if not cfg.weaponX100On then
+                        if _setWeaponRollToggle then _setWeaponRollToggle(cfg.weaponRollOn == true) end
+                    end
+                end)
+            end)
+            pcall(function()
+                if PGR and cfg.pgrTargets then
+                    for i = 1, 3 do
+                        for k in pairs(PGR.targets[i]) do PGR.targets[i][k] = nil end
+                        if type(cfg.pgrTargets[i]) == "table" then
+                            for gid, v in pairs(cfg.pgrTargets[i]) do
+                                if v then PGR.targets[i][tonumber(gid) or gid] = true end
+                            end
+                        end
+                        local enOn = cfg.pgrOn and cfg.pgrOn[i] == true or false
+                        PGR.enOnFlags[i] = enOn
+                        if PGR.toggleBtns[i] then
+                            PGR.toggleBtns[i].BackgroundColor3 = enOn and C.ACC or C.BG3
+                        end
+                        if PGR.toggleKnobs[i] then
+                            PGR.toggleKnobs[i].Position = enOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+                        end
+                        if enOn then DoAutoRollPetGear(i, true) end
+                        if PGR100 then
+                            local r100On = cfg.pgr100On and cfg.pgr100On[i] == true or false
+                            if r100On and not enOn then
+                                PGR100.enOnFlags[i] = true
+                                if PGR100.toggleBtns[i] then
+                                    PGR100.toggleBtns[i].BackgroundColor3 = Color3.fromRGB(0,180,200)
+                                end
+                                if PGR100.toggleKnobs[i] then
+                                    PGR100.toggleKnobs[i].Position = UDim2.new(1,-20,0.5,-9)
+                                end
+                                PGR100.Loop(i)
+                            end
+                        end
+                    end
+                end
+            end)
+            pcall(function()
+                if HALO and cfg.haloOn then
+                    for i = 1, 3 do
+                        local enOn = cfg.haloOn[i] == true
+                        HALO.enOnFlags[i] = enOn
+                        if HALO.toggleBtns[i] then
+                            HALO.toggleBtns[i].BackgroundColor3 = enOn and C.ACC or C.BG3
+                        end
+                        if HALO.toggleKnobs[i] then
+                            HALO.toggleKnobs[i].Position = enOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+                        end
+                        DoAutoRollHalo(i, enOn)
+                    end
+                end
+            end)
+            pcall(function()
+                if ORN and cfg.ornTargets then
+                    local nm = #_ASH_ORN.MACHINES
+                    for i = 1, nm do
+                        for k in pairs(ORN.targets[i]) do ORN.targets[i][k] = nil end
+                        if type(cfg.ornTargets[i]) == "table" then
+                            for qid, v in pairs(cfg.ornTargets[i]) do
+                                if v then ORN.targets[i][tonumber(qid) or qid] = true end
+                            end
+                        end
+                        local enOn = cfg.ornOn and cfg.ornOn[i] == true or false
+                        ORN.enOnFlags[i] = enOn
+                        if ORN.toggleBtns[i] then
+                            ORN.toggleBtns[i].BackgroundColor3 = enOn and C.ACC or C.BG3
+                        end
+                        if ORN.toggleKnobs[i] then
+                            ORN.toggleKnobs[i].Position = enOn and UDim2.new(1,-20,0.5,-9) or UDim2.new(0,2,0.5,-9)
+                        end
+                        if enOn then _ASH_ORN.DoRoll(i, true) end
+                    end
+                end
+            end)
+            pcall(function()
+                if _setMergeToggle then _setMergeToggle(cfg.mergeOn == true) end
+                if _visMerge       then _visMerge(cfg.mergeOn == true) end
+                if _setUseToggle   then _setUseToggle(cfg.useOn == true) end
+                if _visUse         then _visUse(cfg.useOn == true) end
+            end)
+        end)
+
+        -- ── WEBHOOK TAB ───────────────────────────────────────────────────
+        pcall(function()
+            _webhookEnabled = cfg.webhookEnabled == true
+            _webhookUrl     = cfg.webhookUrl or ""
+            if _setWebhookToggle  then _setWebhookToggle(cfg.webhookEnabled == true) end
+            if _visWebhookToggle  then _visWebhookToggle(cfg.webhookEnabled == true) end
+            if _webhookModeSetIdx and cfg.webhookModeIdx then
+                _webhookModeSetIdx(cfg.webhookModeIdx)
+            end
+        end)
+
+        -- ── REROLL slot label refresh (setelah data restore) ──────────────
+        task.delay(0.5, function()
+            pcall(function()
+                if _HR_RPT and _HR_RPT.slotRefreshFns then
+                    for i = 1, 3 do
+                        if _HR_RPT.slotRefreshFns[i] then _HR_RPT.slotRefreshFns[i]() end
+                    end
+                end
+            end)
+            pcall(function()
+                if _WR_RPT and _WR_RPT.slotRefreshFns then
+                    for i = 1, 3 do
+                        if _WR_RPT.slotRefreshFns[i] then _WR_RPT.slotRefreshFns[i]() end
+                    end
+                end
+            end)
+        end)
+
+        -- ── THEME ─────────────────────────────────────────────────────────
+        pcall(function()
+            if cfg.themeName and cfg.themeName ~= "" then
+                pcall(function() ApplyTheme(cfg.themeName) end)
+            end
+            if cfg.themeTransparency ~= nil then
+                _G.ThemeTransparency = cfg.themeTransparency
+                Window.BackgroundTransparency = _G.ThemeTransparency
+                if _setTransSlider then
+                    local v = math.floor(cfg.themeTransparency * 99 + 1)
+                    _setTransSlider(math.clamp(v, 1, 100))
+                end
+            end
+        end)
+
+        return true
+    end
+
+    -- ─── LOAD / DELETE CONFIG ─────────────────────────────────────────────────
+    local function LoadConfigByName(name)
+        local ok, result = pcall(function()
+            local path = _cfgPath(name)
+            local fileExists = false
+            pcall(function() fileExists = isfile(path) end)
+            if not fileExists then return nil end
+            local raw = nil
+            pcall(function() raw = readfile(path) end)
+            if not raw or raw == "" then return nil end
+            return jsonDecode(raw)
+        end)
+        if not ok then return nil end
+        if type(result) ~= "table" then return nil end
+        return result
+    end
+
+    local function DeleteConfigByName(name)
+        local ok = pcall(function()
+            local path = _cfgPath(name)
+            local exists = pcall(isfile, path)
+            if exists then pcall(delfile, path) end
+        end)
+        return ok
+    end
+
+    -- ─── PARAGRAPH STATUS (WindUI native) ────────────────────────────────────
+    -- Dipakai sebagai status bar di atas UI config
+    ConfigTab:Section({ Title = "Config Manager", Icon = "save" })
+
+    local _statusPara = ConfigTab:Paragraph({
+        Title = "Status",
+        Desc  = "Pilih aksi di bawah.",
+    })
+
+    local function SetStatus(msg)
+        pcall(function() _statusPara:SetDesc(msg) end)
+    end
+
+    -- ─── INISIALISASI STATUS AWAL ─────────────────────────────────────────────
+    local _initialNames = ListConfigs()
+    if #_initialNames > 0 then
+        SetStatus(#_initialNames .. " config ditemukan di FLaConfigs/.")
+    else
+        SetStatus("Belum ada config. Klik SAVE untuk membuat.")
+    end
+
+    -- ─── SECTION: SAVE CONFIG ────────────────────────────────────────────────
+    ConfigTab:Section({ Title = "Save Config", Icon = "download" })
+
+    -- Paragraph info daftar config yang sudah ada (direfresh saat dibutuhkan)
+    local _saveListPara = ConfigTab:Paragraph({
+        Title = "Config Tersimpan",
+        Desc  = #_initialNames > 0 and table.concat(_initialNames, ", ") or "(belum ada)",
+    })
+
+    local function RefreshSaveListPara()
+        local names = ListConfigs()
+        local desc = #names > 0 and table.concat(names, ", ") or "(belum ada)"
+        pcall(function() _saveListPara:SetDesc(desc) end)
+    end
+
+    -- Input nama config baru
+    local _saveNameInput = ConfigTab:Input({
+        Title       = "Nama Config",
+        Desc        = "Ketik nama lalu klik SIMPAN (atau timpa nama yang sudah ada)",
+        Placeholder = "Ketik nama config...",
+        Value       = "",
+        Callback    = function(_) end, -- ditangani via Button
+    })
+
+    -- Tombol SIMPAN
+    ConfigTab:Button({
+        Title    = "SIMPAN Config",
+        Desc     = "Simpan semua state saat ini ke file config",
+        Callback = function()
+            -- Baca value dari input WindUI (via elemen WindUI)
+            local name = ""
+            pcall(function()
+                if _saveNameInput and _saveNameInput.Value ~= nil then
+                    name = tostring(_saveNameInput.Value):match("^%s*(.-)%s*$") or ""
+                end
+            end)
+            if name == "" then
+                SetStatus("[!] Nama config tidak boleh kosong.")
+                return
+            end
+            -- Sanitize nama file
+            name = name:gsub('[/\\:*?"<>|]', '_')
+            SetStatus("Menyimpan: " .. name .. "...")
+            task.delay(0.05, function()
+                local ok, err = SaveConfigAs(name)
+                if ok then
+                    SetStatus("Tersimpan: " .. name .. ".json")
+                    RefreshSaveListPara()
+                else
+                    SetStatus("[!] Gagal simpan: " .. tostring(err):sub(1, 60))
+                end
+            end)
+        end,
+    })
+
+    -- ─── SECTION: LOAD CONFIG ────────────────────────────────────────────────
+    ConfigTab:Section({ Title = "Load Config", Icon = "upload" })
+
+    -- Dropdown pilih config untuk di-load (single select, direfresh setiap interaksi)
+    local _loadNames     = ListConfigs()
+    local _loadDropValue = #_loadNames > 0 and _loadNames[1] or nil
+
+    local _loadDropElement = ConfigTab:Dropdown({
+        Title    = "Pilih Config",
+        Desc     = "Pilih file config yang ingin di-load",
+        Values   = _loadNames,
+        Value    = _loadDropValue,
+        Multi    = false,
+        Callback = function(ap)
+            _loadDropValue = ap.Value
+        end,
+    })
+
+    -- Tombol refresh daftar config di dropdown
+    ConfigTab:Button({
+        Title    = "Refresh Daftar",
+        Desc     = "Perbarui daftar config dari folder FLaConfigs/",
+        Callback = function()
+            local names = ListConfigs()
+            _loadNames     = names
+            _loadDropValue = #names > 0 and names[1] or nil
+            pcall(function()
+                if _loadDropElement then
+                    _loadDropElement:SetValues(names)
+                    if _loadDropValue then _loadDropElement:Set(_loadDropValue) end
+                end
+            end)
+            RefreshSaveListPara()
+            local desc = #names > 0 and (#names .. " config ditemukan.") or "Belum ada config tersimpan."
+            SetStatus(desc)
+        end,
+    })
+
+    -- Tombol LOAD
+    ConfigTab:Button({
+        Title    = "LOAD Config",
+        Desc     = "Terapkan config yang dipilih ke semua state aktif",
+        Callback = function()
+            local selName = _loadDropValue
+            if not selName or selName == "" then
+                SetStatus("[!] Pilih config terlebih dahulu dari dropdown.")
+                return
+            end
+            SetStatus("Memuat: " .. selName .. "...")
+            task.delay(0.05, function()
+                local cfg = LoadConfigByName(selName)
+                if type(cfg) == "table" then
+                    ApplyConfig(cfg)
+                    SetStatus("Loaded: " .. selName .. " (" .. os.date("%H:%M:%S") .. ")")
+                else
+                    SetStatus("[!] Gagal load: " .. selName)
+                end
+            end)
+        end,
+    })
+
+    -- ─── SECTION: DELETE CONFIG ───────────────────────────────────────────────
+    ConfigTab:Section({ Title = "Delete Config", Icon = "trash-2" })
+
+    local _delNames     = ListConfigs()
+    local _delDropValue = #_delNames > 0 and _delNames[1] or nil
+    local _pendingDel   = nil  -- nama yang menunggu konfirmasi hapus
+    local _pendingTimer = nil
+
+    local _delDropElement = ConfigTab:Dropdown({
+        Title    = "Pilih Config",
+        Desc     = "Pilih file config yang ingin dihapus",
+        Values   = _delNames,
+        Value    = _delDropValue,
+        Multi    = false,
+        Callback = function(ap)
+            _delDropValue = ap.Value
+            -- Reset konfirmasi saat pilihan berubah
+            if _pendingDel and _pendingDel ~= ap.Value then
+                if _pendingTimer then pcall(task.cancel, _pendingTimer) end
+                _pendingDel   = nil
+                _pendingTimer = nil
+                SetStatus("Pilihan berubah. Klik DELETE sekali lagi untuk konfirmasi.")
+            end
+        end,
+    })
+
+    -- Tombol refresh daftar config di dropdown delete
+    ConfigTab:Button({
+        Title    = "Refresh Daftar",
+        Desc     = "Perbarui daftar config dari folder FLaConfigs/",
+        Callback = function()
+            local names = ListConfigs()
+            _delNames     = names
+            _delDropValue = #names > 0 and names[1] or nil
+            _pendingDel   = nil
+            if _pendingTimer then pcall(task.cancel, _pendingTimer) end
+            _pendingTimer = nil
+            pcall(function()
+                if _delDropElement then
+                    _delDropElement:SetValues(names)
+                    if _delDropValue then _delDropElement:Set(_delDropValue) end
+                end
+            end)
+            RefreshSaveListPara()
+            local desc = #names > 0 and (#names .. " config ditemukan.") or "Belum ada config tersimpan."
+            SetStatus(desc)
+        end,
+    })
+
+    -- Tombol DELETE (double-confirm: klik pertama = konfirmasi, klik kedua = hapus)
+    ConfigTab:Button({
+        Title    = "DELETE Config",
+        Desc     = "Klik sekali untuk konfirmasi, klik lagi untuk hapus permanen",
+        Callback = function()
+            local selName = _delDropValue
+            if not selName or selName == "" then
+                SetStatus("[!] Pilih config terlebih dahulu dari dropdown.")
+                return
+            end
+            if _pendingDel == selName then
+                -- Konfirmasi kedua -> hapus
+                if _pendingTimer then pcall(task.cancel, _pendingTimer) end
+                _pendingDel   = nil
+                _pendingTimer = nil
+                local ok = DeleteConfigByName(selName)
+                if ok then
+                    SetStatus("Dihapus: " .. selName)
+                else
+                    SetStatus("[!] Gagal hapus: " .. selName)
+                end
+                -- Refresh dropdown setelah hapus
+                task.delay(0.3, function()
+                    local names = ListConfigs()
+                    _delNames     = names
+                    _delDropValue = #names > 0 and names[1] or nil
+                    _loadNames    = names
+                    _loadDropValue= _delDropValue
+                    pcall(function()
+                        if _delDropElement  then _delDropElement:SetValues(names); if _delDropValue  then _delDropElement:Set(_delDropValue)  end end
+                        if _loadDropElement then _loadDropElement:SetValues(names); if _loadDropValue then _loadDropElement:Set(_loadDropValue) end end
+                    end)
+                    RefreshSaveListPara()
+                end)
+            else
+                -- Konfirmasi pertama
+                if _pendingDel then
+                    if _pendingTimer then pcall(task.cancel, _pendingTimer) end
+                end
+                _pendingDel = selName
+                SetStatus("[!] YAKIN hapus: " .. selName .. "? Klik DELETE sekali lagi untuk konfirmasi. (auto-cancel 5 detik)")
+                -- Auto-cancel setelah 5 detik
+                _pendingTimer = task.delay(5, function()
+                    _pendingDel   = nil
+                    _pendingTimer = nil
+                    SetStatus("Hapus dibatalkan (timeout).")
+                end)
+            end
+        end,
+    })
+
+end -- end do PANEL CONFIG

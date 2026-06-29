@@ -12779,6 +12779,16 @@ local _PLR = game:GetService("Players")
 local function RejoinServer()
     local lp = _PLR.LocalPlayer
     task.spawn(function()
+        -- Deteksi private server: PrivateServerId terisi = private/reserved server
+        -- TeleportToPlaceInstance ke private server butuh accessCode tidak bisa dari client
+        local isPrivate = false
+        pcall(function()
+            isPrivate = game.PrivateServerId ~= nil and game.PrivateServerId ~= ""
+        end)
+        if isPrivate then
+            warn("[REJOIN] Tidak support di Private Server. Jalankan di Public Server.")
+            return
+        end
         local ok = pcall(function()
             _TS:TeleportToPlaceInstance(game.PlaceId, game.JobId, lp)
         end)

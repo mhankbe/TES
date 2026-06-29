@@ -12899,7 +12899,7 @@ end
 -- ============================================================================
 -- WEBHOOK SYSTEM - Bersih, akurat, executor-agnostic
 -- Diport dari 1.lua baris 9368-9840 (do-block webhook + raid logic)
--- Kirim notif ke Discord/Telegram saat Raid Normal atau Ascension Tower OPEN
+-- Kirim notif ke Discord saat Raid Normal atau Ascension Tower OPEN
 -- ============================================================================
 
 -- ── Global state declarations ──────────────────────────────────────────────
@@ -12918,7 +12918,15 @@ local function _getReqFunc()
     return FLa_GetRequest() -- [FLa COMPAT] adaptive semua executor
 end
 
--- Helper: kirim HTTP POST ke Discord atau Telegram
+-- Helper: dapatkan string jam realtime (WIB UTC+7)
+local function _getTimestamp()
+    -- os.time() = Unix timestamp UTC
+    -- Tambah 7 jam (25200 detik) untuk WIB
+    local t = os.time() + 25200
+    return os.date("!%d/%m/%Y %H:%M:%S WIB", t)
+end
+
+-- Helper: kirim HTTP POST ke Discord
 -- return: true (sukses), false (gagal), string (error message)
 local function _doSend(url, text)
     local reqFunc = _getReqFunc()
@@ -12927,23 +12935,14 @@ local function _doSend(url, text)
         return false, "Executor tidak support HTTP"
     end
     local HS = game:GetService("HttpService")
-    local isDiscord  = url:find("discord%.com/api/webhooks")
-    local isTelegram = url:find("api%.telegram%.org")
     local ok, res, errMsg = false, nil, nil
     local callOk, callErr = pcall(function()
-        if isDiscord then
-            res = reqFunc({
-                Url     = url,
-                Method  = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body    = HS:JSONEncode({ content = text }),
-            })
-        elseif isTelegram then
-            local enc = tostring(text):gsub("([^%w%-_%.%~])", function(c)
-                return string.format("%%%02X", string.byte(c))
-            end)
-            res = reqFunc({ Url = url .. "&text=" .. enc, Method = "GET" })
-        end
+        res = reqFunc({
+            Url     = url,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = HS:JSONEncode({ content = text }),
+        })
     end)
     if not callOk then
         errMsg = "HTTP error: "..(tostring(callErr):sub(1,60))
@@ -13021,7 +13020,7 @@ local function _extractGradeLast(t)
     return last
 end
 
--- Kirim buffer ke Discord/Telegram, lalu kosongkan buffer
+-- Kirim buffer ke Discord, lalu kosongkan buffer
 local _whFlushBuffer
 _whFlushBuffer = function(url)
     if #_whBuffer == 0 then return end
@@ -13031,8 +13030,6 @@ _whFlushBuffer = function(url)
 
     local reqFunc = _getReqFunc()
     if not reqFunc then return end
-    local isDiscord  = url:find("discord%.com/api/webhooks")
-    local isTelegram = url:find("api%.telegram%.org")
     local HS = game:GetService("HttpService")
 
     -- Grade helper: AT pakai isAscension=true, RAID pakai false
@@ -13068,63 +13065,49 @@ _whFlushBuffer = function(url)
 
     local total = #entries_normal + #entries_at
 
-    if isDiscord then
-        local fields = {}
-        if #entries_normal > 0 then
-            local valLines = {}
-            for _, e in ipairs(entries_normal) do
-                local gradeStr = e.grade ~= "?" and ("**["..e.grade.."**]") or "[?]"
-                local mapStr   = e.mapNum and ("Map "..e.mapNum.." - "..e.mapName) or e.raw
-                table.insert(valLines, gradeStr.." "..mapStr)
-            end
-            table.insert(fields, {
-                name   = "Normal Raid ("..#entries_normal..")",
-                value  = table.concat(valLines, "\n"),
-                inline = false,
-            })
-        end
-        if #entries_at > 0 then
-            local valLines = {}
-            for _, e in ipairs(entries_at) do
-                local gradeStr = e.grade ~= "?" and ("**["..e.grade.."]**") or "[?]"
-                local tStr     = e.mapNum and ("Tower "..e.mapNum) or "Tower ?"
-                table.insert(valLines, gradeStr.." "..tStr)
-            end
-            table.insert(fields, {
-                name   = "Ascension Tower ("..#entries_at..")",
-                value  = table.concat(valLines, "\n"),
-                inline = false,
-            })
-        end
-        local color   = GRADE_COLOR[topGrade] or GRADE_COLOR["E"]
-        local payload = {embeds = {{
-            title       = "[RAID OPEN] Rank "..topGrade,
-            description = "Total: **"..total.."** raid aktif",
-            color       = color,
-            fields      = fields,
-            footer      = {text = "Server Id : "..GetCachedServerId()},
-        }}}
-        pcall(function()
-            reqFunc({
-                Url     = url,
-                Method  = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body    = HS:JSONEncode(payload),
-            })
-        end)
-    elseif isTelegram then
-        local out = {"[RAID OPEN] Rank "..topGrade}
+    local fields = {}
+    if #entries_normal > 0 then
+        local valLines = {}
         for _, e in ipairs(entries_normal) do
-            local mapStr = e.mapNum and ("Map "..e.mapNum.." - "..e.mapName) or e.raw
-            table.insert(out, "["..e.grade.."] "..mapStr)
+            local gradeStr = e.grade ~= "?" and ("**["..e.grade.."**]") or "[?]"
+            local mapStr   = e.mapNum and ("Map "..e.mapNum.." - "..e.mapName) or e.raw
+            table.insert(valLines, gradeStr.." "..mapStr)
         end
-        for _, e in ipairs(entries_at) do
-            local tStr = e.mapNum and ("Ascension Tower "..e.mapNum) or e.raw
-            table.insert(out, "["..e.grade.."] "..tStr)
-        end
-        table.insert(out, "Server Id : "..GetCachedServerId())
-        _doSend(url, table.concat(out, "\n"))
+        table.insert(fields, {
+            name   = "Normal Raid ("..#entries_normal..")",
+            value  = table.concat(valLines, "\n"),
+            inline = false,
+        })
     end
+    if #entries_at > 0 then
+        local valLines = {}
+        for _, e in ipairs(entries_at) do
+            local gradeStr = e.grade ~= "?" and ("**["..e.grade.."]**") or "[?]"
+            local tStr     = e.mapNum and ("Tower "..e.mapNum) or "Tower ?"
+            table.insert(valLines, gradeStr.." "..tStr)
+        end
+        table.insert(fields, {
+            name   = "Ascension Tower ("..#entries_at..")",
+            value  = table.concat(valLines, "\n"),
+            inline = false,
+        })
+    end
+    local color   = GRADE_COLOR[topGrade] or GRADE_COLOR["E"]
+    local payload = {embeds = {{
+        title       = "[RAID OPEN] Rank "..topGrade,
+        description = "Total: **"..total.."** raid aktif",
+        color       = color,
+        fields      = fields,
+        footer      = {text = "Server Id : "..GetCachedServerId().."\nSent at : ".._getTimestamp()},
+    }}}
+    pcall(function()
+        reqFunc({
+            Url     = url,
+            Method  = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body    = HS:JSONEncode(payload),
+        })
+    end)
 end
 
 -- Dipanggil dari ParseChatLine setiap kali TipsPanel tangkap 1 baris raid/AT
@@ -13176,13 +13159,13 @@ FlushWebhookPending = function()
     end
 end
 
--- SendCustomMessage: kirim pesan custom ke URL webhook
+-- SendCustomMessage: kirim pesan custom ke Discord webhook
 _WH.SendCustomMessage = function(url, msg, onDone, onFail)
     if not url or url == "" then
         if onFail then onFail("URL kosong") end; return
     end
-    if not url:find("discord%.com/api/webhooks") and not url:find("api%.telegram%.org") then
-        if onFail then onFail("URL tidak dikenali (bukan Discord/Telegram)") end; return
+    if not url:find("discord%.com/api/webhooks") then
+        if onFail then onFail("URL tidak dikenali (bukan Discord webhook)") end; return
     end
     if not _getReqFunc() then
         if onFail then onFail("Executor tidak support HTTP") end; return
@@ -13199,28 +13182,57 @@ _WH.SendCustomMessage = function(url, msg, onDone, onFail)
     end)
 end
 
--- VerifyWebhookUrl: validasi format URL webhook
+-- SendTestEmbed: kirim embed test (format sama persis notif raid) ke Discord
+_WH.SendTestEmbed = function(url, onDone, onFail)
+    if not url or url == "" then
+        if onFail then onFail("URL kosong") end; return
+    end
+    if not url:find("discord%.com/api/webhooks") then
+        if onFail then onFail("URL tidak dikenali (bukan Discord webhook)") end; return
+    end
+    local reqFunc = _getReqFunc()
+    if not reqFunc then
+        if onFail then onFail("Executor tidak support HTTP") end; return
+    end
+    task.spawn(function()
+        local HS = game:GetService("HttpService")
+        local payload = {embeds = {{
+            title       = "Test Succes",
+            description = "Webhook aktif dan siap menerima notifikasi Raid !",
+            color       = GRADE_COLOR["S"] or 16757810,
+            fields      = {},
+            footer      = {text = "Server Id : "..GetCachedServerId().."\nSent at : ".._getTimestamp()},
+        }}}
+        local callOk, callErr = pcall(function()
+            reqFunc({
+                Url     = url,
+                Method  = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body    = HS:JSONEncode(payload),
+            })
+        end)
+        task.wait(0.3)
+        if callOk then
+            if onDone then onDone() end
+        else
+            if onFail then onFail(tostring(callErr):sub(1,60)) end
+        end
+    end)
+end
+
+-- VerifyWebhookUrl: validasi format Discord webhook URL
 _WH.VerifyWebhookUrl = function(url, onValid, onInvalid)
     if not url or url == "" then
         if onInvalid then onInvalid("URL kosong") end; return
     end
-    local isDiscord  = url:find("discord%.com/api/webhooks/")
-    local isTelegram = url:find("api%.telegram%.org/bot[^/]+/sendMessage")
-    if isDiscord then
-        local id, token = url:match("webhooks/(%d+)/([%w_%-]+)")
-        if id and token and #token > 10 then
-            if onValid then onValid() end
-        else
-            if onInvalid then onInvalid("Format Discord webhook salah") end
-        end
-    elseif isTelegram then
-        if url:find("chat_id=") then
-            if onValid then onValid() end
-        else
-            if onInvalid then onInvalid("Telegram URL butuh chat_id=...") end
-        end
+    if not url:find("discord%.com/api/webhooks/") then
+        if onInvalid then onInvalid("Bukan URL Discord webhook valid") end; return
+    end
+    local id, token = url:match("webhooks/(%d+)/([%w_%-]+)")
+    if id and token and #token > 10 then
+        if onValid then onValid() end
     else
-        if onInvalid then onInvalid("Bukan URL Discord/Telegram valid") end
+        if onInvalid then onInvalid("Format Discord webhook salah") end
     end
 end
 
@@ -13230,7 +13242,7 @@ end -- end do WEBHOOK SYSTEM
 -- WEBHOOK TAB UI
 -- Diconvert dari 1.lua: NewPanel("webhook") (baris 19113)
 -- Ditulis ulang pakai WindUI native API
--- Notif: Raid Normal + Ascension Tower saja (SIEGE dihapus)
+-- Notif: Raid Normal + Ascension Tower, Discord only
 -- ============================================================================
 do
     -- ── SECTION: Raid Notif/Webhook ─────────────────────────────────────────
@@ -13239,8 +13251,8 @@ do
     -- ── URL Input ──────────────────────────────────────────────────────────
     local _urlInputElement = WebhookTab:Input({
         Title       = "URL Webhook",
-        Desc        = "Paste Discord atau Telegram webhook URL kamu di sini",
-        Placeholder = "PASTE YOUR LINK DISCORD / TELEGRAM HERE...",
+        Desc        = "Paste Discord webhook URL kamu di sini",
+        Placeholder = "PASTE YOUR DISCORD WEBHOOK URL HERE...",
         Value       = _webhookUrl,
         Callback    = function(val)
             _webhookUrl = (val or ""):match("^%s*(.-)%s*$") or ""
@@ -13260,12 +13272,10 @@ do
         local desc
         if url:find("discord%.com/api/webhooks") then
             desc = "[OK] Discord webhook DETECTED"
-        elseif url:find("api%.telegram%.org") then
-            desc = "[OK] Telegram bot API DETECTED"
         elseif url == "" then
             desc = "Content URL"
         else
-            desc = "URL not recognized (Discord/Telegram)"
+            desc = "URL not recognized (bukan Discord webhook)"
         end
         pcall(function() _platformParagraph:SetDesc(desc) end)
     end
@@ -13275,19 +13285,17 @@ do
     -- Saat di-ON: webhook langsung aktif & mulai kirim notif Raid Normal + ASC
     local _webhookToggleElement = WebhookTab:Toggle({
         Title    = "ACTIVE Webhook",
-        Desc     = "Aktifkan notifikasi Raid Normal & Ascension Tower ke Discord/Telegram",
+        Desc     = "Aktifkan notifikasi Raid Normal & Ascension Tower ke Discord",
         Value    = _webhookEnabled,
         Callback = function(on)
             if on then
                 _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
-                if _webhookUrl == "" or
-                   (not _webhookUrl:find("discord%.com/api/webhooks") and
-                    not _webhookUrl:find("api%.telegram%.org")) then
+                if _webhookUrl == "" or not _webhookUrl:find("discord%.com/api/webhooks") then
                     _webhookEnabled = false
                     if _webhookToggleElement then
                         pcall(function() _webhookToggleElement:Set(false, false) end)
                     end
-                    pcall(function() warn("[ASH Webhook] Isi URL webhook dulu sebelum mengaktifkan!") end)
+                    pcall(function() warn("[ASH Webhook] Isi URL Discord webhook dulu sebelum mengaktifkan!") end)
                     if UpdatePlatformLbl then UpdatePlatformLbl() end
                     return
                 end
@@ -13315,14 +13323,13 @@ do
     end
 
     -- ── Button: Test Webhook ───────────────────────────────────────────────
-    -- Kirim pesan singkat "Test Succes" + Server Id ke URL webhook
+    -- Kirim embed test (format sama persis notif raid) ke Discord webhook
     WebhookTab:Button({
         Title    = "Test Webhook",
-        Desc     = "Kirim pesan uji coba ke webhook URL yang diisi",
+        Desc     = "Kirim embed uji coba ke Discord webhook URL yang diisi",
         Callback = function()
             _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
             if UpdatePlatformLbl then UpdatePlatformLbl() end
-            local msg = "Test Succes\nServer Id : "..GetCachedServerId()
             local _done = false
             task.delay(10, function()
                 if not _done then
@@ -13330,7 +13337,7 @@ do
                     pcall(function() warn("[ASH Webhook] Test: Timeout/No HTTP") end)
                 end
             end)
-            _WH.SendCustomMessage(_webhookUrl, msg,
+            _WH.SendTestEmbed(_webhookUrl,
                 function()
                     if _done then return end; _done = true
                     pcall(function() warn("[ASH Webhook] Test: [OK] Sent!") end)

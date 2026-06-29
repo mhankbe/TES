@@ -12895,3 +12895,543 @@ do
         Callback = function() SmallServer() end,
     })
 end
+
+-- ============================================================================
+-- WEBHOOK SYSTEM - Bersih, akurat, executor-agnostic
+-- Diport dari 1.lua baris 9368-9840 (do-block webhook + raid logic)
+-- Kirim notif ke Discord/Telegram saat Raid atau Siege OPEN
+-- ============================================================================
+
+-- ── Global state declarations ──────────────────────────────────────────────
+_webhookEnabled  = _webhookEnabled  or false
+_webhookUrl      = _webhookUrl      or ""
+_webhookUrlBox   = _webhookUrlBox   or nil   -- TextBox reference untuk restore text
+_visWebhookToggle = _visWebhookToggle or nil  -- setter visual-only toggle (fn(bool))
+_setWebhookToggle = _setWebhookToggle or nil  -- setter logic toggle (fn(bool))
+UpdatePlatformLbl = UpdatePlatformLbl or nil  -- fn() update label platform
+FlushWebhookPending = FlushWebhookPending or nil -- fn() flush buffer webhook
+
+do -- WEBHOOK SYSTEM wrapped do-block (free top-level locals)
+
+-- Helper: dapatkan request function (support semua executor)
+local function _getReqFunc()
+    return FLa_GetRequest() -- [FLa COMPAT] adaptive semua executor
+end
+
+-- Helper: kirim HTTP POST ke Discord atau Telegram
+-- return: true (sukses), false (gagal), string (error message)
+local function _doSend(url, text)
+    local reqFunc = _getReqFunc()
+    if not reqFunc then
+        pcall(function() warn("[ASH Webhook] ERROR: Executor tidak support HTTP request!") end)
+        return false, "Executor tidak support HTTP"
+    end
+    local HS = game:GetService("HttpService")
+    local isDiscord  = url:find("discord%.com/api/webhooks")
+    local isTelegram = url:find("api%.telegram%.org")
+    local ok, res, errMsg = false, nil, nil
+    local callOk, callErr = pcall(function()
+        if isDiscord then
+            res = reqFunc({
+                Url     = url,
+                Method  = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body    = HS:JSONEncode({ content = text }),
+            })
+        elseif isTelegram then
+            local enc = tostring(text):gsub("([^%w%-_%.%~])", function(c)
+                return string.format("%%%02X", string.byte(c))
+            end)
+            res = reqFunc({ Url = url .. "&text=" .. enc, Method = "GET" })
+        end
+    end)
+    if not callOk then
+        errMsg = "HTTP error: "..(tostring(callErr):sub(1,60))
+        pcall(function() warn("[ASH Webhook] "..errMsg) end)
+        return false, errMsg
+    end
+    if res and type(res) == "table" then
+        local sc = res.StatusCode or res.status or 0
+        ok = (sc >= 200 and sc < 300)
+        if not ok then
+            errMsg = "HTTP "..sc..(res.Body and (" - "..tostring(res.Body):sub(1,40)) or "")
+            pcall(function() warn("[ASH Webhook] Gagal: "..errMsg) end)
+        end
+    elseif res ~= nil then
+        ok = true
+    else
+        errMsg = "Tidak ada response dari server"
+        ok = false
+    end
+    return ok, errMsg
+end
+
+-- Buffer teks mentah dari TipsPanel, diisi ParseChatLine
+local _whBuffer      = {}   -- list of raw lines dari event ini
+local _whBufferTimer = nil  -- debounce handle
+local _whLastSent    = 0
+
+-- [BUG FIX 4 v2] Cache teks webhook dengan TTL timestamp.
+-- Anti-spam: cegah teks sama dikirim dalam 1 window event (5 menit).
+local _WH_SENT_TTL  = 300 -- 5 menit
+local _whSentCache  = {} -- [text] = timestamp
+local function _whResetSentCache()
+    _whSentCache = {}
+end
+local function _whPruneSentCache()
+    local now = tick()
+    for k, t in pairs(_whSentCache) do
+        if (now - t) >= _WH_SENT_TTL then
+            _whSentCache[k] = nil
+        end
+    end
+end
+-- Auto-reset setiap 5 menit
+task.spawn(function()
+    while task.wait(_WH_SENT_TTL) do
+        _whResetSentCache()
+    end
+end)
+
+local GRADE_COLOR = {
+    ["E"]=9868950,  ["D"]=6604900,  ["C"]=5294200,  ["B"]=6589695,
+    ["A"]=11822335, ["S"]=16757810, ["SS"]=16768000, ["G"]=16742440,
+    ["N"]=16732240, ["M"]=16727160, ["M+"]=14428340, ["M++"]=13115135,
+    ["XM"]=16732360,["ULT"]=16766720,["GOD"]=16777215,
+}
+local GRADE_RANK_W = {
+    ["E"]=1,["D"]=2,["C"]=3,["B"]=4,["A"]=5,["S"]=6,["SS"]=7,
+    ["G"]=8,["N"]=9,["M"]=10,["M+"]=11,["M++"]=12,["XM"]=15,["ULT"]=17,["GOD"]=18,
+}
+
+-- Ambil grade dari bracket TERAKHIR dalam teks
+local function _extractGradeLast(t)
+    for _, pat in ipairs({"M%+%+","M%+","SS","XM","ULT","GOD","M"}) do
+        if t:find("%["..pat.."]", 1, false) then
+            local last = nil
+            for m in t:gmatch("%["..pat.."]") do last = m end
+            if last then return last:match("%[(.+)%]"):upper() end
+        end
+    end
+    local last = nil
+    for bracket in t:gmatch("%[([^%]]+)%]") do
+        local up = bracket:upper()
+        if up:match("^[EDCBAGSN]$") then last = up end
+    end
+    return last
+end
+
+-- Kirim buffer ke Discord/Telegram, lalu kosongkan buffer
+local _whFlushBuffer
+_whFlushBuffer = function(url)
+    if #_whBuffer == 0 then return end
+    local lines  = _whBuffer
+    _whBuffer    = {}
+    _whLastSent  = tick()
+
+    local reqFunc = _getReqFunc()
+    if not reqFunc then return end
+    local isDiscord  = url:find("discord%.com/api/webhooks")
+    local isTelegram = url:find("api%.telegram%.org")
+    local HS = game:GetService("HttpService")
+
+    -- Grade helper: AT pakai isAscension=true, RAID pakai false
+    local function _gradeFor(mapNum, isAscension)
+        local g = GetBestGrade(mapNum, isAscension)
+        if g and g ~= "?" then return g end
+        if isAscension then
+            return (_runeGradeCache and (_runeGradeCache[-mapNum] or _runeGradeCache[mapNum])) or "?"
+        else
+            return (_runeGradeCache and _runeGradeCache[mapNum]) or "?"
+        end
+    end
+
+    -- Parse baris jadi entries
+    local entries_normal, entries_at = {}, {}
+    local topGrade = "E"
+
+    for _, line in ipairs(lines) do
+        local isAT = line:find("Ascension Tower", 1, true)
+        if isAT then
+            local towerNum = tonumber(line:match("Ascension Tower (%d+)"))
+            local grade    = towerNum and _gradeFor(towerNum, true) or _extractGradeLast(line) or "?"
+            if (GRADE_RANK_W[grade] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = grade end
+            table.insert(entries_at, { mapNum = towerNum, grade = grade, raw = line })
+        else
+            local mapNum = tonumber(line:match("appeared in (%d+)"))
+            local grade  = mapNum and _gradeFor(mapNum, false) or _extractGradeLast(line) or "?"
+            if (GRADE_RANK_W[grade] or 0) > (GRADE_RANK_W[topGrade] or 0) then topGrade = grade end
+            local mapName = (MAP_NAMES and mapNum and MAP_NAMES[mapNum]) or (mapNum and ("Map "..mapNum)) or "?"
+            table.insert(entries_normal, { mapNum = mapNum, mapName = mapName, grade = grade, raw = line })
+        end
+    end
+
+    local total = #entries_normal + #entries_at
+
+    if isDiscord then
+        local fields = {}
+        if #entries_normal > 0 then
+            local valLines = {}
+            for _, e in ipairs(entries_normal) do
+                local gradeStr = e.grade ~= "?" and ("**["..e.grade.."**]") or "[?]"
+                local mapStr   = e.mapNum and ("Map "..e.mapNum.." - "..e.mapName) or e.raw
+                table.insert(valLines, gradeStr.." "..mapStr)
+            end
+            table.insert(fields, {
+                name   = "Normal Raid ("..#entries_normal..")",
+                value  = table.concat(valLines, "\n"),
+                inline = false,
+            })
+        end
+        if #entries_at > 0 then
+            local valLines = {}
+            for _, e in ipairs(entries_at) do
+                local gradeStr = e.grade ~= "?" and ("**["..e.grade.."]**") or "[?]"
+                local tStr     = e.mapNum and ("Tower "..e.mapNum) or "Tower ?"
+                table.insert(valLines, gradeStr.." "..tStr)
+            end
+            table.insert(fields, {
+                name   = "Ascension Tower ("..#entries_at..")",
+                value  = table.concat(valLines, "\n"),
+                inline = false,
+            })
+        end
+        local color   = GRADE_COLOR[topGrade] or GRADE_COLOR["E"]
+        local payload = {embeds = {{
+            title       = "[RAID OPEN] Rank "..topGrade,
+            description = "Total: **"..total.."** raid aktif",
+            color       = color,
+            fields      = fields,
+            footer      = {text = "Server Id : "..GetCachedServerId()},
+        }}}
+        pcall(function()
+            reqFunc({
+                Url     = url,
+                Method  = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body    = HS:JSONEncode(payload),
+            })
+        end)
+    elseif isTelegram then
+        local out = {"[RAID OPEN] Rank "..topGrade}
+        for _, e in ipairs(entries_normal) do
+            local mapStr = e.mapNum and ("Map "..e.mapNum.." - "..e.mapName) or e.raw
+            table.insert(out, "["..e.grade.."] "..mapStr)
+        end
+        for _, e in ipairs(entries_at) do
+            local tStr = e.mapNum and ("Ascension Tower "..e.mapNum) or e.raw
+            table.insert(out, "["..e.grade.."] "..tStr)
+        end
+        table.insert(out, "Server Id : "..GetCachedServerId())
+        _doSend(url, table.concat(out, "\n"))
+    end
+end
+
+-- Dipanggil dari ParseChatLine setiap kali TipsPanel tangkap 1 baris raid/AT
+_WH.AddLine = function(text)
+    if not _webhookEnabled or not _webhookUrl or _webhookUrl == "" then return end
+    if _whSilent then return end
+    local _now = tick()
+    if _whSentCache[text] and (_now - _whSentCache[text]) < _WH_SENT_TTL then return end
+    for _, existing in ipairs(_whBuffer) do
+        if existing == text then return end
+    end
+    _whSentCache[text] = _now
+    local _cacheSize = 0
+    for _ in pairs(_whSentCache) do _cacheSize = _cacheSize + 1 end
+    if _cacheSize > 100 then _whPruneSentCache() end
+    table.insert(_whBuffer, text)
+    -- Reset debounce: tunggu 3 detik setelah baris terakhir baru kirim
+    if _whBufferTimer then pcall(function() task.cancel(_whBufferTimer) end) end
+    _whBufferTimer = task.delay(3, function()
+        _whBufferTimer = nil
+        -- Cooldown 10 detik antar pengiriman
+        if (tick() - _whLastSent) < 10 then
+            local sisa = 10 - (tick() - _whLastSent)
+            _whBufferTimer = task.delay(sisa, function()
+                _whBufferTimer = nil
+                _whFlushBuffer(_webhookUrl)
+            end)
+            return
+        end
+        _whFlushBuffer(_webhookUrl)
+    end)
+end
+
+-- Alias agar kode lain tidak error
+_WH.SendRaid     = function(url) _whFlushBuffer(url) end
+SendWebhookRaid  = function(url) _whFlushBuffer(url) end
+_WH.SendSiege    = function() end -- [v52] removed: SIEGE webhook disabled
+SendWebhookSiege = function() end -- stub
+
+TriggerWebhookDebounce = function() end -- no-op, compat
+SendWebhookNotif       = TriggerWebhookDebounce -- alias compat
+
+-- FlushWebhookPending: reset cooldown dan flush buffer
+FlushWebhookPending = function()
+    _whLastSent = 0
+    if _WH and _whFlushBuffer and _webhookUrl and _webhookUrl ~= "" then
+        _whFlushBuffer(_webhookUrl)
+    end
+end
+
+-- SendCustomMessage: kirim pesan custom ke URL webhook
+_WH.SendCustomMessage = function(url, msg, onDone, onFail)
+    if not url or url == "" then
+        if onFail then onFail("URL kosong") end; return
+    end
+    if not url:find("discord%.com/api/webhooks") and not url:find("api%.telegram%.org") then
+        if onFail then onFail("URL tidak dikenali (bukan Discord/Telegram)") end; return
+    end
+    if not _getReqFunc() then
+        if onFail then onFail("Executor tidak support HTTP") end; return
+    end
+    task.spawn(function()
+        local ok, errMsg = _doSend(url, msg)
+        task.wait(0.3)
+        if ok then
+            if onDone then onDone() end
+        else
+            local reason = errMsg or "Gagal kirim"
+            if onFail then onFail(reason) end
+        end
+    end)
+end
+
+-- VerifyWebhookUrl: validasi format URL webhook
+_WH.VerifyWebhookUrl = function(url, onValid, onInvalid)
+    if not url or url == "" then
+        if onInvalid then onInvalid("URL kosong") end; return
+    end
+    local isDiscord  = url:find("discord%.com/api/webhooks/")
+    local isTelegram = url:find("api%.telegram%.org/bot[^/]+/sendMessage")
+    if isDiscord then
+        local id, token = url:match("webhooks/(%d+)/([%w_%-]+)")
+        if id and token and #token > 10 then
+            if onValid then onValid() end
+        else
+            if onInvalid then onInvalid("Format Discord webhook salah") end
+        end
+    elseif isTelegram then
+        if url:find("chat_id=") then
+            if onValid then onValid() end
+        else
+            if onInvalid then onInvalid("Telegram URL butuh chat_id=...") end
+        end
+    else
+        if onInvalid then onInvalid("Bukan URL Discord/Telegram valid") end
+    end
+end
+
+end -- end do WEBHOOK SYSTEM
+
+-- ============================================================================
+-- WEBHOOK TAB UI
+-- Diconvert dari 1.lua: NewPanel("webhook") (baris 19113)
+-- Ditulis ulang pakai WindUI native API
+-- ============================================================================
+do
+    -- ── SECTION: Raid Notif/Webhook ─────────────────────────────────────────
+    WebhookTab:Section({ Title = "Raid Notif / Webhook", Icon = "bell" })
+
+    -- ── URL Input ──────────────────────────────────────────────────────────
+    -- Pengganti urlBox TextBox + urlHdr dari source asli
+    local _urlInputElement = WebhookTab:Input({
+        Title       = "URL Webhook",
+        Desc        = "Paste Discord atau Telegram webhook URL kamu di sini",
+        Placeholder = "PASTE YOUR LINK DISCORD / TELEGRAM HERE...",
+        Value       = _webhookUrl,
+        Callback    = function(val)
+            _webhookUrl = (val or ""):match("^%s*(.-)%s*$") or ""
+            if UpdatePlatformLbl then UpdatePlatformLbl() end
+        end,
+    })
+
+    -- ── Platform detect Paragraph ──────────────────────────────────────────
+    -- Pengganti platformLbl dari source asli
+    local _platformParagraph = WebhookTab:Paragraph({
+        Title = "Platform",
+        Desc  = "Content URL",
+    })
+
+    -- UpdatePlatformLbl: update Paragraph sesuai URL saat ini
+    UpdatePlatformLbl = function()
+        if not _platformParagraph then return end
+        local url = _webhookUrl or ""
+        local desc
+        if url:find("discord%.com/api/webhooks") then
+            desc = "[OK] Discord webhook DETECTED"
+        elseif url:find("api%.telegram%.org") then
+            desc = "[OK] Telegram bot API DETECTED"
+        elseif url == "" then
+            desc = "Content URL"
+        else
+            desc = "URL not recognized (Discord/Telegram)"
+        end
+        pcall(function() _platformParagraph:SetDesc(desc) end)
+    end
+    UpdatePlatformLbl()
+
+    -- ── Toggle: ACTIVE Webhook ─────────────────────────────────────────────
+    -- Pengganti wRow toggle pill dari source asli
+    local _webhookToggleElement = WebhookTab:Toggle({
+        Title    = "ACTIVE Webhook",
+        Desc     = "Send notifications for every Raid/Ascension Tower update",
+        Value    = _webhookEnabled,
+        Callback = function(on)
+            -- Validasi URL sebelum enable
+            if on then
+                _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
+                if _webhookUrl == "" or
+                   (not _webhookUrl:find("discord%.com/api/webhooks") and
+                    not _webhookUrl:find("api%.telegram%.org")) then
+                    -- URL kosong / tidak valid, batalkan toggle
+                    _webhookEnabled = false
+                    -- Kembalikan visual toggle ke OFF tanpa trigger Callback lagi
+                    if _webhookToggleElement then
+                        pcall(function() _webhookToggleElement:Set(false, false) end)
+                    end
+                    pcall(function() warn("[ASH Webhook] Isi URL webhook dulu sebelum mengaktifkan!") end)
+                    if UpdatePlatformLbl then UpdatePlatformLbl() end
+                    return
+                end
+            end
+            _webhookEnabled = on
+            if UpdatePlatformLbl then UpdatePlatformLbl() end
+            if on then
+                -- Reset cooldown agar tidak terblokir pengiriman sebelumnya
+                if FlushWebhookPending then task.spawn(FlushWebhookPending) end
+            end
+        end,
+    })
+
+    -- Expose setter visual-only dan setter logic ke global
+    _visWebhookToggle = function(v)
+        if _webhookToggleElement then
+            pcall(function() _webhookToggleElement:Set(v, false) end) -- silent, no Callback
+        end
+    end
+    _setWebhookToggle = function(v)
+        if v == _webhookEnabled then return end
+        _webhookEnabled = v
+        if _webhookToggleElement then
+            pcall(function() _webhookToggleElement:Set(v) end) -- trigger Callback
+        end
+    end
+
+    -- ── Status Paragraphs (dibuat sekali, di-update via SetDesc) ──────────
+    local _testStatusPara = WebhookTab:Paragraph({ Title = "Test Status",   Desc = "Idle" })
+    local _verStatusPara  = WebhookTab:Paragraph({ Title = "Verify Status", Desc = "Idle" })
+    local _snStatusPara   = WebhookTab:Paragraph({ Title = "Send Status",   Desc = "Idle" })
+
+    -- ── Button: Test Webhook ───────────────────────────────────────────────
+    -- Pengganti testBtn dari source asli
+    WebhookTab:Button({
+        Title    = "Test Webhook",
+        Desc     = "Kirim pesan uji coba ke webhook URL yang diisi",
+        Callback = function()
+            _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
+            if UpdatePlatformLbl then UpdatePlatformLbl() end
+            local msg = "[OK] Test Webhook Succes !!\nReady to receive RAID and SIEGE notifications !\nServer Id : "..GetCachedServerId()
+            pcall(function() _testStatusPara:SetDesc("[..] Sending...") end)
+            local _done = false
+            task.delay(10, function()
+                if not _done then
+                    _done = true
+                    pcall(function() _testStatusPara:SetDesc("[!] Timeout/No HTTP") end)
+                    task.delay(3, function() pcall(function() _testStatusPara:SetDesc("Idle") end) end)
+                end
+            end)
+            _WH.SendCustomMessage(_webhookUrl, msg,
+                function()
+                    if _done then return end; _done = true
+                    task.spawn(function()
+                        pcall(function() _testStatusPara:SetDesc("[OK] Sent!") end)
+                        task.wait(2.5)
+                        pcall(function() _testStatusPara:SetDesc("Idle") end)
+                    end)
+                end,
+                function(err)
+                    if _done then return end; _done = true
+                    task.spawn(function()
+                        pcall(function() _testStatusPara:SetDesc(tostring(err)) end)
+                        task.wait(2.5)
+                        pcall(function() _testStatusPara:SetDesc("Idle") end)
+                    end)
+                end
+            )
+        end,
+    })
+
+    -- ── Button: Verify Link ────────────────────────────────────────────────
+    -- Pengganti verBtn dari source asli
+    WebhookTab:Button({
+        Title    = "Verify Link",
+        Desc     = "Cek apakah format URL webhook valid (Discord/Telegram)",
+        Callback = function()
+            _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
+            if UpdatePlatformLbl then UpdatePlatformLbl() end
+            pcall(function() _verStatusPara:SetDesc("[..] Cek...") end)
+            _WH.VerifyWebhookUrl(_webhookUrl,
+                function()
+                    task.spawn(function()
+                        pcall(function() _verStatusPara:SetDesc("[OK] Link Valid!") end)
+                        task.wait(1)
+                        pcall(function() _verStatusPara:SetDesc("Idle") end)
+                    end)
+                end,
+                function(err)
+                    task.spawn(function()
+                        pcall(function() _verStatusPara:SetDesc(tostring(err)) end)
+                        task.wait(1)
+                        pcall(function() _verStatusPara:SetDesc("Idle") end)
+                    end)
+                end
+            )
+        end,
+    })
+
+    -- ── Button: Send Notify Now ────────────────────────────────────────────
+    -- Pengganti sendNowBtn dari source asli
+    WebhookTab:Button({
+        Title    = "Send Notify Now",
+        Desc     = "Kirim notifikasi raid aktif sekarang ke webhook URL",
+        Callback = function()
+            _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
+            if _webhookUrl == "" then
+                pcall(function() _snStatusPara:SetDesc("[!] URL kosong!") end)
+                task.delay(2, function() pcall(function() _snStatusPara:SetDesc("Idle") end) end)
+                return
+            end
+            pcall(function() _snStatusPara:SetDesc("[..] Mengirim...") end)
+            local _snDone = false
+            task.delay(12, function()
+                if not _snDone then
+                    _snDone = true
+                    pcall(function() _snStatusPara:SetDesc("[!] Timeout") end)
+                    task.delay(2.5, function() pcall(function() _snStatusPara:SetDesc("Idle") end) end)
+                end
+            end)
+            task.spawn(function()
+                local url = _webhookUrl
+                local sent = false
+                local hasRaid = next(RAID_LIVE or {}) ~= nil
+                if hasRaid then
+                    if _WH.SendRaid then _WH.SendRaid(url) end
+                    sent = true
+                end
+                if not sent then
+                    if _snDone then return end; _snDone = true
+                    pcall(function() _snStatusPara:SetDesc("[!] No Raid Data") end)
+                    task.delay(2.5, function() pcall(function() _snStatusPara:SetDesc("Idle") end) end)
+                    return
+                end
+                if _snDone then return end; _snDone = true
+                task.wait(0.5)
+                pcall(function() _snStatusPara:SetDesc("[OK] Sent!") end)
+                task.delay(2.5, function() pcall(function() _snStatusPara:SetDesc("Idle") end) end)
+            end)
+        end,
+    })
+
+end -- end do WEBHOOK TAB UI

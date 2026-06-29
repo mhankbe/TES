@@ -12696,3 +12696,275 @@ do
         end
     end)
 end
+
+-- ============================================================================
+-- PANEL: SETTING TAB → GIFT CODE CLAIMER + SERVER TOOLS
+-- Diconvert dari 1.lua: NewPanel("settings") (baris 19004)
+-- Dependency baru yang di-declare di blok ini (belum ada di 2.lua):
+--   FLa_GetRequest(), FLa_HttpGet(), GetCachedServerId()
+--   RejoinServer(), ServerHop(), SmallServer()
+-- ============================================================================
+
+-- ── Helper: HTTP request function (adaptive semua executor) ─────────────────
+-- Diport dari 1.lua baris 293
+if not FLa_GetRequest then
+    function FLa_GetRequest()
+        local r = request or http_request or httprequest
+        if r then return r end
+        if syn    and type(syn.request)      == "function" then return syn.request      end
+        if http   and type(http.request)     == "function" then return http.request     end
+        if fluxus and type(fluxus.request)   == "function" then return fluxus.request   end
+        if krnl   and type(krnl.request)     == "function" then return krnl.request     end
+        if electron and type(electron.request) == "function" then return electron.request end
+        if awp    and type(awp.request)      == "function" then return awp.request      end
+        if comet  and type(comet.request)    == "function" then return comet.request    end
+        if type(getgenv) == "function" then
+            local ok, env = pcall(getgenv)
+            if ok and env then
+                r = env.request or env.http_request or env.httprequest
+                if r then return r end
+            end
+        end
+        return nil
+    end
+end
+
+-- ── Helper: adaptive HTTP GET ────────────────────────────────────────────────
+-- Diport dari 1.lua baris 320
+if not FLa_HttpGet then
+    function FLa_HttpGet(url)
+        do
+            local ok, result = pcall(function() return game:HttpGet(url) end)
+            if ok and type(result) == "string" and #result > 0 then return result end
+        end
+        local reqF = FLa_GetRequest()
+        if reqF then
+            local ok, res = pcall(function()
+                return reqF({ Url = url, Method = "GET" })
+            end)
+            if ok and res and type(res.Body) == "string" and #res.Body > 0 then
+                return res.Body
+            end
+        end
+        if syn and type(syn.request) == "function" then
+            local ok, res = pcall(function()
+                return syn.request({ Url = url, Method = "GET" })
+            end)
+            if ok and res and type(res.Body) == "string" then return res.Body end
+        end
+        return nil
+    end
+end
+
+-- ── Helper: cached server ID ─────────────────────────────────────────────────
+-- Diport dari 1.lua baris 432
+if not GetCachedServerId then
+    _CACHED_SERVER_ID = _CACHED_SERVER_ID or (function()
+        local ok, priv = pcall(function() return game.PrivateServerId end)
+        if ok and priv and priv ~= "" then return priv end
+        local jobId = game.JobId ~= "" and game.JobId or nil
+        if jobId then return "wp"..jobId end
+        return "N/A"
+    end)()
+    function GetCachedServerId()
+        return _CACHED_SERVER_ID
+    end
+end
+
+-- ── Server Tools functions ────────────────────────────────────────────────────
+-- Diport dari 1.lua baris 3009
+local _TS  = game:GetService("TeleportService")
+local _HS  = game:GetService("HttpService")
+local _PLR = game:GetService("Players")
+
+local function RejoinServer()
+    local lp = _PLR.LocalPlayer
+    task.spawn(function()
+        local ok = pcall(function()
+            _TS:TeleportToPlaceInstance(game.PlaceId, game.JobId, lp)
+        end)
+        if not ok then
+            pcall(function() _TS:Teleport(game.PlaceId, lp) end)
+        end
+    end)
+end
+
+-- Diport dari 1.lua baris 3028
+local function ServerHop()
+    local lp = _PLR.LocalPlayer
+    task.spawn(function()
+        local ok = pcall(function()
+            local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Desc&limit=100"
+            local raw = FLa_HttpGet(url)
+            if not raw then error("HTTP tidak supported") end
+            local data = _HS:JSONDecode(raw)
+            if data and data.data then
+                local avail = {}
+                for _, v in ipairs(data.data) do
+                    if type(v) == "table" and v.id ~= game.JobId and v.playing < v.maxPlayers then
+                        table.insert(avail, v.id)
+                    end
+                end
+                if #avail > 0 then
+                    _TS:TeleportToPlaceInstance(game.PlaceId, avail[math.random(1, #avail)], lp)
+                    return
+                end
+            end
+            _TS:Teleport(game.PlaceId, lp)
+        end)
+        if not ok then
+            pcall(function() _TS:Teleport(game.PlaceId, lp) end)
+        end
+    end)
+end
+
+-- Diport dari 1.lua baris 3059
+local function SmallServer()
+    local lp = _PLR.LocalPlayer
+    task.spawn(function()
+        local ok = pcall(function()
+            local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
+            local raw = FLa_HttpGet(url)
+            if not raw then error("HTTP tidak supported") end
+            local data = _HS:JSONDecode(raw)
+            if data and data.data then
+                for _, v in ipairs(data.data) do
+                    if type(v) == "table" and v.id ~= game.JobId and v.playing < v.maxPlayers and v.playing > 0 then
+                        _TS:TeleportToPlaceInstance(game.PlaceId, v.id, lp)
+                        return
+                    end
+                end
+            end
+            _TS:Teleport(game.PlaceId, lp)
+        end)
+        if not ok then
+            pcall(function() _TS:Teleport(game.PlaceId, lp) end)
+        end
+    end)
+end
+
+-- ============================================================================
+-- SETTING TAB UI
+-- ============================================================================
+do
+    -- ── SECTION: GIFT CODE CLAIMER ──────────────────────────────────────────
+    -- Diport dari 1.lua baris 19009
+    local gcSection = SettingTab:Section({
+        Title  = "Gift Code Claimer",
+        Icon   = "gift",
+        Opened = false,
+        Box    = true,
+    })
+
+    -- Status paragraph
+    local gcStatusEl = gcSection:Paragraph({
+        Title = "Status",
+        Desc  = "Tekan Claim untuk redeem kode 1–150",
+    })
+
+    -- State
+    local _gcRunning   = false
+    local _gcNeedRefresh = false
+    local _gcPayload     = nil  -- { desc }
+
+    local function GcPostRefresh(desc)
+        _gcPayload     = { desc = desc }
+        _gcNeedRefresh = true
+    end
+
+    -- Heartbeat poller untuk SetDesc (CLAUDE.md §3)
+    RunService.Heartbeat:Connect(function()
+        if not _gcNeedRefresh then return end
+        _gcNeedRefresh = false
+        if _gcPayload and gcStatusEl then
+            pcall(function() gcStatusEl:SetDesc(_gcPayload.desc) end)
+        end
+    end)
+
+    -- Tombol CLAIM
+    gcSection:Button({
+        Title    = "CLAIM GIFT CODE",
+        Desc     = "Claim kode 1 - 150 secara berurutan",
+        Callback = function()
+            if _gcRunning then return end
+            _gcRunning = true
+            GcPostRefresh("Claiming...")
+
+            local gcRemote = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+                and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("GiftCodeReceived")
+
+            if not gcRemote then
+                GcPostRefresh("[!] Remote GiftCodeReceived tidak ditemukan")
+                _gcRunning = false
+                return
+            end
+
+            task.spawn(function()
+                local claimed = 0
+                local failed  = 0
+                for i = 1, 150 do
+                    if not _gcRunning then break end
+                    local ok = pcall(function() gcRemote:InvokeServer(i) end)
+                    if ok then claimed = claimed + 1 else failed = failed + 1 end
+                    GcPostRefresh("Claiming... "..i.."/150  (ok:"..claimed.." gagal:"..failed..")")
+                    task.wait(0.15)
+                end
+                GcPostRefresh("Selesai. Berhasil: "..claimed.."  Gagal: "..failed)
+                _gcRunning = false
+            end)
+        end,
+    })
+
+    -- Tombol STOP (berhenti di tengah jalan)
+    gcSection:Button({
+        Title    = "STOP",
+        Desc     = "Hentikan proses claim",
+        Callback = function()
+            if _gcRunning then
+                _gcRunning = false
+                GcPostRefresh("[.] Dihentikan oleh user")
+            end
+        end,
+    })
+
+    -- ── SECTION: SERVER TOOLS ───────────────────────────────────────────────
+    -- Diport dari 1.lua baris 19074
+    local srvSection = SettingTab:Section({
+        Title  = "Server Tools",
+        Icon   = "server",
+        Opened = false,
+        Box    = true,
+    })
+
+    srvSection:Paragraph({
+        Title = "Info",
+        Desc  = "Rejoin ke server sama, hop ke server random, atau join server paling sepi.",
+    })
+
+    -- REJOIN
+    srvSection:Button({
+        Title    = "REJOIN SERVER",
+        Desc     = "Masuk ulang ke server ID yang sama",
+        Callback = function()
+            RejoinServer()
+        end,
+    })
+
+    -- SERVER HOP
+    srvSection:Button({
+        Title    = "SERVER HOP",
+        Desc     = "Join server lain secara random / acak",
+        Callback = function()
+            ServerHop()
+        end,
+    })
+
+    -- SMALL SERVER
+    srvSection:Button({
+        Title    = "SMALL SERVER",
+        Desc     = "Join server dengan player paling sedikit (Ascending)",
+        Callback = function()
+            SmallServer()
+        end,
+    })
+end

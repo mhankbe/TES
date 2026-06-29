@@ -12899,7 +12899,7 @@ end
 -- ============================================================================
 -- WEBHOOK SYSTEM - Bersih, akurat, executor-agnostic
 -- Diport dari 1.lua baris 9368-9840 (do-block webhook + raid logic)
--- Kirim notif ke Discord/Telegram saat Raid atau Siege OPEN
+-- Kirim notif ke Discord/Telegram saat Raid Normal atau Ascension Tower OPEN
 -- ============================================================================
 
 -- ── Global state declarations ──────────────────────────────────────────────
@@ -13161,8 +13161,9 @@ end
 -- Alias agar kode lain tidak error
 _WH.SendRaid     = function(url) _whFlushBuffer(url) end
 SendWebhookRaid  = function(url) _whFlushBuffer(url) end
-_WH.SendSiege    = function() end -- [v52] removed: SIEGE webhook disabled
-SendWebhookSiege = function() end -- stub
+-- [v52+] SIEGE webhook dihapus: hanya Raid Normal + Ascension Tower
+_WH.SendSiege    = function() end
+SendWebhookSiege = function() end
 
 TriggerWebhookDebounce = function() end -- no-op, compat
 SendWebhookNotif       = TriggerWebhookDebounce -- alias compat
@@ -13229,13 +13230,13 @@ end -- end do WEBHOOK SYSTEM
 -- WEBHOOK TAB UI
 -- Diconvert dari 1.lua: NewPanel("webhook") (baris 19113)
 -- Ditulis ulang pakai WindUI native API
+-- Notif: Raid Normal + Ascension Tower saja (SIEGE dihapus)
 -- ============================================================================
 do
     -- ── SECTION: Raid Notif/Webhook ─────────────────────────────────────────
     WebhookTab:Section({ Title = "Raid Notif / Webhook", Icon = "bell" })
 
     -- ── URL Input ──────────────────────────────────────────────────────────
-    -- Pengganti urlBox TextBox + urlHdr dari source asli
     local _urlInputElement = WebhookTab:Input({
         Title       = "URL Webhook",
         Desc        = "Paste Discord atau Telegram webhook URL kamu di sini",
@@ -13248,13 +13249,11 @@ do
     })
 
     -- ── Platform detect Paragraph ──────────────────────────────────────────
-    -- Pengganti platformLbl dari source asli
     local _platformParagraph = WebhookTab:Paragraph({
         Title = "Platform",
         Desc  = "Content URL",
     })
 
-    -- UpdatePlatformLbl: update Paragraph sesuai URL saat ini
     UpdatePlatformLbl = function()
         if not _platformParagraph then return end
         local url = _webhookUrl or ""
@@ -13273,21 +13272,18 @@ do
     UpdatePlatformLbl()
 
     -- ── Toggle: ACTIVE Webhook ─────────────────────────────────────────────
-    -- Pengganti wRow toggle pill dari source asli
+    -- Saat di-ON: webhook langsung aktif & mulai kirim notif Raid Normal + ASC
     local _webhookToggleElement = WebhookTab:Toggle({
         Title    = "ACTIVE Webhook",
-        Desc     = "Send notifications for every Raid/Ascension Tower update",
+        Desc     = "Aktifkan notifikasi Raid Normal & Ascension Tower ke Discord/Telegram",
         Value    = _webhookEnabled,
         Callback = function(on)
-            -- Validasi URL sebelum enable
             if on then
                 _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
                 if _webhookUrl == "" or
                    (not _webhookUrl:find("discord%.com/api/webhooks") and
                     not _webhookUrl:find("api%.telegram%.org")) then
-                    -- URL kosong / tidak valid, batalkan toggle
                     _webhookEnabled = false
-                    -- Kembalikan visual toggle ke OFF tanpa trigger Callback lagi
                     if _webhookToggleElement then
                         pcall(function() _webhookToggleElement:Set(false, false) end)
                     end
@@ -13299,7 +13295,6 @@ do
             _webhookEnabled = on
             if UpdatePlatformLbl then UpdatePlatformLbl() end
             if on then
-                -- Reset cooldown agar tidak terblokir pengiriman sebelumnya
                 if FlushWebhookPending then task.spawn(FlushWebhookPending) end
             end
         end,
@@ -13308,129 +13303,43 @@ do
     -- Expose setter visual-only dan setter logic ke global
     _visWebhookToggle = function(v)
         if _webhookToggleElement then
-            pcall(function() _webhookToggleElement:Set(v, false) end) -- silent, no Callback
+            pcall(function() _webhookToggleElement:Set(v, false) end)
         end
     end
     _setWebhookToggle = function(v)
         if v == _webhookEnabled then return end
         _webhookEnabled = v
         if _webhookToggleElement then
-            pcall(function() _webhookToggleElement:Set(v) end) -- trigger Callback
+            pcall(function() _webhookToggleElement:Set(v) end)
         end
     end
 
-    -- ── Status Paragraphs (dibuat sekali, di-update via SetDesc) ──────────
-    local _testStatusPara = WebhookTab:Paragraph({ Title = "Test Status",   Desc = "Idle" })
-    local _verStatusPara  = WebhookTab:Paragraph({ Title = "Verify Status", Desc = "Idle" })
-    local _snStatusPara   = WebhookTab:Paragraph({ Title = "Send Status",   Desc = "Idle" })
-
     -- ── Button: Test Webhook ───────────────────────────────────────────────
-    -- Pengganti testBtn dari source asli
+    -- Kirim pesan singkat "Test Succes" + Server Id ke URL webhook
     WebhookTab:Button({
         Title    = "Test Webhook",
         Desc     = "Kirim pesan uji coba ke webhook URL yang diisi",
         Callback = function()
             _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
             if UpdatePlatformLbl then UpdatePlatformLbl() end
-            local msg = "[OK] Test Webhook Succes !!\nReady to receive RAID and SIEGE notifications !\nServer Id : "..GetCachedServerId()
-            pcall(function() _testStatusPara:SetDesc("[..] Sending...") end)
+            local msg = "Test Succes\nServer Id : "..GetCachedServerId()
             local _done = false
             task.delay(10, function()
                 if not _done then
                     _done = true
-                    pcall(function() _testStatusPara:SetDesc("[!] Timeout/No HTTP") end)
-                    task.delay(3, function() pcall(function() _testStatusPara:SetDesc("Idle") end) end)
+                    pcall(function() warn("[ASH Webhook] Test: Timeout/No HTTP") end)
                 end
             end)
             _WH.SendCustomMessage(_webhookUrl, msg,
                 function()
                     if _done then return end; _done = true
-                    task.spawn(function()
-                        pcall(function() _testStatusPara:SetDesc("[OK] Sent!") end)
-                        task.wait(2.5)
-                        pcall(function() _testStatusPara:SetDesc("Idle") end)
-                    end)
+                    pcall(function() warn("[ASH Webhook] Test: [OK] Sent!") end)
                 end,
                 function(err)
                     if _done then return end; _done = true
-                    task.spawn(function()
-                        pcall(function() _testStatusPara:SetDesc(tostring(err)) end)
-                        task.wait(2.5)
-                        pcall(function() _testStatusPara:SetDesc("Idle") end)
-                    end)
+                    pcall(function() warn("[ASH Webhook] Test: "..tostring(err)) end)
                 end
             )
-        end,
-    })
-
-    -- ── Button: Verify Link ────────────────────────────────────────────────
-    -- Pengganti verBtn dari source asli
-    WebhookTab:Button({
-        Title    = "Verify Link",
-        Desc     = "Cek apakah format URL webhook valid (Discord/Telegram)",
-        Callback = function()
-            _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
-            if UpdatePlatformLbl then UpdatePlatformLbl() end
-            pcall(function() _verStatusPara:SetDesc("[..] Cek...") end)
-            _WH.VerifyWebhookUrl(_webhookUrl,
-                function()
-                    task.spawn(function()
-                        pcall(function() _verStatusPara:SetDesc("[OK] Link Valid!") end)
-                        task.wait(1)
-                        pcall(function() _verStatusPara:SetDesc("Idle") end)
-                    end)
-                end,
-                function(err)
-                    task.spawn(function()
-                        pcall(function() _verStatusPara:SetDesc(tostring(err)) end)
-                        task.wait(1)
-                        pcall(function() _verStatusPara:SetDesc("Idle") end)
-                    end)
-                end
-            )
-        end,
-    })
-
-    -- ── Button: Send Notify Now ────────────────────────────────────────────
-    -- Pengganti sendNowBtn dari source asli
-    WebhookTab:Button({
-        Title    = "Send Notify Now",
-        Desc     = "Kirim notifikasi raid aktif sekarang ke webhook URL",
-        Callback = function()
-            _webhookUrl = (_webhookUrl or ""):match("^%s*(.-)%s*$") or ""
-            if _webhookUrl == "" then
-                pcall(function() _snStatusPara:SetDesc("[!] URL kosong!") end)
-                task.delay(2, function() pcall(function() _snStatusPara:SetDesc("Idle") end) end)
-                return
-            end
-            pcall(function() _snStatusPara:SetDesc("[..] Mengirim...") end)
-            local _snDone = false
-            task.delay(12, function()
-                if not _snDone then
-                    _snDone = true
-                    pcall(function() _snStatusPara:SetDesc("[!] Timeout") end)
-                    task.delay(2.5, function() pcall(function() _snStatusPara:SetDesc("Idle") end) end)
-                end
-            end)
-            task.spawn(function()
-                local url = _webhookUrl
-                local sent = false
-                local hasRaid = next(RAID_LIVE or {}) ~= nil
-                if hasRaid then
-                    if _WH.SendRaid then _WH.SendRaid(url) end
-                    sent = true
-                end
-                if not sent then
-                    if _snDone then return end; _snDone = true
-                    pcall(function() _snStatusPara:SetDesc("[!] No Raid Data") end)
-                    task.delay(2.5, function() pcall(function() _snStatusPara:SetDesc("Idle") end) end)
-                    return
-                end
-                if _snDone then return end; _snDone = true
-                task.wait(0.5)
-                pcall(function() _snStatusPara:SetDesc("[OK] Sent!") end)
-                task.delay(2.5, function() pcall(function() _snStatusPara:SetDesc("Idle") end) end)
-            end)
         end,
     })
 

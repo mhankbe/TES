@@ -12760,10 +12760,9 @@ end
 -- Diport dari 1.lua baris 432
 if not GetCachedServerId then
     _CACHED_SERVER_ID = _CACHED_SERVER_ID or (function()
-        local ok, priv = pcall(function() return game.PrivateServerId end)
-        if ok and priv and priv ~= "" then return priv end
+        -- PrivateServerId tidak bisa diakses dari client → pakai JobId saja
         local jobId = game.JobId ~= "" and game.JobId or nil
-        if jobId then return "wp"..jobId end
+        if jobId then return jobId end
         return "N/A"
     end)()
     function GetCachedServerId()

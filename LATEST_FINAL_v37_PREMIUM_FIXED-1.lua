@@ -139,6 +139,8 @@ RE.RandomPetGearGrade = RE.RandomPetGearGrade or Remotes:WaitForChild("RandomHer
 RE.AutoPetGearGrade    = RE.AutoPetGearGrade    or Remotes:WaitForChild("AutoRandomHeroEquipGrade", 15)
 -- Halo Gacha remote (RemoteFunction)
 RE.RerollHalo          = RE.RerollHalo          or Remotes:FindFirstChild("RerollHalo")
+-- Ornament Roll remote (RemoteFunction)
+RE.RerollOrnament      = RE.RerollOrnament      or Remotes:WaitForChild("RerollOrnament", 15)
 
 --  LOAD WINDUI 
 local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
@@ -12386,6 +12388,310 @@ do
             if _H.needsRefresh[hi] then
                 _H.needsRefresh[hi] = false
                 RefreshSlot(hi)
+            end
+        end
+    end)
+end
+
+-- ============================================================================
+-- PANEL: REROLL TAB → AUTO ROLL ORNAMENT
+-- Diconvert dari 1.lua: _ASH_ORN / _ASH_ORN.DoRoll (baris 3306) + PANEL (baris 8315)
+-- Remote: RE.RerollOrnament:InvokeServer({machineId=..., isAuto=false})  (RemoteFunction)
+-- 7 mesin: Headdress, Ornament Machine, Wealth Blessing, Shadowhunter,
+--          Primordial Blessing, Monarch Power, Saiyan Blessing
+-- Fitur: roll terus tanpa stop, parse ornamentId dari hasil, tampil "Last: <nama>"
+-- TIDAK ada dropdown target (tidak pakai spy/GUID) — roll berjalan tanpa filter target.
+-- ============================================================================
+do
+    -- ── Konstanta mesin (dari 1.lua baris 3308-3316) ──────────────────────
+    local ORN_MACHINES = {
+        { name = "Headdress",             machineId = 400001 },
+        { name = "Ornament Machine",      machineId = 400002 },
+        { name = "Wealth Blessing",       machineId = 400003 },
+        { name = "Shadowhunter Blessing", machineId = 400004 },
+        { name = "Primordial Blessing",   machineId = 400005 },
+        { name = "Monarch Power",         machineId = 400006 },
+        { name = "Saiyan Blessing",       machineId = 400007 },
+    }
+    local NM = #ORN_MACHINES  -- 7
+
+    -- ── QUIRK_MAP: id → nama, diisi saat roll (diport dari _ASH_ORN.QUIRK_MAP) ──
+    local ORN_QUIRK_MAP = {}
+
+    local function OrnAddQuirk(id, name)
+        if not id or not name then return end
+        if not ORN_QUIRK_MAP[id] then
+            ORN_QUIRK_MAP[id] = name
+        elseif not ORN_QUIRK_MAP[id]:find("^ID:") then
+            -- sudah punya nama asli, biarkan
+        else
+            ORN_QUIRK_MAP[id] = name
+        end
+    end
+
+    -- ── State per mesin ────────────────────────────────────────────────────
+    local _O = {
+        running      = {},
+        attempt      = {},
+        threads      = {},
+        needsRefresh = {},
+        -- UI refs
+        statusEls    = {},
+        attemptEls   = {},
+        lastEls      = {},
+        toggleEls    = {},
+    }
+    for i = 1, NM do
+        _O.running[i]      = false
+        _O.attempt[i]      = 0
+        _O.threads[i]      = nil
+        _O.needsRefresh[i] = false
+        _O.statusEls[i]    = nil
+        _O.attemptEls[i]   = nil
+        _O.lastEls[i]      = nil
+        _O.toggleEls[i]    = nil
+    end
+
+    -- ── Parser ornamentId dari hasil InvokeServer (diport dari 1.lua baris 3586-3655) ──
+    -- Kembalikan: gotId (number|nil), gotName (string)
+    local function ParseOrnResult(res, mi)
+        local gotId   = nil
+        local gotName = ""
+        if type(res) ~= "table" then return gotId, gotName end
+
+        -- PRIORITY 1: res.ornamentIds = { [1]=410003, ... }
+        if type(res.ornamentIds) == "table" then
+            local oid = res.ornamentIds[1]
+            if type(oid) == "number" and oid > 0 then
+                gotId   = oid
+                gotName = ORN_QUIRK_MAP[oid] or ("ID:"..tostring(oid))
+                OrnAddQuirk(oid, gotName)
+                return gotId, gotName
+            end
+        end
+
+        -- PRIORITY 2: scan nested ornamentIds
+        if not gotId then
+            local function ScanOrnamentIds(tbl, depth)
+                if depth > 4 or type(tbl) ~= "table" or gotId then return end
+                if type(tbl.ornamentIds) == "table" then
+                    local oid = tbl.ornamentIds[1]
+                    if type(oid) == "number" and oid > 0 then
+                        gotId   = oid
+                        gotName = ORN_QUIRK_MAP[oid] or ("ID:"..tostring(oid))
+                        OrnAddQuirk(oid, gotName)
+                        return
+                    end
+                end
+                for _, v in pairs(tbl) do
+                    if type(v) == "table" then ScanOrnamentIds(v, depth + 1) end
+                end
+            end
+            ScanOrnamentIds(res, 0)
+        end
+
+        -- PRIORITY 3: fallback scan quirkId / resultId / ornamentId + name
+        if not gotId then
+            local function ScanAndLearn(tbl, depth)
+                if depth > 5 or type(tbl) ~= "table" or gotId then return end
+                local id   = tbl.quirkId or tbl.finalResultId or tbl.resultId or tbl.ornamentId
+                local name = tbl.quirkName or tbl.name or tbl.Name or tbl.title or tbl.displayName
+                if type(id) == "number" and id > 0 then
+                    if type(name) == "string" and #name > 0 and not name:find("^ID:") then
+                        OrnAddQuirk(id, name)
+                        if not gotId then gotId = id; gotName = name end
+                    else
+                        if not gotId then
+                            gotId   = id
+                            gotName = ORN_QUIRK_MAP[id] or ("ID:"..tostring(id))
+                        end
+                    end
+                end
+                for _, v in pairs(tbl) do
+                    if type(v) == "table" then ScanAndLearn(v, depth + 1) end
+                end
+            end
+            ScanAndLearn(res, 0)
+        end
+
+        -- PRIORITY 4: last resort — angka pertama dalam range 4xxxxx
+        if not gotId then
+            local function ScanNum(tbl, depth)
+                if depth > 4 or gotId then return end
+                for _, v in pairs(tbl) do
+                    if type(v) == "number" and v >= 400000 and v < 500000 then
+                        gotId   = v
+                        gotName = ORN_QUIRK_MAP[v] or ("ID:"..tostring(v))
+                        OrnAddQuirk(v, gotName)
+                        return
+                    elseif type(v) == "table" then
+                        ScanNum(v, depth + 1)
+                    end
+                end
+            end
+            ScanNum(res, 0)
+        end
+
+        return gotId, gotName
+    end
+
+    -- ── UI refresh satu mesin (dipanggil dari Heartbeat saja) ─────────────
+    -- Payload disimpan di _O.refreshPayload[mi] oleh loop thread
+    local _refreshPayload = {}  -- [mi] = { status, attempt, last }
+    for i = 1, NM do _refreshPayload[i] = nil end
+
+    local function RefreshMachine(mi)
+        local p = _refreshPayload[mi]
+        if not p then return end
+        _refreshPayload[mi] = nil
+        if _O.statusEls[mi]  then pcall(function() _O.statusEls[mi]:SetDesc(p.status)   end) end
+        if _O.attemptEls[mi] then pcall(function() _O.attemptEls[mi]:SetDesc(p.attempt) end) end
+        if p.last ~= nil and _O.lastEls[mi] then
+            pcall(function() _O.lastEls[mi]:SetDesc(p.last) end)
+        end
+    end
+
+    local function PostRefresh(mi, status, attempt, last)
+        _refreshPayload[mi] = { status = status, attempt = "Attempt: "..tostring(attempt), last = last }
+        _O.needsRefresh[mi] = true
+    end
+
+    -- ── Loop logic per mesin (diport dari _ASH_ORN.DoRoll di 1.lua) ───────
+    local function StartOrnLoop(mi)
+        -- Cancel thread lama
+        local loopKey = "ornroll" .. mi
+        StopLoop(loopKey)
+        if _O.threads[mi] then
+            pcall(function() task.cancel(_O.threads[mi]) end)
+            _O.threads[mi] = nil
+        end
+
+        if not _O.running[mi] then
+            PostRefresh(mi, "[.] Idle", "-", "-")
+            return
+        end
+
+        local mInfo = ORN_MACHINES[mi]
+
+        _O.threads[mi] = task.spawn(function()
+            local attempt = 0
+            PostRefresh(mi, "[~] START...", 0, nil)
+
+            while _O.running[mi] do
+                repeat
+                    -- Pastikan remote tersedia (lazy resolve jika nil awal)
+                    if not RE.RerollOrnament then
+                        RE.RerollOrnament = Remotes:FindFirstChild("RerollOrnament")
+                    end
+                    if not RE.RerollOrnament then
+                        PostRefresh(mi, "[!] RerollOrnament NOT FOUND!", attempt, nil)
+                        task.wait(2)
+                        break
+                    end
+
+                    attempt = attempt + 1
+                    PostRefresh(mi, "[~] Roll #" .. attempt, attempt, nil)
+
+                    local ok, res = pcall(function()
+                        return RE.RerollOrnament:InvokeServer({
+                            machineId = mInfo.machineId,
+                            isAuto    = false,
+                        })
+                    end)
+
+                    if not ok then
+                        PostRefresh(mi, "[!] Error (#" .. attempt .. ")", attempt, nil)
+                        task.wait(0.5)
+                        break
+                    end
+
+                    if res == false or res == nil then
+                        task.wait(0.5)
+                        break
+                    end
+
+                    local gotId, gotName = ParseOrnResult(res, mi)
+                    local lastTxt = gotName ~= "" and ("Last: " .. gotName) or "Last: ?"
+                    PostRefresh(mi, "[OK] Roll #" .. attempt .. " DONE", attempt, lastTxt)
+
+                    task.wait(0.1)
+                until true
+            end
+
+            PostRefresh(mi, "[.] STOPPED (" .. tostring(_O.attempt[mi]) .. "x roll)", _O.attempt[mi], nil)
+        end)
+
+        -- Simpan attempt ke state (untuk display saat stopped)
+        task.spawn(function()
+            while _O.threads[mi] do
+                _O.attempt[mi] = _O.attempt[mi]  -- akan di-update via PostRefresh
+                task.wait(0.5)
+            end
+        end)
+    end
+
+    -- ── Section ────────────────────────────────────────────────────────────
+    local ornSection = RerollTab:Section({
+        Title  = "Auto Roll Ornament",
+        Icon   = "gem",
+        Opened = false,
+        Box    = true,
+    })
+
+    -- Info paragraph
+    ornSection:Paragraph({
+        Title = "Info",
+        Desc  = "[i] Enable toggle mesin untuk start roll otomatis tanpa berhenti.",
+    })
+
+    -- ── UI per mesin (7 mesin) ─────────────────────────────────────────────
+    for mi = 1, NM do
+        local mi_l = mi
+
+        -- Status paragraph
+        _O.statusEls[mi] = ornSection:Paragraph({
+            Title = ORN_MACHINES[mi].name,
+            Desc  = "[.] Idle",
+        })
+
+        -- Attempt + Last paragraph
+        _O.attemptEls[mi] = ornSection:Paragraph({
+            Title = "Info " .. ORN_MACHINES[mi].name,
+            Desc  = "Attempt: -  |  Last: -",
+        })
+
+        -- Toggle Fastroll per mesin
+        _O.toggleEls[mi] = ornSection:Toggle({
+            Title    = "Fastroll " .. ORN_MACHINES[mi].name,
+            Desc     = "ON = START REROLL",
+            Value    = false,
+            Callback = function(on)
+                _O.running[mi_l] = on
+                if not on then
+                    -- Stop
+                    if _O.threads[mi_l] then
+                        pcall(function() task.cancel(_O.threads[mi_l]) end)
+                        _O.threads[mi_l] = nil
+                    end
+                    _O.attempt[mi_l] = 0
+                    PostRefresh(mi_l, "[.] Idle", "-", "-")
+                else
+                    -- Start
+                    _O.attempt[mi_l] = 0
+                    StartOrnLoop(mi_l)
+                end
+            end,
+        })
+    end
+
+    -- ── Heartbeat poller ───────────────────────────────────────────────────
+    -- SetDesc tidak boleh dari task.spawn thread (lacking capability Plugin).
+    -- Loop hanya isi _refreshPayload + needsRefresh; Heartbeat yang eksekusi SetDesc.
+    RunService.Heartbeat:Connect(function()
+        for mi = 1, NM do
+            if _O.needsRefresh[mi] then
+                _O.needsRefresh[mi] = false
+                RefreshMachine(mi)
             end
         end
     end)

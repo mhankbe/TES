@@ -137,6 +137,8 @@ RE.AutoWeaponQuirk   = RE.AutoWeaponQuirk   or Remotes:WaitForChild("AutoRandomW
 -- meski dipakai untuk Pet Gear, bukan Hero - confirmed sniff 1.lua baris 460 & 3428)
 RE.RandomPetGearGrade = RE.RandomPetGearGrade or Remotes:WaitForChild("RandomHeroEquipGrade", 10)
 RE.AutoPetGearGrade    = RE.AutoPetGearGrade    or Remotes:WaitForChild("AutoRandomHeroEquipGrade", 15)
+-- Halo Gacha remote (RemoteFunction)
+RE.RerollHalo          = RE.RerollHalo          or Remotes:FindFirstChild("RerollHalo")
 
 --  LOAD WINDUI 
 local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
@@ -12243,5 +12245,148 @@ do
         if not (_HR_RPT and _HR_RPT.needsRefresh) then return end
         _HR_RPT.needsRefresh = false
         pcall(_HR_RPT.Refresh)  -- pcall di sini AMAN: main-thread / Heartbeat context
+    end)
+end
+
+-- ============================================================================
+-- PANEL: REROLL TAB → AUTO GACHA HALO
+-- Diconvert dari 1.lua: DoAutoRollHalo (baris 3254) + PANEL HALO (baris 8217)
+-- Remote: RE.RerollHalo:InvokeServer(drawId)  (RemoteFunction)
+-- 3 slot: Bronze Halo (drawId=1), Gold Halo (drawId=2), Diamond Halo (drawId=3)
+-- ============================================================================
+do
+    -- ── Konstanta ──────────────────────────────────────────────────────────
+    local HALO_NAMES   = { "Bronze Halo", "Gold Halo", "Diamond Halo" }
+    local HALO_DRAW_ID = { 1, 2, 3 }
+
+    -- ── State per slot ─────────────────────────────────────────────────────
+    -- Semua state disimpan per-index (1=Bronze, 2=Gold, 3=Diamond)
+    local _H = {
+        running      = { false, false, false },
+        attempt      = { 0, 0, 0 },
+        threads      = { nil, nil, nil },
+        needsRefresh = { false, false, false },
+        -- UI refs (diisi saat Section dibuat)
+        statusEls    = { nil, nil, nil },
+        attemptEls   = { nil, nil, nil },
+        toggleEls    = { nil, nil, nil }, -- ref Toggle WindUI per slot
+    }
+
+    -- ── UI Helper: Refresh satu slot (dipanggil dari Heartbeat) ────────────
+    local function RefreshSlot(hi)
+        if not _H.statusEls[hi] then return end
+        local running = _H.running[hi]
+        local att     = _H.attempt[hi]
+
+        local statusTxt, attTxt
+        if not running then
+            statusTxt = "[.] Idle"
+            attTxt    = "Attempt: -"
+        else
+            statusTxt = "[R] Rolling #" .. att .. "..."
+            attTxt    = "Attempt: " .. att
+        end
+
+        pcall(function() _H.statusEls[hi]:SetDesc(statusTxt) end)
+        pcall(function() _H.attemptEls[hi]:SetDesc(attTxt)   end)
+    end
+
+    -- ── Loop logic per slot (diport dari DoAutoRollHalo di 1.lua) ──────────
+    local function StartHaloLoop(hi)
+        -- Cancel thread lama kalau ada
+        if _H.threads[hi] then
+            task.cancel(_H.threads[hi])
+            _H.threads[hi] = nil
+        end
+
+        if not _H.running[hi] then
+            -- OFF: reset attempt display
+            _H.attempt[hi]      = 0
+            _H.needsRefresh[hi] = true
+            return
+        end
+
+        local drawId = HALO_DRAW_ID[hi]
+
+        _H.threads[hi] = task.spawn(function()
+            while _H.running[hi] do
+                _H.attempt[hi] = _H.attempt[hi] + 1
+                _H.needsRefresh[hi] = true
+
+                local ok = pcall(function()
+                    -- RE.RerollHalo adalah RemoteFunction → InvokeServer(drawId)
+                    if RE.RerollHalo then
+                        RE.RerollHalo:InvokeServer(drawId)
+                    end
+                end)
+
+                if not ok then
+                    task.wait(1)
+                else
+                    task.wait(0.05)
+                end
+            end
+            -- Loop selesai (di-toggle OFF dari dalam callback)
+            _H.needsRefresh[hi] = true
+        end)
+    end
+
+    -- ── Section ────────────────────────────────────────────────────────────
+    local haloSection = RerollTab:Section({
+        Title  = "Auto Gacha Halo",
+        Icon   = "sparkles",
+        Opened = false,
+        Box    = true,
+    })
+
+    -- ── UI per slot Halo ──────────────────────────────────────────────────
+    for hi = 1, 3 do
+        local hi_l = hi
+
+        -- Status paragraph (return 1 value langsung — CLAUDE.md §2 Pola Paragraph)
+        _H.statusEls[hi] = haloSection:Paragraph({
+            Title = HALO_NAMES[hi],
+            Desc  = "[.] Idle",
+        })
+
+        -- Attempt paragraph
+        _H.attemptEls[hi] = haloSection:Paragraph({
+            Title = "Attempt " .. HALO_NAMES[hi],
+            Desc  = "Attempt: -",
+        })
+
+        -- Toggle Enable (CLAUDE.md §5 Pola Toggle)
+        _H.toggleEls[hi] = haloSection:Toggle({
+            Title    = "Auto Gacha " .. HALO_NAMES[hi],
+            Desc     = "ON = START GACHA",
+            Value    = false,
+            Callback = function(on)
+                _H.running[hi_l] = on
+                if not on then
+                    -- Stop loop
+                    if _H.threads[hi_l] then
+                        task.cancel(_H.threads[hi_l])
+                        _H.threads[hi_l] = nil
+                    end
+                    _H.attempt[hi_l]      = 0
+                    _H.needsRefresh[hi_l] = true
+                else
+                    -- Start loop
+                    StartHaloLoop(hi_l)
+                end
+            end,
+        })
+    end
+
+    -- ── Heartbeat poller (CLAUDE.md §3 — SetDesc tidak boleh dari spy/defer) ──
+    -- Meski fitur ini tidak pakai spy, loop task.spawn juga butuh
+    -- Heartbeat agar status update aman di main-thread context.
+    RunService.Heartbeat:Connect(function()
+        for hi = 1, 3 do
+            if _H.needsRefresh[hi] then
+                _H.needsRefresh[hi] = false
+                RefreshSlot(hi)
+            end
+        end
     end)
 end

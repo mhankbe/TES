@@ -14322,8 +14322,12 @@ do
         return ok
     end
 
+    -- ─── SINGLE CONFIG SLOT (tidak multi-save lagi) ──────────────────────────
+    -- Semua save/load/delete sekarang mengarah ke SATU file config tetap.
+    -- Tidak ada lagi input nama, dropdown pilih config, atau tombol refresh.
+    local SINGLE_CONFIG_NAME = "config"
+
     -- ─── PARAGRAPH STATUS (WindUI native) ────────────────────────────────────
-    -- Dipakai sebagai status bar di atas UI config
     ConfigTab:Section({ Title = "Config Manager", Icon = "save" })
 
     local _statusPara = ConfigTab:Paragraph({
@@ -14336,61 +14340,28 @@ do
     end
 
     -- ─── INISIALISASI STATUS AWAL ─────────────────────────────────────────────
-    local _initialNames = ListConfigs()
-    if #_initialNames > 0 then
-        SetStatus(#_initialNames .. " config ditemukan di FLaConfigs/.")
-    else
-        SetStatus("Belum ada config. Klik SAVE untuk membuat.")
+    do
+        local exists = false
+        pcall(function() exists = isfile(_cfgPath(SINGLE_CONFIG_NAME)) end)
+        if exists then
+            SetStatus("Config tersimpan ditemukan. Klik LOAD CONFIG untuk menerapkan.")
+        else
+            SetStatus("Belum ada config tersimpan. Atur fitur lalu klik SAVE CONFIG.")
+        end
     end
 
-    -- ─── SECTION: SAVE CONFIG ────────────────────────────────────────────────
-    ConfigTab:Section({ Title = "Save Config", Icon = "download" })
-
-    -- Paragraph info daftar config yang sudah ada (direfresh saat dibutuhkan)
-    local _saveListPara = ConfigTab:Paragraph({
-        Title = "Config Tersimpan",
-        Desc  = #_initialNames > 0 and table.concat(_initialNames, ", ") or "(belum ada)",
-    })
-
-    local function RefreshSaveListPara()
-        local names = ListConfigs()
-        local desc = #names > 0 and table.concat(names, ", ") or "(belum ada)"
-        pcall(function() _saveListPara:SetDesc(desc) end)
-    end
-
-    -- Input nama config baru
-    local _saveNameInput = ConfigTab:Input({
-        Title       = "Nama Config",
-        Desc        = "Ketik nama lalu klik SIMPAN (atau timpa nama yang sudah ada)",
-        Placeholder = "Ketik nama config...",
-        Value       = "",
-        Callback    = function(_) end, -- ditangani via Button
-    })
-
-    -- Tombol SIMPAN
+    -- ─── TOMBOL: SAVE CONFIG ──────────────────────────────────────────────────
+    -- Menyimpan semua state/visual fitur yang sedang di-set user saat ini.
+    -- Selalu menimpa (overwrite) file config tunggal yang sama -> tidak ada multi-save.
     ConfigTab:Button({
-        Title    = "SIMPAN Config",
-        Desc     = "Simpan semua state saat ini ke file config",
+        Title    = "SAVE CONFIG",
+        Desc     = "Simpan semua setting & fitur script saat ini (menimpa config sebelumnya)",
         Callback = function()
-            -- Baca value dari input WindUI (via elemen WindUI)
-            local name = ""
-            pcall(function()
-                if _saveNameInput and _saveNameInput.Value ~= nil then
-                    name = tostring(_saveNameInput.Value):match("^%s*(.-)%s*$") or ""
-                end
-            end)
-            if name == "" then
-                SetStatus("[!] Nama config tidak boleh kosong.")
-                return
-            end
-            -- Sanitize nama file
-            name = name:gsub('[/\\:*?"<>|]', '_')
-            SetStatus("Menyimpan: " .. name .. "...")
+            SetStatus("Menyimpan config...")
             task.delay(0.05, function()
-                local ok, err = SaveConfigAs(name)
+                local ok, err = SaveConfigAs(SINGLE_CONFIG_NAME)
                 if ok then
-                    SetStatus("Tersimpan: " .. name .. ".json")
-                    RefreshSaveListPara()
+                    SetStatus("Config tersimpan. (" .. os.date("%H:%M:%S") .. ")")
                 else
                     SetStatus("[!] Gagal simpan: " .. tostring(err):sub(1, 60))
                 end
@@ -14398,160 +14369,49 @@ do
         end,
     })
 
-    -- ─── SECTION: LOAD CONFIG ────────────────────────────────────────────────
-    ConfigTab:Section({ Title = "Load Config", Icon = "upload" })
-
-    -- Dropdown pilih config untuk di-load (single select, direfresh setiap interaksi)
-    local _loadNames     = ListConfigs()
-    local _loadDropValue = #_loadNames > 0 and _loadNames[1] or nil
-
-    local _loadDropElement = ConfigTab:Dropdown({
-        Title    = "Pilih Config",
-        Desc     = "Pilih file config yang ingin di-load",
-        Values   = _loadNames,
-        Value    = _loadDropValue,
-        Multi    = false,
-        Callback = function(ap)
-            _loadDropValue = ap.Value
-        end,
-    })
-
-    -- Tombol refresh daftar config di dropdown
+    -- ─── TOMBOL: LOAD CONFIG ──────────────────────────────────────────────────
+    -- Restore sempurna semua state & tampilan menu/fitur sesuai config yang tersimpan.
     ConfigTab:Button({
-        Title    = "Refresh Daftar",
-        Desc     = "Perbarui daftar config dari folder FLaConfigs/",
+        Title    = "LOAD CONFIG",
+        Desc     = "Restore semua setting & fitur script sesuai config yang tersimpan",
         Callback = function()
-            local names = ListConfigs()
-            _loadNames     = names
-            _loadDropValue = #names > 0 and names[1] or nil
-            pcall(function()
-                if _loadDropElement then
-                    _loadDropElement:SetValues(names)
-                    if _loadDropValue then _loadDropElement:Set(_loadDropValue) end
-                end
-            end)
-            RefreshSaveListPara()
-            local desc = #names > 0 and (#names .. " config ditemukan.") or "Belum ada config tersimpan."
-            SetStatus(desc)
-        end,
-    })
-
-    -- Tombol LOAD
-    ConfigTab:Button({
-        Title    = "LOAD Config",
-        Desc     = "Terapkan config yang dipilih ke semua state aktif",
-        Callback = function()
-            local selName = _loadDropValue
-            if not selName or selName == "" then
-                SetStatus("[!] Pilih config terlebih dahulu dari dropdown.")
-                return
-            end
-            SetStatus("Memuat: " .. selName .. "...")
+            SetStatus("Memuat config...")
             task.delay(0.05, function()
-                local cfg = LoadConfigByName(selName)
+                local cfg = LoadConfigByName(SINGLE_CONFIG_NAME)
                 if type(cfg) == "table" then
                     ApplyConfig(cfg)
-                    SetStatus("Loaded: " .. selName .. " (" .. os.date("%H:%M:%S") .. ")")
+                    SetStatus("Config dimuat. (" .. os.date("%H:%M:%S") .. ")")
                 else
-                    SetStatus("[!] Gagal load: " .. selName)
+                    SetStatus("[!] Tidak ada config tersimpan / gagal load.")
                 end
             end)
         end,
     })
 
-    -- ─── SECTION: DELETE CONFIG ───────────────────────────────────────────────
-    ConfigTab:Section({ Title = "Delete Config", Icon = "trash-2" })
-
-    local _delNames     = ListConfigs()
-    local _delDropValue = #_delNames > 0 and _delNames[1] or nil
-    local _pendingDel   = nil  -- nama yang menunggu konfirmasi hapus
+    -- ─── TOMBOL: DELETE CONFIG (double-confirm) ───────────────────────────────
+    -- Klik pertama = konfirmasi, klik kedua (dalam 5 detik) = hapus permanen dari folder.
+    local _pendingDel   = false
     local _pendingTimer = nil
 
-    local _delDropElement = ConfigTab:Dropdown({
-        Title    = "Pilih Config",
-        Desc     = "Pilih file config yang ingin dihapus",
-        Values   = _delNames,
-        Value    = _delDropValue,
-        Multi    = false,
-        Callback = function(ap)
-            _delDropValue = ap.Value
-            -- Reset konfirmasi saat pilihan berubah
-            if _pendingDel and _pendingDel ~= ap.Value then
-                if _pendingTimer then pcall(task.cancel, _pendingTimer) end
-                _pendingDel   = nil
-                _pendingTimer = nil
-                SetStatus("Pilihan berubah. Klik DELETE sekali lagi untuk konfirmasi.")
-            end
-        end,
-    })
-
-    -- Tombol refresh daftar config di dropdown delete
     ConfigTab:Button({
-        Title    = "Refresh Daftar",
-        Desc     = "Perbarui daftar config dari folder FLaConfigs/",
-        Callback = function()
-            local names = ListConfigs()
-            _delNames     = names
-            _delDropValue = #names > 0 and names[1] or nil
-            _pendingDel   = nil
-            if _pendingTimer then pcall(task.cancel, _pendingTimer) end
-            _pendingTimer = nil
-            pcall(function()
-                if _delDropElement then
-                    _delDropElement:SetValues(names)
-                    if _delDropValue then _delDropElement:Set(_delDropValue) end
-                end
-            end)
-            RefreshSaveListPara()
-            local desc = #names > 0 and (#names .. " config ditemukan.") or "Belum ada config tersimpan."
-            SetStatus(desc)
-        end,
-    })
-
-    -- Tombol DELETE (double-confirm: klik pertama = konfirmasi, klik kedua = hapus)
-    ConfigTab:Button({
-        Title    = "DELETE Config",
+        Title    = "DELETE CONFIG",
         Desc     = "Klik sekali untuk konfirmasi, klik lagi untuk hapus permanen",
         Callback = function()
-            local selName = _delDropValue
-            if not selName or selName == "" then
-                SetStatus("[!] Pilih config terlebih dahulu dari dropdown.")
-                return
-            end
-            if _pendingDel == selName then
-                -- Konfirmasi kedua -> hapus
+            if _pendingDel then
                 if _pendingTimer then pcall(task.cancel, _pendingTimer) end
-                _pendingDel   = nil
+                _pendingDel   = false
                 _pendingTimer = nil
-                local ok = DeleteConfigByName(selName)
+                local ok = DeleteConfigByName(SINGLE_CONFIG_NAME)
                 if ok then
-                    SetStatus("Dihapus: " .. selName)
+                    SetStatus("Config dihapus permanen.")
                 else
-                    SetStatus("[!] Gagal hapus: " .. selName)
+                    SetStatus("[!] Gagal hapus config (mungkin belum ada yang tersimpan).")
                 end
-                -- Refresh dropdown setelah hapus
-                task.delay(0.3, function()
-                    local names = ListConfigs()
-                    _delNames     = names
-                    _delDropValue = #names > 0 and names[1] or nil
-                    _loadNames    = names
-                    _loadDropValue= _delDropValue
-                    pcall(function()
-                        if _delDropElement  then _delDropElement:SetValues(names); if _delDropValue  then _delDropElement:Set(_delDropValue)  end end
-                        if _loadDropElement then _loadDropElement:SetValues(names); if _loadDropValue then _loadDropElement:Set(_loadDropValue) end end
-                    end)
-                    RefreshSaveListPara()
-                end)
             else
-                -- Konfirmasi pertama
-                if _pendingDel then
-                    if _pendingTimer then pcall(task.cancel, _pendingTimer) end
-                end
-                _pendingDel = selName
-                SetStatus("[!] YAKIN hapus: " .. selName .. "? Klik DELETE sekali lagi untuk konfirmasi. (auto-cancel 5 detik)")
-                -- Auto-cancel setelah 5 detik
+                _pendingDel = true
+                SetStatus("[!] YAKIN hapus config? Klik DELETE CONFIG sekali lagi untuk konfirmasi. (auto-cancel 5 detik)")
                 _pendingTimer = task.delay(5, function()
-                    _pendingDel   = nil
+                    _pendingDel   = false
                     _pendingTimer = nil
                     SetStatus("Hapus dibatalkan (timeout).")
                 end)

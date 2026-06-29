@@ -12847,124 +12847,42 @@ end
 -- SETTING TAB UI
 -- ============================================================================
 do
-    -- ── SECTION: GIFT CODE CLAIMER ──────────────────────────────────────────
-    -- Diport dari 1.lua baris 19009
-    local gcSection = SettingTab:Section({
-        Title  = "Gift Code Claimer",
-        Icon   = "gift",
-        Opened = false,
-        Box    = true,
-    })
-
-    -- Status paragraph
-    local gcStatusEl = gcSection:Paragraph({
-        Title = "Status",
-        Desc  = "Tekan Claim untuk redeem kode 1–150",
-    })
-
-    -- State
-    local _gcRunning   = false
-    local _gcNeedRefresh = false
-    local _gcPayload     = nil  -- { desc }
-
-    local function GcPostRefresh(desc)
-        _gcPayload     = { desc = desc }
-        _gcNeedRefresh = true
-    end
-
-    -- Heartbeat poller untuk SetDesc (CLAUDE.md §3)
-    RunService.Heartbeat:Connect(function()
-        if not _gcNeedRefresh then return end
-        _gcNeedRefresh = false
-        if _gcPayload and gcStatusEl then
-            pcall(function() gcStatusEl:SetDesc(_gcPayload.desc) end)
-        end
-    end)
-
-    -- Tombol CLAIM
-    gcSection:Button({
+    -- ── GIFT CODE CLAIMER ───────────────────────────────────────────────────
+    -- Tidak pakai Section expand. 1 tombol, fire semua kode 1-150 sekaligus
+    -- (semua pcall di-spawn paralel, tidak berurutan/sequential).
+    SettingTab:Button({
         Title    = "CLAIM GIFT CODE",
-        Desc     = "Claim kode 1 - 150 secara berurutan",
+        Desc     = "Claim semua kode 1–150 sekaligus",
         Callback = function()
-            if _gcRunning then return end
-            _gcRunning = true
-            GcPostRefresh("Claiming...")
-
             local gcRemote = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
                 and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("GiftCodeReceived")
-
-            if not gcRemote then
-                GcPostRefresh("[!] Remote GiftCodeReceived tidak ditemukan")
-                _gcRunning = false
-                return
-            end
-
-            task.spawn(function()
-                local claimed = 0
-                local failed  = 0
-                for i = 1, 150 do
-                    if not _gcRunning then break end
-                    local ok = pcall(function() gcRemote:InvokeServer(i) end)
-                    if ok then claimed = claimed + 1 else failed = failed + 1 end
-                    GcPostRefresh("Claiming... "..i.."/150  (ok:"..claimed.." gagal:"..failed..")")
-                    task.wait(0.15)
-                end
-                GcPostRefresh("Selesai. Berhasil: "..claimed.."  Gagal: "..failed)
-                _gcRunning = false
-            end)
-        end,
-    })
-
-    -- Tombol STOP (berhenti di tengah jalan)
-    gcSection:Button({
-        Title    = "STOP",
-        Desc     = "Hentikan proses claim",
-        Callback = function()
-            if _gcRunning then
-                _gcRunning = false
-                GcPostRefresh("[.] Dihentikan oleh user")
+            if not gcRemote then return end
+            -- Fire semua kode 1-150 paralel sekaligus
+            for i = 1, 150 do
+                task.spawn(function()
+                    pcall(function() gcRemote:InvokeServer(i) end)
+                end)
             end
         end,
     })
 
-    -- ── SECTION: SERVER TOOLS ───────────────────────────────────────────────
-    -- Diport dari 1.lua baris 19074
-    local srvSection = SettingTab:Section({
-        Title  = "Server Tools",
-        Icon   = "server",
-        Opened = false,
-        Box    = true,
-    })
-
-    srvSection:Paragraph({
-        Title = "Info",
-        Desc  = "Rejoin ke server sama, hop ke server random, atau join server paling sepi.",
-    })
-
-    -- REJOIN
-    srvSection:Button({
+    -- ── SERVER TOOLS ────────────────────────────────────────────────────────
+    -- Tidak pakai Section expand. 3 tombol langsung di tab.
+    SettingTab:Button({
         Title    = "REJOIN SERVER",
         Desc     = "Masuk ulang ke server ID yang sama",
-        Callback = function()
-            RejoinServer()
-        end,
+        Callback = function() RejoinServer() end,
     })
 
-    -- SERVER HOP
-    srvSection:Button({
+    SettingTab:Button({
         Title    = "SERVER HOP",
         Desc     = "Join server lain secara random / acak",
-        Callback = function()
-            ServerHop()
-        end,
+        Callback = function() ServerHop() end,
     })
 
-    -- SMALL SERVER
-    srvSection:Button({
+    SettingTab:Button({
         Title    = "SMALL SERVER",
         Desc     = "Join server dengan player paling sedikit (Ascending)",
-        Callback = function()
-            SmallServer()
-        end,
+        Callback = function() SmallServer() end,
     })
 end

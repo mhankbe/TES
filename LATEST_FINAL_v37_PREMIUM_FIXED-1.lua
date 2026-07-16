@@ -4,10 +4,12 @@
 
     PERILAKU:
     - Begitu di-execute (Auto Execute di executor), Auto Raid langsung ON.
-    - Pick Mode  : FIXED MAP 11-15 (hanya masuk raid kalau salah satu dari
-                   Map 11/12/13/14/15 tersedia, RANK tidak diperhitungkan -
-                   List/Manual/Rune/UpDown sudah dihapus total dari logika
-                   ResolveEntry).
+    - Pick Mode  : FIXED 2-STAGE
+                   STAGE 1 (prioritas) -> Map 20, rank E atau D saja.
+                   STAGE 2 (fallback)  -> kalau Map 20 rank E/D tidak match,
+                                          masuk Map 11-19, rank apapun.
+                   (List/Manual/Rune/UpDown sudah dihapus total dari logika
+                   ResolveEntry, cukup 2 stage di atas.)
     - Auto Boss Kill : ON (default).
     - Boss TP Delay  : 1 detik (default).
     - Tanpa guard cross-feature (Siege/Dungeon/ASC/ST2) - script ini berdiri sendiri.
@@ -29,7 +31,7 @@ local Remotes           = ReplicatedStorage:WaitForChild("Remotes")
 -- CONFIG (default sesuai permintaan - bisa diedit manual di sini)
 -- ============================================================================
 local CONFIG = {
-    pickMode     = "map11to15",  -- fixed, hanya Map 11-15, tidak ada opsi lain
+    pickMode     = "map20ed_fallback11to19",  -- fixed, Map20(E/D) prioritas, fallback Map11-19
     autoKillBoss = true,    -- Auto Boss Kill default ON
     bossDelay    = 1,       -- delay TP ke boss (detik), default 1
 }
@@ -114,6 +116,33 @@ RAID_MAP_INFO = RAID_MAP_INFO or {
     [17]={instance="Map17",rootPart="4050"},[18]={instance="Map18",rootPart="4050"},
     [19]={instance="Map19",rootPart="4050"},[20]={instance="Map20",rootPart="4050"},
 }
+
+-- ============================================================================
+-- GRADE_RANK / RAID_CONFIG_GRADE (dibutuhkan untuk filter Map 20 rank E/D)
+-- ============================================================================
+GRADE_RANK = GRADE_RANK or {
+    ["E"]=1,["D"]=2,["C"]=3,["B"]=4,["A"]=5,["S"]=6,["SS"]=7,
+    ["G"]=8,["N"]=9,["M"]=10,["M+"]=11,["M++"]=12,["XM"]=15,["ULT"]=17,["GOD"]=18,
+}
+
+if not RAID_CONFIG_GRADE then
+    local _GRADE_RAID = {"D","B","S","SS","G","N","M+","M++","XM","ULT"}
+    RAID_CONFIG_GRADE = setmetatable({},{
+        __index = function(_, raidId)
+            if type(raidId) ~= "number" then return nil end
+            if raidId >= 930001 then return _GRADE_RAID[(raidId-930001)%10+1] or "?" end
+            return nil
+        end
+    })
+end
+
+-- Ambil grade huruf (E/D/C/...) sebuah entry RAID_ID_LIST berdasarkan raidId-nya
+local function GetEntryGrade(r)
+    if not r or not r.id then return nil end
+    local g = RAID_CONFIG_GRADE[r.id]
+    if g and g ~= "?" then return g end
+    return nil
+end
 
 -- ============================================================================
 -- RAID STATE TABLE
@@ -271,6 +300,91 @@ function FireHeroRemotes(enemyGuid, enemyPos)
     if RE.HeroMove then
         pcall(function() RE.HeroMove:FireServer({attackTarget = enemyGuid, userId = MY_USER_ID, heroTagetPosInfos = posInfos}) end)
         pcall(function() RE.HeroMove:FireServer({attackTarget = enemyGuid, userId = MY_USER_ID, heroTagetPosInfos = posInfos}) end)
+    end
+end
+
+-- ============================================================================
+-- IsEnemyGuidValid - cek musuh dgn GUID tertentu masih ada & hidup
+-- (dibutuhkan EnsureHeroAtkThreadFor, port dari AUTO BOSS KILL versi terbaru)
+-- ============================================================================
+local _ENEMY_FOLDERS_CHK = {"Enemys", "EnemyCityRaid", "CityRaidEnemys", "Enemies", "Enemy"}
+function IsEnemyGuidValid(g)
+    if not g then return false end
+    for _, folderName in ipairs(_ENEMY_FOLDERS_CHK) do
+        local f = workspace:FindFirstChild(folderName)
+        if f then
+            for _, e in ipairs(f:GetChildren()) do
+                if e:IsA("Model") and e:GetAttribute("EnemyGuid") == g then
+                    local hrp = e:FindFirstChild("HumanoidRootPart")
+                    local hum = e:FindFirstChildOfClass("Humanoid")
+                    if hrp and hum and hum.Health > 0 then return true end
+                    return false
+                end
+            end
+        end
+    end
+    -- Fallback: nested di workspace.Map.CityRaidEnter (Siege)
+    local ok = false
+    pcall(function()
+        local mapF = workspace:FindFirstChild("Map")
+        local cre = mapF and mapF:FindFirstChild("CityRaidEnter")
+        if cre then
+            for _, e in ipairs(cre:GetDescendants()) do
+                if e:IsA("Model") and e:GetAttribute("EnemyGuid") == g then
+                    local hrp = e:FindFirstChild("HumanoidRootPart")
+                    local hum = e:FindFirstChildOfClass("Humanoid")
+                    if hrp and hum and hum.Health > 0 then ok = true end
+                end
+            end
+        end
+    end)
+    return ok
+end
+
+-- ============================================================================
+-- EnsureHeroAtkThreadFor - thread per-GUID yang terus fire HeroUseSkill
+-- (attackType 1/2/3) ke musuh tertentu selama musuh masih valid.
+-- Port dari AUTO BOSS KILL versi terbaru (12.lua baris ~2735).
+-- ============================================================================
+local _heroAtkThreads = {}
+function EnsureHeroAtkThreadFor(g)
+    if not g then return end
+    if _heroAtkThreads[g] and _heroAtkThreads[g].running then return end
+    local handle = {running = true, tick = 0}
+    _heroAtkThreads[g] = handle
+    task.spawn(function()
+        local _lastFire = {}
+        while handle.running do
+            if #HERO_GUIDS > 0 and (tick() - handle.tick) >= 0.001 and IsEnemyGuidValid(g) then
+                handle.tick = tick()
+                for _, hGuid in ipairs(HERO_GUIDS) do
+                    local last = _lastFire[hGuid] or 0
+                    if (tick() - last) >= 0.001 then
+                        _lastFire[hGuid] = tick()
+                        if RE.HeroUseSkill then
+                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 1, userId = MY_USER_ID, enemyGuid = g}) end)
+                            task.wait(0.001)
+                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 2, userId = MY_USER_ID, enemyGuid = g}) end)
+                            task.wait(0.001)
+                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 3, userId = MY_USER_ID, enemyGuid = g}) end)
+                        end
+                    end
+                    task.wait(0.001)
+                end
+            end
+            task.wait(0.05)
+            if not IsEnemyGuidValid(g) then
+                handle.running = false
+            end
+        end
+        _heroAtkThreads[g] = nil
+    end)
+end
+
+function StopHeroAtkThreadFor(g)
+    if g and _heroAtkThreads[g] then
+        _heroAtkThreads[g].running = false
+        _heroAtkThreads[g] = nil
     end
 end
 
@@ -618,9 +732,14 @@ task.spawn(function()
 end)
 
 -- ============================================================================
--- ResolveEntry - HANYA MAP 11-15 (tanpa peduli RANK, asal salah satu tersedia)
+-- ResolveEntry
+--   STAGE 1 (prioritas): Map 20, rank E atau D saja
+--   STAGE 2 (fallback)  : Map 11-19, rank apapun (kalau Stage 1 tidak match)
+--                          -> pilih Map TERTINGGI yang tersedia (mis. Map19 > Map18 > ... > Map11)
 -- ============================================================================
-local ALLOWED_MAPS = {[11] = true, [12] = true, [13] = true, [14] = true, [15] = true}
+local PRIORITY_MAP   = 20
+local PRIORITY_GRADES = {E = true, D = true}
+local FALLBACK_MAPS  = {[11]=true,[12]=true,[13]=true,[14]=true,[15]=true,[16]=true,[17]=true,[18]=true,[19]=true}
 
 local function ResolveEntry()
     if #RAID_ID_LIST == 0 then return nil end
@@ -636,16 +755,34 @@ local function ResolveEntry()
     if pruned then RebuildRaidList() end
     if #RAID_ID_LIST == 0 then return nil end
 
+    -- STAGE 1: Map 20 dengan grade E/D
+    local priorityList = {}
+    for _, r in ipairs(RAID_ID_LIST) do
+        local mn = r.mapId - 50000
+        if mn == PRIORITY_MAP then
+            local grade = GetEntryGrade(r)
+            if grade and PRIORITY_GRADES[grade] then
+                table.insert(priorityList, r)
+            end
+        end
+    end
+    if #priorityList > 0 then
+        table.sort(priorityList, function(a, b) return a.id < b.id end)
+        return priorityList[1]
+    end
+
+    -- STAGE 2: fallback Map 11-19, rank apapun
     local pickList = {}
     for _, r in ipairs(RAID_ID_LIST) do
         local mn = r.mapId - 50000
-        if ALLOWED_MAPS[mn] then
+        if FALLBACK_MAPS[mn] then
             table.insert(pickList, r)
         end
     end
     if #pickList == 0 then return nil end
 
-    table.sort(pickList, function(a, b) return a.mapId < b.mapId end)
+    -- pilih Map paling tinggi dulu yang tersedia (Map19 lebih diprioritaskan drpd Map11)
+    table.sort(pickList, function(a, b) return a.mapId > b.mapId end)
     return pickList[1]
 end
 
@@ -681,7 +818,7 @@ function StartRaidLoop()
 
     _raidWakeup = Instance.new("BindableEvent")
 
-    Log("Siap. Menunggu raid... (Pick Mode: MAP 11-15, Auto Boss Kill: ON, Delay: " .. CONFIG.bossDelay .. "s)")
+    Log("Siap. Menunggu raid... (Pick Mode: Map20[E/D] prioritas -> fallback Map11-19, Auto Boss Kill: ON, Delay: " .. CONFIG.bossDelay .. "s)")
 
     RAID.thread = task.spawn(function()
         pcall(function()
@@ -840,6 +977,7 @@ function StartRaidLoop()
                     local freezeConn = nil
                     local frozenCFrame = nil
                     local freezeFrame = 0
+                    local bossFollowTarget = nil -- [TA-STYLE] diisi = target setelah scan ketemu; Heartbeat ikuti posisi ini
                     local function step4Cleanup()
                         pcall(function()
                             local char = LP.Character
@@ -950,8 +1088,19 @@ function StartRaidLoop()
                                                 frozenCFrame = nil
                                                 return
                                             end
-                                            if hrp and hrp.Parent and frozenCFrame then
-                                                hrp.CFrame = frozenCFrame
+                                            if hrp and hrp.Parent then
+                                                -- [TA-STYLE] Kalau target sudah ada & hidup, ikuti posisinya (3 stud di depan).
+                                                -- Kalau belum (masih fase scan awal), tetap pakai frozenCFrame lama.
+                                                local bt = bossFollowTarget
+                                                if bt and bt.hrp and bt.hrp.Parent then
+                                                    local ok = pcall(function()
+                                                        frozenCFrame = bt.hrp.CFrame * CFrame.new(0, 0, -3)
+                                                        hrp.CFrame = frozenCFrame
+                                                    end)
+                                                    if not ok and frozenCFrame then hrp.CFrame = frozenCFrame end
+                                                elseif frozenCFrame then
+                                                    hrp.CFrame = frozenCFrame
+                                                end
                                             end
                                         end)
                                     end
@@ -987,25 +1136,46 @@ function StartRaidLoop()
                                     local targetGuid = target.guid
                                     Log("[FLa] Attack: " .. target.model.Name)
 
-                                    local function getBossAtkPos(enemyHRP)
-                                        local char = LP and LP.Character
-                                        local pHRP = char and char:FindFirstChild("HumanoidRootPart")
-                                        if not pHRP or not enemyHRP then return enemyHRP and enemyHRP.Position or tpTargetPos end
-                                        local ePos = enemyHRP.Position
-                                        local dir = pHRP.Position - ePos
-                                        local dir2 = Vector3.new(dir.X, 0, dir.Z)
-                                        if dir2.Magnitude < 0.1 then return ePos + Vector3.new(10, 0, 0) end
-                                        return ePos + dir2.Unit * 10
+                                    -- [TA-STYLE] Aktifkan follow-target: player direposisi 3 stud
+                                    -- di depan HRP boss tiap frame lewat freezeConn Heartbeat di atas,
+                                    -- mengikuti gerak boss (bukan diam di titik TP awal).
+                                    bossFollowTarget = target
+
+                                    -- [RA+TA HYBRID] RE.Atk + RE.Click + EnsureHeroAtkThreadFor,
+                                    -- BUKAN lagi FireAttack/FireAllDamage/FireHeroRemotes.
+                                    -- Tahap 1 (RA-style): fire ke GUID musuh RANDOM dalam radius 50 studs.
+                                    -- Tahap 2 (TA-style): fire ke GUID boss (locked) sampai mati.
+                                    local function fireOnce(guid)
+                                        if not guid then return end
+                                        if RE.Atk then
+                                            pcall(function() RE.Atk:FireServer({attackEnemyGUID = guid}) end)
+                                        end
+                                        if RE.Click then
+                                            task.spawn(function()
+                                                pcall(function() RE.Click:InvokeServer({enemyGuid = guid}) end)
+                                            end)
+                                        end
+                                        EnsureHeroAtkThreadFor(guid)
+                                    end
+
+                                    local function pickRandomGuidNearby(excludeGuid)
+                                        local pool = {}
+                                        for _, e in ipairs(GetRaidEnemies()) do
+                                            local hum = e.model:FindFirstChildOfClass("Humanoid")
+                                            if hum and hum.Health > 0 and e.hrp and e.hrp.Parent then
+                                                local d = (e.hrp.Position - tpTargetPos).Magnitude
+                                                if d <= TP_SCAN_RADIUS then table.insert(pool, e) end
+                                            end
+                                        end
+                                        if #pool == 0 then return excludeGuid end
+                                        local pick = pool[math.random(1, #pool)]
+                                        return pick.guid
                                     end
 
                                     local function attackBoss(guid, enemyHRP)
-                                        local atkPos = getBossAtkPos(enemyHRP)
-                                        FireAttack(guid, atkPos)
-                                        FireAllDamage(guid, atkPos)
-                                        FireHeroRemotes(guid, atkPos)
-                                        FireAttack(guid, atkPos)
-                                        FireAllDamage(guid, atkPos)
-                                        FireHeroRemotes(guid, atkPos)
+                                        local raGuid = pickRandomGuidNearby(guid)
+                                        fireOnce(raGuid)
+                                        fireOnce(guid)
                                     end
 
                                     local outOfMapCount = 0
@@ -1034,16 +1204,20 @@ function StartRaidLoop()
                                         local hum = target.model:FindFirstChildOfClass("Humanoid")
                                         if not hum or hum.Health <= 0 then break end
                                         if not target.hrp or not target.hrp.Parent then
-                                            PG_Wait(0.1)
+                                            task.wait() -- [TA-STYLE] no-delay
+                                            if not target.model or not target.model.Parent then break end
+                                            local hum2 = target.model:FindFirstChildOfClass("Humanoid")
+                                            if not hum2 or hum2.Health <= 0 then break end
                                         else
                                             local nearNow = scanNearbyEnemy()
                                             if nearNow and nearNow.guid ~= targetGuid then
                                                 target = nearNow
                                                 targetGuid = target.guid
+                                                bossFollowTarget = target -- [TA-STYLE] update follow-target juga
                                                 Log("[FLa] Target baru: " .. target.model.Name)
                                             end
                                             pcall(function() attackBoss(targetGuid, target.hrp) end)
-                                            PG_Wait(0.1)
+                                            task.wait() -- [TA-STYLE] no-delay (bukan PG_Wait(0.1))
                                         end
                                     end
 
@@ -1148,7 +1322,7 @@ end
 -- ============================================================================
 -- AUTO START (Auto Execute - langsung ON begitu script jalan)
 -- ============================================================================
-Log("Script loaded. Pick Mode = MAP 11-15, Auto Boss Kill = ON, Boss TP Delay = " .. CONFIG.bossDelay .. "s")
-Log("[FLa] Delay start 5 detik...")
-task.wait(5)
+Log("Script loaded. Pick Mode = Map20[E/D] prioritas -> fallback Map11-19, Auto Boss Kill = ON, Boss TP Delay = " .. CONFIG.bossDelay .. "s")
+Log("[FLa] Delay start 10 detik...")
+task.wait(10)
 StartRaidLoop()

@@ -1231,7 +1231,7 @@ local function FLa_PressKey(keyCode)
     local ok1 = pcall(function()
         local VIM = game:GetService("VirtualInputManager")
         VIM:SendKeyEvent(true,  keyCode, false, game)
-        task.wait(0.05)
+        task.wait(5)
         VIM:SendKeyEvent(false, keyCode, false, game)
     end)
     if ok1 then return true end
@@ -1243,7 +1243,7 @@ local function FLa_PressKey(keyCode)
         io.UserInputType   = Enum.UserInputType.Keyboard
         io.UserInputState  = Enum.UserInputState.Begin
         UIS.InputBegan:Fire(io, false)
-        task.wait(0.05)
+        task.wait(5)
         io.UserInputState = Enum.UserInputState.End
         UIS.InputEnded:Fire(io, false)
     end)

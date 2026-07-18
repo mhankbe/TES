@@ -1271,7 +1271,7 @@ end)
 task.spawn(function()
     while true do
         FLa_PressKey(Enum.KeyCode.Q)
-        task.wait(2)
+        task.wait(5)
     end
 end)
 

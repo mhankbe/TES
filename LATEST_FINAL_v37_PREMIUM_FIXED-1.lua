@@ -232,85 +232,16 @@ task.spawn(function()
 end)
 
 -- ============================================================================
--- FireAttack / FireAllDamage / FireHeroRemotes
--- ============================================================================
-local _heroFireTick = {}
+-- FireAttack / FireAllDamage / FireHeroRemotes DIHAPUS - diganti arsitektur
+-- identik 12.lua: IsEnemyGuidValid + EnsureHeroAtkThreadFor + _fireOnce
+-- (hybrid RA+TA). Alasan: arsitektur lama fire RE.Atk dobel + hero attackType
+-- 1/2/3 sekaligus per cycle (redundant, beda pola dari RA/TA), sedangkan
+-- 12.lua pakai satu jalur attack konsisten dipakai RA, TA, dan Auto Boss Kill.
 
-function FireAttack(g, pos)
-    if not g then return end
-    local atkPos = pos or Vector3.new(0, 0, 0)
-    local char = LP and LP.Character
-    local pHRP = char and char:FindFirstChild("HumanoidRootPart")
-    if pHRP and pos then
-        local dir = (pHRP.Position - pos)
-        local dir2 = Vector3.new(dir.X, 0, dir.Z)
-        if dir2.Magnitude > 0.1 then
-            atkPos = pos + dir2.Unit * 5
-        else
-            atkPos = pos + Vector3.new(1, 0, 0) * 5
-        end
-    end
-    if RE.Atk then pcall(function() RE.Atk:FireServer({attackEnemyGUID = g}) end) end
-    if RE.HeroUseSkill and #HERO_GUIDS > 0 then
-        local now = tick()
-        local last = _heroFireTick[g] or 0
-        if now - last >= 0.04 then
-            _heroFireTick[g] = now
-            for _, hGuid in ipairs(HERO_GUIDS) do
-                pcall(function()
-                    RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 1, userId = MY_USER_ID, enemyGuid = g, targetPos = atkPos})
-                end)
-            end
-        end
-    end
-end
-
-function FireAllDamage(g, ep)
-    if not g then return end
-    if RE.Click then
-        task.spawn(function()
-            pcall(function() RE.Click:InvokeServer({enemyGuid = g, enemyPos = ep}) end)
-        end)
-    end
-    if RE.Atk then
-        pcall(function() RE.Atk:FireServer({attackEnemyGUID = g}) end)
-    end
-    if RE.HeroUseSkill and #HERO_GUIDS > 0 then
-        for _, hGuid in ipairs(HERO_GUIDS) do
-            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 1, userId = MY_USER_ID, enemyGuid = g}) end)
-            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 2, userId = MY_USER_ID, enemyGuid = g}) end)
-            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 3, userId = MY_USER_ID, enemyGuid = g}) end)
-        end
-    elseif RE.HeroSkill and #HERO_GUIDS > 0 then
-        for _, hGuid in ipairs(HERO_GUIDS) do
-            pcall(function() RE.HeroSkill:FireServer({heroGuid = hGuid, enemyGuid = g, skillType = 1, masterId = MY_USER_ID}) end)
-            pcall(function() RE.HeroSkill:FireServer({heroGuid = hGuid, enemyGuid = g, skillType = 2, masterId = MY_USER_ID}) end)
-            pcall(function() RE.HeroSkill:FireServer({heroGuid = hGuid, enemyGuid = g, skillType = 3, masterId = MY_USER_ID}) end)
-        end
-    end
-end
-
-function FireHeroRemotes(enemyGuid, enemyPos)
-    local pos = enemyPos or Vector3.new(0, 0, 0)
-    if #HERO_GUIDS == 0 then return end
-    local posInfos = {}
-    for _, hGuid in ipairs(HERO_GUIDS) do
-        table.insert(posInfos, {heroGuid = hGuid, targetPos = pos})
-    end
-    if RE.HeroMove then
-        pcall(function() RE.HeroMove:FireServer({attackTarget = enemyGuid, userId = MY_USER_ID, heroTagetPosInfos = posInfos}) end)
-        pcall(function() RE.HeroMove:FireServer({attackTarget = enemyGuid, userId = MY_USER_ID, heroTagetPosInfos = posInfos}) end)
-    end
-end
-
--- ============================================================================
--- IsEnemyGuidValid - cek musuh dgn GUID tertentu masih ada & hidup
--- (dibutuhkan EnsureHeroAtkThreadFor, port dari AUTO BOSS KILL versi terbaru)
--- ============================================================================
-local _ENEMY_FOLDERS_CHK = {"Enemys", "EnemyCityRaid", "CityRaidEnemys", "Enemies", "Enemy"}
-function IsEnemyGuidValid(g)
+local function IsEnemyGuidValid(g)
     if not g then return false end
-    for _, folderName in ipairs(_ENEMY_FOLDERS_CHK) do
+    local ENEMY_FOLDERS = {"Enemys","EnemyCityRaid","CityRaidEnemys","Enemies","Enemy"}
+    for _, folderName in ipairs(ENEMY_FOLDERS) do
         local f = workspace:FindFirstChild(folderName)
         if f then
             for _, e in ipairs(f:GetChildren()) do
@@ -324,30 +255,26 @@ function IsEnemyGuidValid(g)
         end
     end
     -- Fallback: nested di workspace.Map.CityRaidEnter (Siege)
-    local ok = false
     pcall(function()
         local mapF = workspace:FindFirstChild("Map")
-        local cre = mapF and mapF:FindFirstChild("CityRaidEnter")
+        local cre  = mapF and mapF:FindFirstChild("CityRaidEnter")
         if cre then
             for _, e in ipairs(cre:GetDescendants()) do
                 if e:IsA("Model") and e:GetAttribute("EnemyGuid") == g then
                     local hrp = e:FindFirstChild("HumanoidRootPart")
                     local hum = e:FindFirstChildOfClass("Humanoid")
-                    if hrp and hum and hum.Health > 0 then ok = true end
+                    if hrp and hum and hum.Health > 0 then return true end
                 end
             end
         end
     end)
-    return ok
+    return false
 end
 
--- ============================================================================
--- EnsureHeroAtkThreadFor - thread per-GUID yang terus fire HeroUseSkill
--- (attackType 1/2/3) ke musuh tertentu selama musuh masih valid.
--- Port dari AUTO BOSS KILL versi terbaru (12.lua baris ~2735).
--- ============================================================================
+-- Hero-attack thread per-GUID - IDENTIK 12.lua baris 2735-2771
 local _heroAtkThreads = {}
-function EnsureHeroAtkThreadFor(g)
+
+local function EnsureHeroAtkThreadFor(g)
     if not g then return end
     if _heroAtkThreads[g] and _heroAtkThreads[g].running then return end
     local handle = {running = true, tick = 0}
@@ -357,16 +284,19 @@ function EnsureHeroAtkThreadFor(g)
         while handle.running do
             if #HERO_GUIDS > 0 and (tick() - handle.tick) >= 0.001 and IsEnemyGuidValid(g) then
                 handle.tick = tick()
+                local _char = LP and LP.Character
+                local _pHRP = _char and _char:FindFirstChild("HumanoidRootPart")
+                local _pPos = _pHRP and _pHRP.Position or Vector3.new(0,0,0)
                 for _, hGuid in ipairs(HERO_GUIDS) do
                     local last = _lastFire[hGuid] or 0
                     if (tick() - last) >= 0.001 then
                         _lastFire[hGuid] = tick()
                         if RE.HeroUseSkill then
-                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 1, userId = MY_USER_ID, enemyGuid = g}) end)
+                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
                             task.wait(0.001)
-                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 2, userId = MY_USER_ID, enemyGuid = g}) end)
+                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
                             task.wait(0.001)
-                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid = hGuid, attackType = 3, userId = MY_USER_ID, enemyGuid = g}) end)
+                            pcall(function() RE.HeroUseSkill:FireServer({heroGuid=hGuid,attackType=3,userId=MY_USER_ID,enemyGuid=g}) end)
                         end
                     end
                     task.wait(0.001)
@@ -381,11 +311,18 @@ function EnsureHeroAtkThreadFor(g)
     end)
 end
 
-function StopHeroAtkThreadFor(g)
-    if g and _heroAtkThreads[g] then
-        _heroAtkThreads[g].running = false
-        _heroAtkThreads[g] = nil
+-- _fireOnce - IDENTIK 12.lua baris 7915-7926
+local function _fireOnce(guid)
+    if not guid then return end
+    if RE.Atk then
+        pcall(function() RE.Atk:FireServer({attackEnemyGUID=guid}) end)
     end
+    if RE.Click then
+        task.spawn(function()
+            pcall(function() RE.Click:InvokeServer({enemyGuid=guid}) end)
+        end)
+    end
+    EnsureHeroAtkThreadFor(guid)
 end
 
 -- ============================================================================
@@ -977,7 +914,6 @@ function StartRaidLoop()
                     local freezeConn = nil
                     local frozenCFrame = nil
                     local freezeFrame = 0
-                    local bossFollowTarget = nil -- [TA-STYLE] diisi = target setelah scan ketemu; Heartbeat ikuti posisi ini
                     local function step4Cleanup()
                         pcall(function()
                             local char = LP.Character
@@ -1088,19 +1024,8 @@ function StartRaidLoop()
                                                 frozenCFrame = nil
                                                 return
                                             end
-                                            if hrp and hrp.Parent then
-                                                -- [TA-STYLE] Kalau target sudah ada & hidup, ikuti posisinya (3 stud di depan).
-                                                -- Kalau belum (masih fase scan awal), tetap pakai frozenCFrame lama.
-                                                local bt = bossFollowTarget
-                                                if bt and bt.hrp and bt.hrp.Parent then
-                                                    local ok = pcall(function()
-                                                        frozenCFrame = bt.hrp.CFrame * CFrame.new(0, 0, -3)
-                                                        hrp.CFrame = frozenCFrame
-                                                    end)
-                                                    if not ok and frozenCFrame then hrp.CFrame = frozenCFrame end
-                                                elseif frozenCFrame then
-                                                    hrp.CFrame = frozenCFrame
-                                                end
+                                            if hrp and hrp.Parent and frozenCFrame then
+                                                hrp.CFrame = frozenCFrame
                                             end
                                         end)
                                     end
@@ -1136,28 +1061,8 @@ function StartRaidLoop()
                                     local targetGuid = target.guid
                                     Log("[FLa] Attack: " .. target.model.Name)
 
-                                    -- [TA-STYLE] Aktifkan follow-target: player direposisi 3 stud
-                                    -- di depan HRP boss tiap frame lewat freezeConn Heartbeat di atas,
-                                    -- mengikuti gerak boss (bukan diam di titik TP awal).
-                                    bossFollowTarget = target
-
-                                    -- [RA+TA HYBRID] RE.Atk + RE.Click + EnsureHeroAtkThreadFor,
-                                    -- BUKAN lagi FireAttack/FireAllDamage/FireHeroRemotes.
-                                    -- Tahap 1 (RA-style): fire ke GUID musuh RANDOM dalam radius 50 studs.
-                                    -- Tahap 2 (TA-style): fire ke GUID boss (locked) sampai mati.
-                                    local function fireOnce(guid)
-                                        if not guid then return end
-                                        if RE.Atk then
-                                            pcall(function() RE.Atk:FireServer({attackEnemyGUID = guid}) end)
-                                        end
-                                        if RE.Click then
-                                            task.spawn(function()
-                                                pcall(function() RE.Click:InvokeServer({enemyGuid = guid}) end)
-                                            end)
-                                        end
-                                        EnsureHeroAtkThreadFor(guid)
-                                    end
-
+                                    -- Ambil GUID musuh random lain (selain target boss) dari radius
+                                    -- 50 studs untuk tahap RA. IDENTIK 12.lua baris 7930-7942.
                                     local function pickRandomGuidNearby(excludeGuid)
                                         local pool = {}
                                         for _, e in ipairs(GetRaidEnemies()) do
@@ -1172,10 +1077,12 @@ function StartRaidLoop()
                                         return pick.guid
                                     end
 
+                                    -- attackBoss: 1 cycle = RA (random guid) lalu TA (locked target
+                                    -- guid). IDENTIK 12.lua baris 7944-7951 (_attackBoss).
                                     local function attackBoss(guid, enemyHRP)
                                         local raGuid = pickRandomGuidNearby(guid)
-                                        fireOnce(raGuid)
-                                        fireOnce(guid)
+                                        _fireOnce(raGuid)
+                                        _fireOnce(guid)
                                     end
 
                                     local outOfMapCount = 0
@@ -1204,20 +1111,16 @@ function StartRaidLoop()
                                         local hum = target.model:FindFirstChildOfClass("Humanoid")
                                         if not hum or hum.Health <= 0 then break end
                                         if not target.hrp or not target.hrp.Parent then
-                                            task.wait() -- [TA-STYLE] no-delay
-                                            if not target.model or not target.model.Parent then break end
-                                            local hum2 = target.model:FindFirstChildOfClass("Humanoid")
-                                            if not hum2 or hum2.Health <= 0 then break end
+                                            PG_Wait(0.1)
                                         else
                                             local nearNow = scanNearbyEnemy()
                                             if nearNow and nearNow.guid ~= targetGuid then
                                                 target = nearNow
                                                 targetGuid = target.guid
-                                                bossFollowTarget = target -- [TA-STYLE] update follow-target juga
                                                 Log("[FLa] Target baru: " .. target.model.Name)
                                             end
                                             pcall(function() attackBoss(targetGuid, target.hrp) end)
-                                            task.wait() -- [TA-STYLE] no-delay (bukan PG_Wait(0.1))
+                                            PG_Wait(0.1)
                                         end
                                     end
 
@@ -1318,6 +1221,59 @@ function StartRaidLoop()
         end)
     end)
 end
+
+-- ============================================================================
+-- FLa_PressKey - simulasi tekan keyboard (porting identik dari 12.lua, dipakai
+-- pola SKL/SkFireOnce untuk Z/X/C/V/F skill keybind).
+-- ============================================================================
+local function FLa_PressKey(keyCode)
+    -- Method 1: VirtualInputManager
+    local ok1 = pcall(function()
+        local VIM = game:GetService("VirtualInputManager")
+        VIM:SendKeyEvent(true,  keyCode, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, keyCode, false, game)
+    end)
+    if ok1 then return true end
+    -- Method 2: UIS fire (mobile-friendly fallback)
+    local ok3 = pcall(function()
+        local UIS = game:GetService("UserInputService")
+        local io  = Instance.new("InputObject")
+        io.KeyCode        = keyCode
+        io.UserInputType   = Enum.UserInputType.Keyboard
+        io.UserInputState  = Enum.UserInputState.Begin
+        UIS.InputBegan:Fire(io, false)
+        task.wait(0.05)
+        io.UserInputState = Enum.UserInputState.End
+        UIS.InputEnded:Fire(io, false)
+    end)
+    if ok3 then return true end
+    return false
+end
+
+-- ============================================================================
+-- EQUIP BEST WEAPON - fire sekali, 5 detik setelah script di-execute
+-- ============================================================================
+task.spawn(function()
+    task.wait(5)
+    local reEquipWeapon = Remotes:FindFirstChild("EquipBestWeapon")
+    if reEquipWeapon then
+        pcall(function() reEquipWeapon:FireServer() end)
+        Log("[EquipBestWeapon] Fired setelah 5 detik dari execute.")
+    else
+        Log("[!] Remote EquipBestWeapon tidak ditemukan.")
+    end
+end)
+
+-- ============================================================================
+-- SPAM TOMBOL Q - tiap 2 detik, berjalan terus selama script aktif
+-- ============================================================================
+task.spawn(function()
+    while true do
+        FLa_PressKey(Enum.KeyCode.Q)
+        task.wait(2)
+    end
+end)
 
 -- ============================================================================
 -- AUTO START (Auto Execute - langsung ON begitu script jalan)
